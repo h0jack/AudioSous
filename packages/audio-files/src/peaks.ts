@@ -307,17 +307,26 @@ export function previewWaveformPeaks(input: { sampleRate: number; durationSecond
   const maxs = new Int16Array(count);
   let hash = 2166136261;
   for (const char of input.seed) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-  const rate = 0.6 + (hash % 5) * 0.35;
   const phase = ((hash >>> 8) % 628) / 100;
+  const song = Math.max(input.durationSeconds, 0.001);
   for (let index = 0; index < count; index += 1) {
     const time = (index * FINEST_FRAMES) / input.sampleRate;
-    const envelope = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(time * rate + phase));
-    const wobble = Math.sin(time * (2 + (hash % 7)) + phase);
-    const amp = Math.round(envelope * wobble * 18_000);
+    const place = time / song;
+    const arc = place < 0.18 ? 0.35 : place < 0.42 ? 0.72 : place < 0.7 ? 1 : place < 0.86 ? 0.55 : 0.3;
+    const wobble = 0.55 + 0.45 * Math.abs(Math.sin(time * (2 + (hash % 7)) + phase));
+    const amp = Math.round(arc * wobble * (12_000 + (hash % 5) * 1_200));
     mins[index] = Math.min(0, amp);
     maxs[index] = Math.max(0, amp);
   }
   const fine = { samplesPerPeak: FINEST_FRAMES, mins, maxs };
+  return buildPreview(input, frames, fine);
+}
+
+function buildPreview(
+  input: { sampleRate: number },
+  frames: number,
+  fine: WaveformLevel,
+): WaveformPeaks {
   return {
     version: 1,
     sampleRate: input.sampleRate,
@@ -327,4 +336,24 @@ export function previewWaveformPeaks(input: { sampleRate: number; durationSecond
     frames,
     levels: [fine, downsample(fine, 4, 1024), downsample(fine, 16, 4096)],
   };
+}
+
+/** Average peak level across stems, sampled evenly across the song. PCM is not read. */
+export function energyEnvelope(peaks: Array<WaveformPeaks | null | undefined>, durationSeconds: number, points = 240): number[] {
+  const usable = peaks.filter((item): item is WaveformPeaks => Boolean(item && item.levels.length > 0 && item.frames > 0 && item.sampleRate > 0));
+  const envelope = new Array<number>(Math.max(2, points)).fill(0);
+  if (usable.length === 0 || durationSeconds <= 0) return envelope;
+  for (const peak of usable) {
+    const level = peak.levels[peak.levels.length - 1];
+    if (!level || level.mins.length === 0) continue;
+    const secondsPerPeak = level.samplesPerPeak / peak.sampleRate;
+    for (let index = 0; index < envelope.length; index += 1) {
+      const time = (index / (envelope.length - 1)) * durationSeconds;
+      const bin = Math.min(level.mins.length - 1, Math.max(0, Math.floor(time / secondsPerPeak)));
+      const amplitude = Math.max(Math.abs(level.mins[bin] ?? 0), Math.abs(level.maxs[bin] ?? 0)) / 32768;
+      envelope[index] += amplitude;
+    }
+  }
+  for (let index = 0; index < envelope.length; index += 1) envelope[index] /= usable.length;
+  return envelope;
 }

@@ -1,6 +1,6 @@
 # Audiosous
 
-Audiosous is a local desktop application for musicians who can make a track and want help shaping the mix. This repository is Milestone 1, starting with the project file, stem import, and the desktop shell. Playback, waveforms, and section editing come next. Nothing here uploads audio.
+Audiosous is a local desktop application for musicians who can make a track and want help shaping the mix. Milestone 1 covers the project file, stem import, a shared playback clock, waveforms, sections, intent, undo, and autosave. Nothing here uploads audio.
 
 ## Run
 

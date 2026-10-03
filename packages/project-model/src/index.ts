@@ -43,8 +43,8 @@ export { MIGRATIONS, applyMigrations, deserializeProject, migrateProject, readSc
 export type { SchemaMigration } from "./migrate";
 
 export { createProject, projectTiming, updateTrack, withUpdatedAt } from "./create-project";
-export { addManualSection, removeSection, updateSection } from "./sections";
-export type { NewSectionInput, SectionEditResult } from "./sections";
+export { addManualSection, applyAutomaticSections, removeSection, setTrackSectionState, updateSection } from "./sections";
+export type { NewSectionInput, SectionEditResult, SuggestedSection } from "./sections";
 export type { CreateProjectInput, NewTrackInput } from "./create-project";
 
 export { buildImportReport } from "./import-report";

@@ -48,9 +48,9 @@ There is no cloud client, account system, or upload step.
 
 ## Project schema
 
-The on-disk document is schema version 1. The shape is **song → sections → tracks → track × section**. Tracks and manual sections can be edited. Track × section intent is still empty.
+The on-disk document is schema version 1. The shape is **song → sections → tracks → track × section**. Tracks, manual sections, section intent, and track × section intent can be edited.
 
-Persisted now, and left empty until later slices fill them in:
+Persisted now:
 
 - sections, including source, confidence, and `structuralGroupId`
 - track × section intent, optional prominence (`primary` / `focal` / `supporting`), gain/pan overrides, and an empty `ProcessingGraph`
@@ -118,11 +118,9 @@ Machine-specific absolute paths exist only in memory during the import that the 
 
 ## Analysis sidecar boundary
 
-Later milestones will spawn `services/analysis` and pass JSON. The UI already depends on `@audiosous/analysis-contract`, which is the versioned request and result for section suggestions (`contractVersion: 1`).
+Later milestones can spawn `services/analysis` and pass JSON. The UI depends on `@audiosous/analysis-contract` (`contractVersion: 1`). Suggest sections fills that same result from cached peak energy. It does not spawn Python and does not add analysis libraries.
 
 The intended bridge is a Tauri command that starts the Python process, writes a request, reads a response, and parses it with the contract schema before any UI state changes. Python may use whatever internal arrays it needs. Those structures stop at the process boundary.
-
-This slice does not spawn Python and does not add analysis libraries.
 
 ## Tauri and Web Audio
 
@@ -146,8 +144,8 @@ Synchronized playback uses these constraints:
 
 Structured events for this slice: `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged.
 
-## This slice
+## Milestone 1
 
-Included: application shell, schema version 1, migration runner, WAV/AIFF inspection, role guesses, import warnings, project bundle create, save, and reopen.
+Included: the shell, schema version 1, WAV/AIFF import, waveform cache, one shared playback clock, mute/solo/gain/pan, manual sections, section and track × section intent, looping a range or a section, undo/redo, explicit save plus autosave after an edit settles, and experimental section suggestions from cached peaks.
 
-Not included: section editing, undo, and autosave beyond the recovery copy written on each explicit save. Playback, mute, solo, gain, pan, and looping a selected range use the shared clock.
+Not included: spawning the Python sidecar, DSP, and every later item listed in `docs/milestones.md`. Source WAVs are never modified. A 32-stem project is read in short windows, not decoded into one buffer per stem.

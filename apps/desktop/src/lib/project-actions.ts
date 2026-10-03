@@ -4,16 +4,20 @@ import {
   sanitizeBundleName,
   serializeProject,
   addManualSection,
+  applyAutomaticSections,
   removeSection,
+  setTrackSectionState,
   updateSection,
   updateTrack,
   withUpdatedAt,
   type ImportWarning,
   type ProjectDocument,
+  type SuggestedSection,
   type TrackRole,
+  type TrackSectionState,
 } from "@audiosous/project-model";
 import type { DesktopPlatform } from "../platform/types";
-import { useAppStore } from "../state/app-store";
+import { useAppStore, type DocumentEdit } from "../state/app-store";
 import { logEvent } from "./log";
 import { documentFromStems, type PendingStem } from "./stems";
 
@@ -81,13 +85,15 @@ export async function openChosenProject(platform: DesktopPlatform, projectFile: 
   useAppStore.getState().openDocument(document, loaded.projectFile, warnings);
 }
 
-export async function saveOpenProject(platform: DesktopPlatform): Promise<void> {
+export async function saveOpenProject(platform: DesktopPlatform, options?: { download?: boolean }): Promise<void> {
   const { document, projectFilePath } = useAppStore.getState();
   if (!document || !projectFilePath) return;
-  const next = withUpdatedAt(document);
+  const snapshot = document;
+  const next = withUpdatedAt(snapshot);
   const projectJson = serializeProject(next);
-  await platform.writeProject(projectFilePath, projectJson, { download: platform.kind === "browser" });
-  useAppStore.getState().replaceDocument(next, false);
+  await platform.writeProject(projectFilePath, projectJson, { download: options?.download ?? false });
+  if (useAppStore.getState().document !== snapshot) return;
+  useAppStore.getState().replaceDocument(next, false, { mode: "skip" });
   await logEvent(platform, "info", "project.save", "Saved the project.", {
     name: next.project.name,
     projectFile: projectFilePath,
@@ -108,7 +114,20 @@ export function editTrack(
 ): void {
   const document = useAppStore.getState().document;
   if (!document) return;
-  useAppStore.getState().replaceDocument(updateTrack(document, trackId, patch), true);
+  const key =
+    patch.gainDb !== undefined
+      ? `gain:${trackId}`
+      : patch.pan !== undefined
+        ? `pan:${trackId}`
+        : patch.name !== undefined
+          ? `name:${trackId}`
+          : patch.customLabel !== undefined
+            ? `label:${trackId}`
+            : null;
+  useAppStore.getState().replaceDocument(updateTrack(document, trackId, patch), true, {
+    mode: key ? "coalesce" : "record",
+    key,
+  });
 }
 
 export function addSectionFromRange(startTime: number, endTime: number): string | null {
@@ -122,14 +141,52 @@ export function addSectionFromRange(startTime: number, endTime: number): string 
 
 export function editSection(
   sectionId: string,
-  patch: { name?: string; type?: ProjectDocument["sections"][number]["type"]; startTime?: number; endTime?: number },
+  patch: {
+    name?: string;
+    type?: ProjectDocument["sections"][number]["type"];
+    startTime?: number;
+    endTime?: number;
+    userIntent?: string | null;
+  },
 ): string | null {
   const document = useAppStore.getState().document;
   if (!document) return "No project is open.";
   const result = updateSection(document, sectionId, patch);
   if (!result.ok) return result.message;
+  useAppStore.getState().replaceDocument(result.document, true, editForSection(sectionId, patch));
+  return null;
+}
+
+export function editTrackSection(
+  trackId: string,
+  sectionId: string,
+  patch: { userIntent?: string | null; prominence?: TrackSectionState["prominence"] },
+): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const result = setTrackSectionState(document, trackId, sectionId, patch);
+  if (!result.ok) return result.message;
+  const key = patch.userIntent !== undefined ? `track-intent:${trackId}:${sectionId}` : null;
+  useAppStore.getState().replaceDocument(result.document, true, { mode: key ? "coalesce" : "record", key });
+  return null;
+}
+
+export function acceptSectionSuggestions(suggestions: SuggestedSection[]): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const result = applyAutomaticSections(document, suggestions);
+  if (!result.ok) return result.message;
   useAppStore.getState().replaceDocument(result.document, true);
   return null;
+}
+
+function editForSection(
+  sectionId: string,
+  patch: { name?: string; userIntent?: string | null },
+): DocumentEdit {
+  if (patch.name !== undefined) return { mode: "coalesce", key: `section-name:${sectionId}` };
+  if (patch.userIntent !== undefined) return { mode: "coalesce", key: `section-intent:${sectionId}` };
+  return { mode: "record" };
 }
 
 export function deleteSection(sectionId: string): void {
@@ -141,7 +198,10 @@ export function deleteSection(sectionId: string): void {
 export function editProjectName(name: string): void {
   const document = useAppStore.getState().document;
   if (!document) return;
-  useAppStore.getState().replaceDocument({ ...document, project: { ...document.project, name } }, true);
+  useAppStore.getState().replaceDocument({ ...document, project: { ...document.project, name } }, true, {
+    mode: "coalesce",
+    key: "project-name",
+  });
 }
 
 async function warningsForMedia(

@@ -69,6 +69,7 @@ function commitPlayhead(time: number): void {
   useAppStore.getState().replaceDocument(
     { ...current, uiState: { ...current.uiState, playheadSeconds: time } },
     true,
+    { mode: "skip" },
   );
 }
 
@@ -123,6 +124,11 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
       engineRef.current = null;
     };
   }, [document.project.id, projectFile]);
+
+  useEffect(() => {
+    const loop = document.uiState.loop;
+    engineRef.current?.setLoop(loop?.enabled ? { startSeconds: loop.start, endSeconds: loop.end } : null);
+  }, [document.uiState.loop]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -194,11 +200,18 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
     const engine = engineRef.current;
     if (!current || !engine) return;
     const range = current.uiState.timeRange;
-    const loop =
-      enabled && range
-        ? { enabled: true, start: range.start, end: range.end, sectionId: null }
-        : null;
-    engine.setLoop(loop ? { startSeconds: loop.start, endSeconds: loop.end } : null);
+    const section = current.sections.find((item) => item.id === current.uiState.selectedSectionId);
+    const sectionMatches =
+      section !== undefined &&
+      (!range || (Math.abs(range.start - section.startTime) < 0.001 && Math.abs(range.end - section.endTime) < 0.001));
+    const loop = !enabled
+      ? null
+      : section && sectionMatches
+        ? { enabled: true, start: section.startTime, end: section.endTime, sectionId: section.id }
+        : range
+          ? { enabled: true, start: range.start, end: range.end, sectionId: null }
+          : null;
+    if (enabled && !loop) return;
     useAppStore.getState().replaceDocument({ ...current, uiState: { ...current.uiState, loop } }, true);
   }
 

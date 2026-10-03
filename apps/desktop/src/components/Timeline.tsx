@@ -1,7 +1,9 @@
+import { suggestSections } from "@audiosous/analysis-contract";
 import {
   chooseWaveformLevel,
   clampScroll,
   clampTimelineZoom,
+  energyEnvelope,
   pixelsPerSecondFor,
   rulerStepSeconds,
   timeToX,
@@ -19,7 +21,7 @@ import {
 } from "@audiosous/project-model";
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { usePlayback } from "../lib/playback";
-import { addSectionFromRange, deleteSection, editSection, editTrack } from "../lib/project-actions";
+import { acceptSectionSuggestions, addSectionFromRange, deleteSection, editSection, editTrack, editTrackSection } from "../lib/project-actions";
 import type { LoadedWaveform } from "../lib/waveforms";
 import { isTauri } from "../platform";
 import { useAppStore } from "../state/app-store";
@@ -94,7 +96,11 @@ export function Timeline({
     if (Object.keys(patch).length === 0) return;
     const current = useAppStore.getState().document;
     if (!current) return;
-    useAppStore.getState().replaceDocument({ ...current, uiState: { ...current.uiState, ...patch } }, true);
+    const keys = Object.keys(patch);
+    const chrome = keys.every((key) => key === "playheadSeconds" || key === "timelineZoom" || key === "timelineScroll" || key === "selectedTrackId");
+    useAppStore.getState().replaceDocument({ ...current, uiState: { ...current.uiState, ...patch } }, true, {
+      mode: chrome ? "skip" : "record",
+    });
   }
 
   function scheduleCommit(patch: Partial<UiState>) {
@@ -217,7 +223,7 @@ export function Timeline({
         <button
           type="button"
           className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs disabled:opacity-40"
-          disabled={!range && !playback.looping}
+          disabled={!range && !document.uiState.selectedSectionId && !playback.looping}
           onClick={() => playback.setLoopEnabled(!playback.looping)}
         >
           {playback.looping ? "Looping" : "Loop"}
@@ -232,6 +238,20 @@ export function Timeline({
           }}
         >
           Add section
+        </button>
+        <button
+          type="button"
+          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"
+          onClick={() => {
+            const energy = energyEnvelope(
+              document.tracks.map((track) => waveforms[track.id]?.peaks),
+              duration,
+            );
+            const suggested = suggestSections({ durationSeconds: duration, energy });
+            setSectionError(acceptSectionSuggestions(suggested.suggestions));
+          }}
+        >
+          Suggest sections
         </button>
         <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => zoomAround(zoom / 1.25)}>
           Zoom out
@@ -267,6 +287,7 @@ export function Timeline({
         <p className="font-mono text-xs text-muted">
           Playhead {formatClock(playhead)}
           {range ? ` · Range ${formatClock(range.start)}–${formatClock(range.end)}` : ""}
+          {document.uiState.loop?.enabled ? ` · Loop ${formatClock(document.uiState.loop.start)}–${formatClock(document.uiState.loop.end)}` : ""}
         </p>
         {sectionError ? <p className="text-xs text-muted">{sectionError}</p> : null}
         <p className="ml-auto text-xs text-faint">
@@ -408,6 +429,7 @@ export function Timeline({
                     amplitude={amplitude}
                     color={waveform && !waveform.measured ? "#736e66" : selected ? "#e0a04a" : "#c4924a"}
                     range={range}
+                    loop={document.uiState.loop}
                     sections={document.sections}
                   />
                   <div className="pointer-events-none absolute inset-y-0 w-px bg-ink" style={{ left: timeToX(playhead, pps, scrollSeconds) }} />
@@ -480,8 +502,75 @@ function SectionEditor({
       </button>
       <p className="font-mono text-xs text-muted">
         {formatClock(selected.startTime)}–{formatClock(selected.endTime)}
+        {selected.source === "automatic" ? " · suggested" : ""}
       </p>
+      <IntentField
+        label="Section intent"
+        value={selected.userIntent ?? ""}
+        onChange={(value) => onError(editSection(selected.id, { userIntent: value }))}
+      />
+      <TrackIntent document={document} sectionId={selected.id} onError={onError} />
     </div>
+  );
+}
+
+function TrackIntent({
+  document,
+  sectionId,
+  onError,
+}: {
+  document: ProjectDocument;
+  sectionId: string;
+  onError: (message: string | null) => void;
+}) {
+  const track = document.tracks.find((item) => item.id === document.uiState.selectedTrackId);
+  if (!track) return <p className="text-xs text-faint">Select a lane to describe that stem in this section.</p>;
+  const setting = document.sectionTrackSettings.find((item) => item.trackId === track.id && item.sectionId === sectionId);
+  return (
+    <>
+      <IntentField
+        label={`${track.name} in this section`}
+        value={setting?.userIntent ?? ""}
+        onChange={(value) => onError(editTrackSection(track.id, sectionId, { userIntent: value }))}
+      />
+      <select
+        value={setting?.prominence ?? ""}
+        aria-label={`Prominence for ${track.name}`}
+        onChange={(event) => {
+          const prominence = event.target.value ? (event.target.value as "primary" | "focal" | "supporting") : null;
+          onError(editTrackSection(track.id, sectionId, { prominence }));
+        }}
+        className="rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+      >
+        <option value="">No prominence</option>
+        <option value="primary">Primary</option>
+        <option value="focal">Focal</option>
+        <option value="supporting">Supporting</option>
+      </select>
+    </>
+  );
+}
+
+function IntentField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    setDraft((current) => (current.trim() === value ? current : value));
+  }, [value]);
+  return (
+    <label className="block min-w-56 flex-1">
+      <span className="mb-1 block text-[10px] tracking-wide text-muted uppercase">{label}</span>
+      <textarea
+        value={draft}
+        aria-label={label}
+        rows={2}
+        maxLength={8000}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          onChange(event.target.value);
+        }}
+        className="w-full resize-y rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+      />
+    </label>
   );
 }
 
@@ -495,7 +584,10 @@ function SectionNameField({
   onError: (message: string | null) => void;
 }) {
   const [draft, setDraft] = useState(name);
-  useEffect(() => setDraft(name), [sectionId, name]);
+  useEffect(() => setDraft(name), [sectionId]);
+  useEffect(() => {
+    setDraft((current) => (current.trim() === name ? current : name));
+  }, [name]);
   return (
     <input
       value={draft}
@@ -549,6 +641,7 @@ function WaveformCanvas({
   amplitude,
   color,
   range,
+  loop,
   sections,
 }: {
   peaks: WaveformPeaks | null;
@@ -559,6 +652,7 @@ function WaveformCanvas({
   amplitude: number;
   color: string;
   range: { start: number; end: number } | null;
+  loop: { enabled: boolean; start: number; end: number } | null;
   sections: SongSection[];
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -576,6 +670,11 @@ function WaveformCanvas({
       const x = timeToX(range.start, pixelsPerSecond, scrollSeconds);
       ctx.fillStyle = "rgba(224,160,74,0.18)";
       ctx.fillRect(x, 0, (range.end - range.start) * pixelsPerSecond, height);
+    }
+    if (loop?.enabled && loop.end > loop.start) {
+      const x = timeToX(loop.start, pixelsPerSecond, scrollSeconds);
+      ctx.strokeStyle = "rgba(224,160,74,0.95)";
+      ctx.strokeRect(x + 0.5, 1.5, (loop.end - loop.start) * pixelsPerSecond, height - 3);
     }
     const mid = height / 2;
     ctx.strokeStyle = "rgba(243,239,230,0.12)";
@@ -615,7 +714,7 @@ function WaveformCanvas({
       }
     }
     ctx.setLineDash([]);
-  }, [peaks, width, height, pixelsPerSecond, scrollSeconds, amplitude, color, range, sections]);
+  }, [peaks, width, height, pixelsPerSecond, scrollSeconds, amplitude, color, range, loop, sections]);
 
   return <canvas ref={ref} className="block h-full w-full" />;
 }

@@ -16,13 +16,13 @@ The product target is an AI-assisted visual mixer. Processing is out of scope un
 | 8. Mixer controls | Mute, solo, gain, and pan are on each lane |
 | 9. Selection model editing | A lane click selects the track. A drag selects a time range. A section mark selects that section |
 | 10. Manual sections | A selected range becomes a named section. Name, type, bounds, and deletion are saved with the project |
-| 11. Section and track intent editing | Schema reserved; UI not started |
-| 12. Looping | A selected range can loop on the shared clock. Dedicated loop editing is not started |
-| 13. Undo / redo | Not started |
-| 14. Save / reopen | Explicit save, recovery copy, and reopen work. Autosave-on-edit is not started |
-| 15. Experimental section detection | Contract reserved; not started |
-| 16. Performance pass | Not started |
-| 17. Broader automated tests | Model, parser, import, and bundle tests are in place |
+| 11. Section and track intent editing | A section and the selected stem inside it store natural-language intent. Prominence is primary, focal, or supporting |
+| 12. Looping | A selected range or a selected section loops on the shared clock. Moving that section moves the loop |
+| 13. Undo / redo | Ctrl+Z and Ctrl+Shift+Z. A slider drag or a typed phrase is one step |
+| 14. Save / reopen | Explicit save and the recovery copy remain. An edit saves after it settles, not while a control is still moving |
+| 15. Experimental section detection | Suggest sections reads cached peaks and adds dashed automatic sections. Editing one makes it solid. Python is not spawned |
+| 16. Performance pass | 32 stems share one short read window. Peaks stay in the cache |
+| 17. Broader automated tests | History, intent, suggestions, peak energy, and the 32-stem clock are covered |
 
 Import is not real until a project can be opened again, so this slice includes create, explicit save, the recovery copy, and reopen. It does not autosave while a control is being dragged.
 

@@ -77,7 +77,7 @@ export function ProjectScreen() {
         <Timeline document={document} projectFile={projectFilePath} waveforms={waveforms} status={status} />
       </div>
       <p className="px-5 py-2 text-xs text-faint">
-        Space plays and pauses. Click a lane to move the playhead, or drag a range and add a section.
+        Space plays and pauses. Drag a range to add a section, or suggest sections from the waveforms. Ctrl+Z undoes an edit.
         {getPlatform().kind === "browser" ? " Media is not copied in the browser preview." : " Source files were not modified."}
       </p>
     </div>

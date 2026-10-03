@@ -7,6 +7,7 @@ import {
   clampScroll,
   decodeWaveformPeaks,
   encodeWaveformPeaks,
+  energyEnvelope,
   pixelsPerSecondFor,
   timeToX,
   waveformCachePath,
@@ -149,5 +150,25 @@ describe("waveform peaks", () => {
     expect(clampScroll(500, 120, 600, pixelsPerSecond)).toBe(60);
     expect(waveformCachePath("track-kick")).toBe("cache/waveforms/track-kick.peaks");
     expect(() => waveformCachePath("../secret")).toThrow(/cache/);
+  });
+
+  it("averages peak energy without keeping PCM", () => {
+    const loud = {
+      version: 1 as const,
+      sampleRate: 48_000,
+      channelCount: 1,
+      bitsPerSample: 16,
+      fileSizeBytes: 10,
+      frames: 48_000,
+      levels: [{ samplesPerPeak: 24_000, mins: new Int16Array([0, -32_000]), maxs: new Int16Array([1_000, 32_000]) }],
+    };
+    const quiet = {
+      ...loud,
+      levels: [{ samplesPerPeak: 24_000, mins: new Int16Array([0, 0]), maxs: new Int16Array([0, 0]) }],
+    };
+    const envelope = energyEnvelope([loud, quiet], 1, 2);
+    expect(envelope[0]).toBeCloseTo(1000 / 32768 / 2, 5);
+    expect(envelope[1]).toBeCloseTo(32000 / 32768 / 2, 5);
+    expect(energyEnvelope([null], 10, 4)).toEqual([0, 0, 0, 0]);
   });
 });

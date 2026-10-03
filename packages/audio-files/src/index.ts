@@ -12,6 +12,7 @@ export {
   clampTimelineZoom,
   decodeWaveformPeaks,
   encodeWaveformPeaks,
+  energyEnvelope,
   peaksMatchTrack,
   pixelsPerSecondFor,
   previewWaveformPeaks,

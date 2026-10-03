@@ -1,4 +1,4 @@
-import { createProject } from "@audiosous/project-model";
+import { createProject, projectDocumentSchema } from "@audiosous/project-model";
 import { describe, expect, it } from "vitest";
 import type { AudioOutput, ScheduledSlice } from "./streaming";
 import { createStreamingEngine } from "./streaming";
@@ -153,6 +153,30 @@ describe("streaming engine", () => {
     expect(after).toHaveLength(2);
     expect(after.every((slice) => slice.fileOffsetSeconds === 4)).toBe(true);
     expect(new Set(after.map((slice) => slice.trackId)).size).toBe(2);
+    engine.dispose();
+  });
+
+  it("schedules 32 stems from one window instead of the whole file", async () => {
+    const output = fakeOutput();
+    const requests: number[] = [];
+    const wide = createProject({
+      id: "project-wide",
+      name: "Wide",
+      tracks: Array.from({ length: 32 }, (_, index) => track(`stem-${index}`, index % 2 === 0 ? "kick" : "bass")),
+    });
+    wide.project.durationSeconds = 600;
+    for (const item of wide.tracks) item.metadata.durationSeconds = 600;
+    expect(projectDocumentSchema.safeParse(wide).success).toBe(true);
+    const engine = createStreamingEngine(output, { windowSeconds: 0.5, lookaheadSeconds: 0.5 });
+    await engine.loadProject(wide, {
+      resolve: (path) => path,
+      open: async () => stream(requests),
+    });
+    await engine.play(0);
+    expect(output.starts).toHaveLength(32);
+    expect(new Set(output.starts.map((slice) => slice.contextTime)).size).toBe(1);
+    expect(Math.max(...requests)).toBeLessThanOrEqual(48_000 * 0.5);
+    expect(requests.reduce((sum, frames) => sum + frames, 0)).toBeLessThan(48_000 * 0.5 * 32 + 1);
     engine.dispose();
   });
 

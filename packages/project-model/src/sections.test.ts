@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createProject } from "./create-project";
 import { projectDocumentSchema } from "./schema";
-import { addManualSection, removeSection, updateSection } from "./sections";
+import { addManualSection, applyAutomaticSections, removeSection, setTrackSectionState, updateSection } from "./sections";
 
 function document() {
   return createProject({
@@ -103,5 +103,81 @@ describe("manual sections", () => {
     expect(next.uiState.selectedSectionId).toBeNull();
     expect(next.uiState.loop).toEqual({ enabled: true, start: 0, end: 8, sectionId: null });
     expect(projectDocumentSchema.safeParse(next).success).toBe(true);
+  });
+
+  it("stores section intent and one note per track", () => {
+    const created = addManualSection(document(), { name: "Chorus", type: "chorus", startTime: 10, endTime: 30 });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const sectionId = created.document.sections[0]!.id;
+    const withIntent = updateSection(created.document, sectionId, { userIntent: "  Open it up  " });
+    expect(withIntent.ok).toBe(true);
+    if (!withIntent.ok) return;
+    expect(withIntent.document.sections[0]?.userIntent).toBe("Open it up");
+    const noted = setTrackSectionState(withIntent.document, "track-kick", sectionId, {
+      userIntent: "Leave the kick dry",
+      prominence: "primary",
+    });
+    expect(noted.ok).toBe(true);
+    if (!noted.ok) return;
+    expect(noted.document.sectionTrackSettings).toEqual([
+      expect.objectContaining({ trackId: "track-kick", sectionId, userIntent: "Leave the kick dry", prominence: "primary" }),
+    ]);
+    const cleared = setTrackSectionState(noted.document, "track-kick", sectionId, { userIntent: "  ", prominence: null });
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.document.sectionTrackSettings).toEqual([]);
+    expect(projectDocumentSchema.safeParse(cleared.document).success).toBe(true);
+  });
+
+  it("keeps a loop attached to a section and adds automatic sections only in the gaps", () => {
+    const created = addManualSection(document(), { name: "Verse", startTime: 20, endTime: 40 });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const sectionId = created.document.sections[0]!.id;
+    const looping = {
+      ...created.document,
+      uiState: { ...created.document.uiState, loop: { enabled: true, start: 20, end: 40, sectionId } },
+    };
+    const moved = updateSection(looping, sectionId, { startTime: 24, endTime: 48 });
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.document.uiState.loop).toEqual({ enabled: true, start: 24, end: 48, sectionId });
+
+    const applied = applyAutomaticSections(moved.document, [
+      {
+        startTime: 0,
+        endTime: 24,
+        suggestedName: "Intro",
+        suggestedType: "intro",
+        confidence: 0.4,
+        structuralGroupId: null,
+      },
+      {
+        startTime: 10,
+        endTime: 30,
+        suggestedName: "Overlap",
+        suggestedType: "chorus",
+        confidence: 0.5,
+        structuralGroupId: "chorus",
+      },
+      {
+        startTime: 48,
+        endTime: 80,
+        suggestedName: "Outro",
+        suggestedType: "outro",
+        confidence: 0.42,
+        structuralGroupId: null,
+      },
+    ]);
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    expect(applied.document.sections.map((section) => [section.name, section.source])).toEqual([
+      ["Intro", "automatic"],
+      ["Verse", "manual"],
+      ["Outro", "automatic"],
+    ]);
+    expect(projectDocumentSchema.safeParse(applied.document).success).toBe(true);
+    expect(applyAutomaticSections(applied.document, []).ok).toBe(false);
   });
 });
