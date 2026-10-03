@@ -3,6 +3,8 @@ import type { DesktopPlatform, ListedFile } from "./types";
 const PREVIEW_KEY = "audiosous.preview.project";
 const files = new Map<string, File>();
 const texts = new Map<string, string>();
+const projectMedia = new Map<string, File>();
+const waveformCache = new Map<string, Uint8Array>();
 
 function rememberFile(file: File): ListedFile {
   const path = `local:${crypto.randomUUID()}:${file.name}`;
@@ -73,12 +75,30 @@ export const browserPlatform: DesktopPlatform = {
     if (json === undefined) throw new Error("That preview project is not open in this window.");
     return { projectFile, json };
   },
-  async readProjectMediaRange() {
-    throw new Error("Stem files are copied only in the desktop app.");
+  async readProjectMediaRange(_projectFile, relativePath, offset, length) {
+    const file = projectMedia.get(relativePath);
+    if (!file) throw new Error("That stem is not in this preview.");
+    return new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
   },
-  async projectMediaStatus(projectFile, relativePaths) {
-    void projectFile;
-    return relativePaths.map((relativePath) => ({ relativePath, exists: false, fileSizeBytes: 0 }));
+  async projectMediaStatus(_projectFile, relativePaths) {
+    return relativePaths.map((relativePath) => {
+      const file = projectMedia.get(relativePath);
+      return { relativePath, exists: file !== undefined, fileSizeBytes: file?.size ?? 0 };
+    });
+  },
+  rememberMedia(relativePath, sourcePath) {
+    const file = files.get(sourcePath);
+    if (file) projectMedia.set(relativePath, file);
+  },
+  async readProjectCache(_projectFile, relativePath) {
+    const bytes = waveformCache.get(relativePath);
+    return bytes ? bytes.slice() : null;
+  },
+  async writeProjectCache(_projectFile, relativePath, bytes) {
+    if (!relativePath.startsWith("cache/waveforms/") || relativePath.includes("..")) {
+      throw new Error("Waveform cache must stay inside cache/waveforms.");
+    }
+    waveformCache.set(relativePath, bytes.slice());
   },
   hasPreview() {
     return localStorage.getItem(PREVIEW_KEY) !== null;

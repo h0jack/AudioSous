@@ -11,7 +11,7 @@ Night Drive/
     └── project.amix
 ```
 
-`media/` holds copies of imported stems. `cache/` is reserved for waveform peaks and other derived data. `recovery/project.amix` is the last successful save, written beside the primary file so a crash during a later save still leaves a readable copy.
+`media/` holds copies of imported stems. `cache/waveforms/<trackId>.peaks` holds derived waveform peaks (not part of the schema, and safe to delete). `recovery/project.amix` is the last successful save, written beside the primary file so a crash during a later save still leaves a readable copy.
 
 Source files chosen at import are never modified.
 

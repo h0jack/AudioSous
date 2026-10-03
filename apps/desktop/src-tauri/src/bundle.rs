@@ -39,6 +39,180 @@ pub struct MediaStatus {
     pub file_size_bytes: u64,
 }
 
+pub fn validate_relative_cache_path(relative: &str) -> Result<(), String> {
+    let Some(name) = relative.strip_prefix("cache/waveforms/") else {
+        return Err("Waveform cache must stay inside cache/waveforms.".into());
+    };
+    if name.is_empty()
+        || relative.len() > 180
+        || relative.contains('\0')
+        || relative.contains('\\')
+        || name.contains('/')
+        || !name.ends_with(".peaks")
+    {
+        return Err("Waveform cache must stay inside cache/waveforms.".into());
+    }
+    let id = name.trim_end_matches(".peaks");
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err("Waveform cache must stay inside cache/waveforms.".into());
+    }
+    Ok(())
+}
+
+const MAX_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
+pub fn write_project_cache(
+    project_file: &Path,
+    relative: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if bytes.len() > MAX_CACHE_BYTES {
+        return Err("Waveform cache is too large.".into());
+    }
+    let path = resolve_cache_path(project_file, relative, true)?
+        .ok_or("Waveform cache folder does not exist.")?;
+    if path
+        .symlink_metadata()
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("Refusing to follow a cache symlink.".into());
+    }
+    let temporary = path.with_extension("tmp");
+    {
+        let mut file = File::create(&temporary).map_err(|error| error.to_string())?;
+        file.write_all(bytes).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+    }
+    fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub fn read_project_cache(project_file: &Path, relative: &str) -> Result<Option<Vec<u8>>, String> {
+    let Some(path) = resolve_cache_path(project_file, relative, false)? else {
+        return Ok(None);
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let meta = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+    if meta.file_type().is_symlink() {
+        return Err("Refusing to follow a cache symlink.".into());
+    }
+    if meta.len() > MAX_CACHE_BYTES as u64 {
+        return Err("Waveform cache is too large.".into());
+    }
+    fs::read(&path).map(Some).map_err(|error| error.to_string())
+}
+
+fn resolve_cache_path(
+    project_file: &Path,
+    relative: &str,
+    create: bool,
+) -> Result<Option<PathBuf>, String> {
+    validate_relative_cache_path(relative)?;
+    let bundle = bundle_dir_for(project_file)?
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let cache_root = bundle.join("cache").join("waveforms");
+    if create {
+        fs::create_dir_all(&cache_root).map_err(|error| error.to_string())?;
+    } else if !cache_root.exists() {
+        return Ok(None);
+    }
+    let cache_canonical = cache_root
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !cache_canonical.starts_with(&bundle) {
+        return Err("Waveform cache must stay inside the project.".into());
+    }
+    let file_name = Path::new(relative)
+        .file_name()
+        .ok_or("Waveform cache must stay inside cache/waveforms.")?;
+    Ok(Some(cache_canonical.join(file_name)))
+}
+
+pub fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut index = 0;
+    while index + 3 <= bytes.len() {
+        let value = ((bytes[index] as u32) << 16)
+            | ((bytes[index + 1] as u32) << 8)
+            | bytes[index + 2] as u32;
+        out.push(TABLE[((value >> 18) & 63) as usize] as char);
+        out.push(TABLE[((value >> 12) & 63) as usize] as char);
+        out.push(TABLE[((value >> 6) & 63) as usize] as char);
+        out.push(TABLE[(value & 63) as usize] as char);
+        index += 3;
+    }
+    let rest = bytes.len() - index;
+    if rest == 1 {
+        let value = (bytes[index] as u32) << 16;
+        out.push(TABLE[((value >> 18) & 63) as usize] as char);
+        out.push(TABLE[((value >> 12) & 63) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rest == 2 {
+        let value = ((bytes[index] as u32) << 16) | ((bytes[index + 1] as u32) << 8);
+        out.push(TABLE[((value >> 18) & 63) as usize] as char);
+        out.push(TABLE[((value >> 12) & 63) as usize] as char);
+        out.push(TABLE[((value >> 6) & 63) as usize] as char);
+        out.push('=');
+    }
+    out
+}
+
+pub fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() > MAX_CACHE_BYTES.div_ceil(3) * 4 {
+        return Err("Waveform cache is too large.".into());
+    }
+    if text.len() % 4 != 0 {
+        return Err("Waveform cache could not be read.".into());
+    }
+    fn value(byte: u8) -> Result<u8, String> {
+        match byte {
+            b'A'..=b'Z' => Ok(byte - b'A'),
+            b'a'..=b'z' => Ok(byte - b'a' + 26),
+            b'0'..=b'9' => Ok(byte - b'0' + 52),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err("Waveform cache could not be read.".into()),
+        }
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let padding = chunk.iter().rev().take_while(|byte| **byte == b'=').count();
+        if padding > 2 {
+            return Err("Waveform cache could not be read.".into());
+        }
+        let mut parts = [0_u8; 4];
+        for (index, byte) in chunk.iter().enumerate() {
+            parts[index] = if *byte == b'=' { 0 } else { value(*byte)? };
+        }
+        let combined = ((parts[0] as u32) << 18)
+            | ((parts[1] as u32) << 12)
+            | ((parts[2] as u32) << 6)
+            | parts[3] as u32;
+        out.push((combined >> 16) as u8);
+        if padding < 2 {
+            out.push((combined >> 8) as u8);
+        }
+        if padding < 1 {
+            out.push(combined as u8);
+        }
+    }
+    if out.len() > MAX_CACHE_BYTES {
+        return Err("Waveform cache is too large.".into());
+    }
+    Ok(out)
+}
+
 pub fn validate_relative_media_path(relative: &str) -> Result<(), String> {
     if relative.is_empty()
         || relative.len() > 512
@@ -406,6 +580,36 @@ mod tests {
         assert!(validate_relative_media_path("media/../secret.wav").is_err());
         assert!(validate_relative_media_path("/etc/passwd").is_err());
         assert!(validate_relative_media_path("notes.txt").is_err());
+        assert!(validate_relative_cache_path("cache/waveforms/track-kick.peaks").is_ok());
+        assert!(validate_relative_cache_path("cache/../secret.peaks").is_err());
+        assert!(validate_relative_cache_path("cache/waveforms/../secret.peaks").is_err());
+        assert!(validate_relative_cache_path("media/kick.peaks").is_err());
+    }
+
+    #[test]
+    fn waveform_cache_round_trip_stays_in_the_project() {
+        let root = temp_root("peaks");
+        let bundle = root.join("Song");
+        fs::create_dir_all(bundle.join("media")).unwrap();
+        let project = bundle.join("project.amix");
+        fs::write(&project, b"{}").unwrap();
+        let payload = b"ASPK-demo-peaks";
+        write_project_cache(&project, "cache/waveforms/track-kick.peaks", payload).unwrap();
+        let read = read_project_cache(&project, "cache/waveforms/track-kick.peaks")
+            .unwrap()
+            .unwrap();
+        assert_eq!(read, payload);
+        assert!(write_project_cache(&project, "media/track-kick.peaks", payload).is_err());
+        assert!(
+            read_project_cache(&project, "cache/waveforms/missing.peaks")
+                .unwrap()
+                .is_none()
+        );
+        for length in 0..8 {
+            let bytes: Vec<u8> = (0..length).map(|index| index * 17).collect();
+            assert_eq!(decode_base64(&encode_base64(&bytes)).unwrap(), bytes);
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

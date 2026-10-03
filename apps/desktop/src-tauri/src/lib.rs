@@ -102,6 +102,29 @@ fn read_project_file(project_file: String) -> Result<ReadProjectResponse, String
 }
 
 #[tauri::command]
+fn read_project_cache(
+    project_file: String,
+    relative_path: String,
+) -> Result<Option<String>, String> {
+    let bytes = bundle::read_project_cache(PathBuf::from(project_file).as_path(), &relative_path)?;
+    Ok(bytes.map(|value| bundle::encode_base64(&value)))
+}
+
+#[tauri::command]
+fn write_project_cache(
+    project_file: String,
+    relative_path: String,
+    base64_data: String,
+) -> Result<(), String> {
+    let bytes = bundle::decode_base64(&base64_data)?;
+    bundle::write_project_cache(
+        PathBuf::from(project_file).as_path(),
+        &relative_path,
+        &bytes,
+    )
+}
+
+#[tauri::command]
 fn append_log(app: AppHandle, line: String) -> Result<(), String> {
     let directory = app
         .path()
@@ -122,6 +145,8 @@ pub fn run() {
             create_project_bundle,
             write_project_file,
             read_project_file,
+            read_project_cache,
+            write_project_cache,
             append_log
         ])
         .run(tauri::generate_context!())

@@ -3,6 +3,15 @@ export interface ByteSource {
   readAt(offset: number, length: number): Promise<Uint8Array>;
 }
 
+export interface PcmLayout {
+  dataOffset: number;
+  dataBytes: number;
+  blockAlign: number;
+  encoding: "int" | "float";
+  littleEndian: boolean;
+  bitsPerSample: number;
+}
+
 export type AudioInspection =
   | {
       ok: true;
@@ -13,6 +22,7 @@ export type AudioInspection =
       durationSeconds: number;
       fileSizeBytes: number;
       truncated: boolean;
+      pcm: PcmLayout;
     }
   | {
       ok: false;
@@ -85,6 +95,7 @@ async function inspectWav(source: ByteSource, filename: string, rf64: boolean): 
   let dataSize: number | null = null;
   let dataOffset: number | null = null;
   let rf64DataSize: number | null = null;
+  let encoding: "int" | "float" | null = null;
 
   while (offset + 8 <= source.size) {
     const head = await readExact(source, offset, 8);
@@ -105,6 +116,7 @@ async function inspectWav(source: ByteSource, filename: string, rf64: boolean): 
       channelCount = parsed.channelCount;
       bitDepth = parsed.bitDepth;
       blockAlign = parsed.blockAlign;
+      encoding = parsed.encoding;
     } else if (id === "ds64" && rf64) {
       if (offset + 8 + 28 > source.size) {
         return fail(source.size, "unreadable", `${filename} has a broken RF64 header.`);
@@ -129,10 +141,17 @@ async function inspectWav(source: ByteSource, filename: string, rf64: boolean): 
     offset += 8 + padded;
   }
 
-  if (sampleRate === null || channelCount === null || blockAlign === null || dataOffset === null || dataSize === null) {
+  if (
+    sampleRate === null ||
+    channelCount === null ||
+    blockAlign === null ||
+    encoding === null ||
+    dataOffset === null ||
+    dataSize === null
+  ) {
     return fail(source.size, "unreadable", `${filename} is missing WAV format or audio data.`);
   }
-  if (sampleRate <= 0 || channelCount <= 0 || blockAlign <= 0) {
+  if (sampleRate <= 0 || channelCount <= 0 || blockAlign <= 0 || blockAlign % channelCount !== 0) {
     return fail(source.size, "unreadable", `${filename} has an invalid WAV format.`);
   }
 
@@ -148,6 +167,14 @@ async function inspectWav(source: ByteSource, filename: string, rf64: boolean): 
     durationSeconds: bytes / (sampleRate * blockAlign),
     fileSizeBytes: source.size,
     truncated,
+    pcm: {
+      dataOffset,
+      dataBytes: bytes,
+      blockAlign,
+      encoding,
+      littleEndian: true,
+      bitsPerSample: (blockAlign / channelCount) * 8,
+    },
   };
 }
 
@@ -156,6 +183,7 @@ function parseFmt(body: Uint8Array): {
   channelCount: number;
   bitDepth: number;
   blockAlign: number;
+  encoding: "int" | "float";
 } | null {
   const view = viewOf(body);
   const tag = view.getUint16(0, true);
@@ -173,7 +201,7 @@ function parseFmt(body: Uint8Array): {
     formatTag = view.getUint16(24, true);
   }
   if (formatTag !== 1 && formatTag !== 3) return null;
-  return { sampleRate, channelCount, bitDepth, blockAlign };
+  return { sampleRate, channelCount, bitDepth, blockAlign, encoding: formatTag === 3 ? "float" : "int" };
 }
 
 async function inspectAiff(source: ByteSource, filename: string, compressed: boolean): Promise<AudioInspection> {
@@ -182,6 +210,9 @@ async function inspectAiff(source: ByteSource, filename: string, compressed: boo
   let sampleRate: number | null = null;
   let bitDepth: number | null = null;
   let frames: number | null = null;
+  let littleEndian = false;
+  let encoding: "int" | "float" = "int";
+  let dataOffset: number | null = null;
 
   while (offset + 8 <= source.size) {
     const head = await readExact(source, offset, 8);
@@ -203,7 +234,16 @@ async function inspectAiff(source: ByteSource, filename: string, compressed: boo
         if (!allowed.has(compression)) {
           return fail(source.size, "unsupported", `${filename} uses ${compression.trim() || "compressed"} AIFF, which is not supported.`);
         }
+        littleEndian = compression === "sowt";
+        encoding = compression === "fl32" || compression === "fl64" ? "float" : "int";
       }
+    } else if (id === "SSND") {
+      if (offset + 16 > source.size || size < 8) {
+        return fail(source.size, "unreadable", `${filename} has a broken AIFF sound chunk.`);
+      }
+      const sound = await readExact(source, offset + 8, 8);
+      const soundOffset = viewOf(sound).getUint32(0, false);
+      dataOffset = offset + 16 + soundOffset;
     }
 
     const padded = size + (size % 2);
@@ -222,6 +262,12 @@ async function inspectAiff(source: ByteSource, filename: string, compressed: boo
     return fail(source.size, "unreadable", `${filename} is missing an AIFF common chunk.`);
   }
 
+  const bits = bitDepth && bitDepth > 0 ? bitDepth : 16;
+  const bytesPerSample = Math.ceil(bits / 8);
+  const blockAlign = channelCount * bytesPerSample;
+  const declared = frames * blockAlign;
+  const available = dataOffset === null ? 0 : Math.max(0, source.size - dataOffset);
+  const dataBytes = Math.min(declared, available);
   return {
     ok: true,
     format: "aiff",
@@ -230,7 +276,15 @@ async function inspectAiff(source: ByteSource, filename: string, compressed: boo
     bitDepth,
     durationSeconds: frames / sampleRate,
     fileSizeBytes: source.size,
-    truncated: false,
+    truncated: dataOffset !== null && declared > available,
+    pcm: {
+      dataOffset: dataOffset ?? 0,
+      dataBytes,
+      blockAlign,
+      encoding,
+      littleEndian,
+      bitsPerSample: bytesPerSample * 8,
+    },
   };
 }
 

@@ -35,6 +35,9 @@ export interface DesktopPlatform {
   readProject(projectFile: string): Promise<{ projectFile: string; json: string }>;
   readProjectMediaRange(projectFile: string, relativePath: string, offset: number, length: number): Promise<Uint8Array>;
   projectMediaStatus(projectFile: string, relativePaths: string[]): Promise<MediaStatus[]>;
+  rememberMedia(relativePath: string, sourcePath: string): void;
+  readProjectCache(projectFile: string, relativePath: string): Promise<Uint8Array | null>;
+  writeProjectCache(projectFile: string, relativePath: string, bytes: Uint8Array): Promise<void>;
   hasPreview(): boolean;
   readPreview(): string | null;
   appendLog(line: string): Promise<void>;

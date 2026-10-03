@@ -17,7 +17,7 @@ Audiosous/
 └── test-assets/           Reserved for generated stems in a later slice
 ```
 
-`packages/timeline` and `packages/ui` are intentionally absent. The timeline is the next slice, and splitting components into a package before there is a timeline would only move files around.
+`packages/timeline` and `packages/ui` are intentionally absent. The timeline lives in the desktop app until it is large enough to split out.
 
 Dependency direction:
 
@@ -59,7 +59,7 @@ Persisted now, and left empty until later slices fill them in:
 
 `schemaVersion` is required. `migrateProject` walks registered migrations until the current version, then validates. A newer file is refused with an update message. Unknown future fields are not silently kept inside a v1 document.
 
-Waveform peaks will not be embedded in `project.amix`. They will go in the bundle `cache/` directory so the project file stays small and readable.
+Waveform peaks are not embedded in `project.amix`. Each stem is measured once into min/max pairs at 256, 1024, and 4096 frames, then written to `cache/waveforms/<trackId>.peaks`. The project screen draws every lane from that cache on one horizontal scale. Zoom chooses the coarsest level that still has at least one peak per pixel. The PCM used to build the peaks is discarded.
 
 ## Audio engine
 
@@ -150,4 +150,4 @@ Structured events for this slice: `project.create`, `project.open`, `project.sav
 
 Included: application shell, schema version 1, migration runner, WAV/AIFF inspection, role guesses, import warnings, project bundle create, save, and reopen.
 
-Not included: waveforms, timeline, playback, mixer controls, section editing, undo, and autosave beyond the recovery copy written on each explicit save.
+Not included: playback, mixer controls, section editing, undo, and autosave beyond the recovery copy written on each explicit save. The timeline draws cached waveforms, a playhead, section boundaries, and a selected range.

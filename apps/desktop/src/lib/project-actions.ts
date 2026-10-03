@@ -45,6 +45,9 @@ export async function createProjectFromStems(input: {
   } else {
     await input.platform.writeProject(projectFile, projectJson, { download: false });
   }
+  for (const copy of copies) {
+    input.platform.rememberMedia(copy.relativePath, copy.sourcePath);
+  }
 
   await logEvent(input.platform, "info", "project.create", "Created a project.", {
     name: document.project.name,

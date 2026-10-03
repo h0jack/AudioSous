@@ -9,8 +9,8 @@ The product target is an AI-assisted visual mixer. Processing is out of scope un
 | 1. Repository and application shell | Done |
 | 2. Project schema | Done |
 | 3. Stem import | Done |
-| 4. Waveform cache | Not started |
-| 5. Timeline | Not started |
+| 4. Waveform cache | Done. Peaks are measured per stem and stored in `cache/waveforms/` |
+| 5. Timeline | Shared scale, zoom, scroll, vertical scale, playhead, section boundaries, and selected range are drawn. Transport is not started |
 | 6. Audio engine implementation | Interface only |
 | 7. Synchronized transport | Not started |
 | 8. Mixer controls | Schema reserved; UI not started |

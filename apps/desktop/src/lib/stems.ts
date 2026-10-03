@@ -44,6 +44,14 @@ export function demoStems(): PendingStem[] {
       durationSeconds: 241.72,
       fileSizeBytes: 34_807_296,
       truncated: false,
+      pcm: {
+        dataOffset: 44,
+        dataBytes: 0,
+        blockAlign: 6,
+        encoding: "int",
+        littleEndian: true,
+        bitsPerSample: 24,
+      },
     }),
   );
 }

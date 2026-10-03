@@ -18,6 +18,22 @@ async function bytesFrom(command: string, args: Record<string, unknown>): Promis
   return Uint8Array.from(values);
 }
 
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + chunk)));
+  }
+  return btoa(binary);
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
 export const tauriPlatform: DesktopPlatform = {
   kind: "tauri",
   async pickAudioFiles() {
@@ -81,6 +97,14 @@ export const tauriPlatform: DesktopPlatform = {
   },
   projectMediaStatus(projectFile, relativePaths) {
     return invoke<MediaStatus[]>("project_media_status", { projectFile, relativePaths });
+  },
+  rememberMedia() {},
+  async readProjectCache(projectFile, relativePath) {
+    const encoded = await invoke<string | null>("read_project_cache", { projectFile, relativePath });
+    return encoded ? decodeBase64(encoded) : null;
+  },
+  async writeProjectCache(projectFile, relativePath, bytes) {
+    await invoke("write_project_cache", { projectFile, relativePath, base64Data: encodeBase64(bytes) });
   },
   hasPreview() {
     return false;
