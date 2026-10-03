@@ -1,16 +1,21 @@
 import type { ProjectDocument } from "@audiosous/project-model";
+import type { LoopRegion } from "./transport";
 
 export const AUDIO_ENGINE_INTERFACE_VERSION = 1;
 
-/** Turns a bundle-relative media path into an absolute path the shell has already checked. */
-export interface MediaResolver {
-  resolve(relativePath: string): string;
+export interface PcmStream {
+  sampleRate: number;
+  channelCount: number;
+  readFrames(frameOffset: number, frameCount: number): Promise<Float32Array[]>;
 }
 
-export interface LoopRegion {
-  startSeconds: number;
-  endSeconds: number;
+/** Turns a bundle-relative media path into media the shell has already checked. */
+export interface MediaResolver {
+  resolve(relativePath: string): string;
+  open?(relativePath: string): Promise<PcmStream | null>;
 }
+
+export type { LoopRegion };
 
 /**
  * One transport clock for every stem.
@@ -36,6 +41,18 @@ export interface AudioEngine {
   getDuration(): number;
   dispose(): void;
 }
+
+export { createStreamingEngine } from "./streaming";
+export type { AudioOutput, ScheduledSlice, StreamingEngine } from "./streaming";
+export {
+  PLAYBACK_LOOKAHEAD_SECONDS,
+  PLAYBACK_START_DELAY_SECONDS,
+  PLAYBACK_WINDOW_SECONDS,
+  gainLinear,
+  planCues,
+  projectTimeAt,
+  trackIsAudible,
+} from "./transport";
 
 export function createUnboundAudioEngine(): AudioEngine {
   const unavailable = (): never => {

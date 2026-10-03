@@ -10,6 +10,7 @@ import {
 } from "@audiosous/audio-files";
 import { formatClock, type ProjectDocument, type SongSection, type UiState } from "@audiosous/project-model";
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { usePlayback } from "../lib/playback";
 import { editTrack } from "../lib/project-actions";
 import type { LoadedWaveform } from "../lib/waveforms";
 import { isTauri } from "../platform";
@@ -17,24 +18,27 @@ import { useAppStore } from "../state/app-store";
 import { RoleSelect } from "./ui";
 
 const NAME_WIDTH = 232;
-const ROW_HEIGHT = 96;
+const ROW_HEIGHT = 156;
 const RULER_HEIGHT = 32;
 const AMPLITUDES = [0.5, 1, 2, 4];
 
 export function Timeline({
   document,
+  projectFile,
   waveforms,
   status,
 }: {
   document: ProjectDocument;
+  projectFile: string | null;
   waveforms: Record<string, LoadedWaveform | undefined>;
   status: string | null;
 }) {
   const projectId = document.project.id;
   const duration = Math.max(document.project.durationSeconds, 0.001);
+  const playback = usePlayback(document, projectFile);
+  const { playhead, playing, seek } = playback;
   const [zoom, setZoom] = useState(() => clampTimelineZoom(document.uiState.timelineZoom));
   const [scrollSeconds, setScrollSeconds] = useState(document.uiState.timelineScroll);
-  const [playhead, setPlayhead] = useState(document.uiState.playheadSeconds);
   const [range, setRange] = useState(document.uiState.timeRange);
   const [amplitude, setAmplitude] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(960);
@@ -54,7 +58,6 @@ export function Timeline({
     if (!ui) return;
     setZoom(clampTimelineZoom(ui.timelineZoom));
     setScrollSeconds(ui.timelineScroll);
-    setPlayhead(ui.playheadSeconds);
     setRange(ui.timeRange);
   }, [projectId]);
 
@@ -164,9 +167,9 @@ export function Timeline({
     const current = drag.current;
     drag.current = null;
     if (!current) return;
-    if (!current.moved) {
+      if (!current.moved) {
       const time = timeAt(event);
-      setPlayhead(time);
+      seek(time);
       commitNow({ playheadSeconds: time, selectedTrackId: current.trackId });
       return;
     }
@@ -196,6 +199,20 @@ export function Timeline({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+        <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => void playback.toggle()}>
+          {playing ? "Pause" : "Play"}
+        </button>
+        <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => playback.stop()}>
+          Stop
+        </button>
+        <button
+          type="button"
+          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs disabled:opacity-40"
+          disabled={!range && !playback.looping}
+          onClick={() => playback.setLoopEnabled(!playback.looping)}
+        >
+          {playback.looping ? "Looping" : "Loop"}
+        </button>
         <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => zoomAround(zoom / 1.25)}>
           Zoom out
         </button>
@@ -280,14 +297,51 @@ export function Timeline({
                       onChange={(event) => editTrack(track.id, { customLabel: event.target.value || null })}
                       className="mt-1 w-full rounded-md border border-line bg-canvas px-2 py-1 text-xs"
                     />
-                  ) : (
-                    <p className="mt-1 truncate px-1 text-[11px] text-faint" title={track.file.filename}>
-                      {track.file.filename}
-                    </p>
-                  )}
+                  ) : null}
+                  <div className="mt-1 flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-pressed={track.muted}
+                      aria-label={`Mute ${track.name}`}
+                      className={`rounded px-1.5 py-0.5 text-[11px] ${track.muted ? "bg-accent text-accent-ink" : "bg-canvas text-muted"}`}
+                      onClick={() => editTrack(track.id, { muted: !track.muted })}
+                    >
+                      M
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={track.solo}
+                      aria-label={`Solo ${track.name}`}
+                      className={`rounded px-1.5 py-0.5 text-[11px] ${track.solo ? "bg-accent text-accent-ink" : "bg-canvas text-muted"}`}
+                      onClick={() => editTrack(track.id, { solo: !track.solo })}
+                    >
+                      S
+                    </button>
+                    <input
+                      type="range"
+                      min={-24}
+                      max={12}
+                      step={0.5}
+                      value={Math.min(12, Math.max(-24, track.gainDb))}
+                      aria-label={`Gain for ${track.name}`}
+                      onChange={(event) => editTrack(track.id, { gainDb: Number(event.target.value) })}
+                      className="w-full"
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min={-100}
+                    max={100}
+                    step={1}
+                    value={Math.round(track.pan * 100)}
+                    aria-label={`Pan for ${track.name}`}
+                    title={track.file.filename}
+                    onChange={(event) => editTrack(track.id, { pan: Number(event.target.value) / 100 })}
+                    className="mt-1 w-full"
+                  />
                 </div>
                 <div
-                  className="sticky shrink-0 cursor-crosshair touch-none select-none"
+                  className="relative sticky shrink-0 cursor-crosshair touch-none select-none"
                   role="button"
                   tabIndex={0}
                   aria-label={`Waveform for ${track.name}`}
@@ -299,7 +353,7 @@ export function Timeline({
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
                     const time = Math.min(duration, Math.max(0, scrollSeconds + laneWidth / pps / 2));
-                    setPlayhead(time);
+                    seek(time);
                     commitNow({ playheadSeconds: time, selectedTrackId: track.id });
                   }}
                 >
@@ -311,10 +365,10 @@ export function Timeline({
                     scrollSeconds={scrollSeconds}
                     amplitude={amplitude}
                     color={waveform && !waveform.measured ? "#736e66" : selected ? "#e0a04a" : "#c4924a"}
-                    playhead={playhead}
                     range={range}
                     sections={document.sections}
                   />
+                  <div className="pointer-events-none absolute inset-y-0 w-px bg-ink" style={{ left: timeToX(playhead, pps, scrollSeconds) }} />
                 </div>
               </div>
             );
@@ -353,7 +407,6 @@ function WaveformCanvas({
   scrollSeconds,
   amplitude,
   color,
-  playhead,
   range,
   sections,
 }: {
@@ -364,7 +417,6 @@ function WaveformCanvas({
   scrollSeconds: number;
   amplitude: number;
   color: string;
-  playhead: number;
   range: { start: number; end: number } | null;
   sections: SongSection[];
 }) {
@@ -422,13 +474,7 @@ function WaveformCanvas({
       }
     }
     ctx.setLineDash([]);
-    const playheadX = timeToX(playhead, pixelsPerSecond, scrollSeconds);
-    ctx.strokeStyle = "#f3efe6";
-    ctx.beginPath();
-    ctx.moveTo(playheadX + 0.5, 0);
-    ctx.lineTo(playheadX + 0.5, height);
-    ctx.stroke();
-  }, [peaks, width, height, pixelsPerSecond, scrollSeconds, amplitude, color, playhead, range, sections]);
+  }, [peaks, width, height, pixelsPerSecond, scrollSeconds, amplitude, color, range, sections]);
 
   return <canvas ref={ref} className="block h-full w-full" />;
 }

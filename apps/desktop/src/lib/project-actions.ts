@@ -91,7 +91,18 @@ export async function saveOpenProject(platform: DesktopPlatform): Promise<void> 
   });
 }
 
-export function editTrack(trackId: string, patch: { name?: string; role?: TrackRole; customLabel?: string | null }): void {
+export function editTrack(
+  trackId: string,
+  patch: {
+    name?: string;
+    role?: TrackRole;
+    customLabel?: string | null;
+    gainDb?: number;
+    pan?: number;
+    muted?: boolean;
+    solo?: boolean;
+  },
+): void {
   const document = useAppStore.getState().document;
   if (!document) return;
   useAppStore.getState().replaceDocument(updateTrack(document, trackId, patch), true);

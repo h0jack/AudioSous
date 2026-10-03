@@ -1,3 +1,4 @@
+export { decodePcmFrames } from "./decode";
 export { bufferSource, decodeExtended80, encodeExtended80, inspectAudioFile } from "./inspect";
 export type { AudioInspection, ByteSource, PcmLayout } from "./inspect";
 export {

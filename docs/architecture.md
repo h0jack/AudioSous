@@ -10,7 +10,7 @@ Audiosous/
 ├── packages/
 │   ├── project-model/     Versioned .amix schema, migrations, roles, import checks
 │   ├── audio-files/       WAV and AIFF header inspection (no full decode)
-│   ├── audio-engine/      Playback interface only, until the transport slice
+│   ├── audio-engine/      One playback clock. Stems are read in short windows.
 │   └── analysis-contract/ Versioned JSON DTOs for the future analysis sidecar
 ├── services/analysis/     Python package boundary. The UI does not import it.
 ├── docs/
@@ -63,7 +63,7 @@ Waveform peaks are not embedded in `project.amix`. Each stem is measured once in
 
 ## Audio engine
 
-`packages/audio-engine` exports the contract the timeline and mixer will call. This slice does not play audio.
+`packages/audio-engine` owns the transport. Every stem is scheduled from one `AudioContext` clock in short PCM windows. The whole stem is never decoded into memory. Mute, solo, gain, and pan are applied on that clock. Looping a selected range wraps on the same clock.
 
 ```typescript
 interface AudioEngine {
@@ -126,7 +126,7 @@ This slice does not spawn Python and does not add analysis libraries.
 
 ## Tauri and Web Audio
 
-Synchronized playback is not implemented yet. These constraints are part of the engine boundary so the timeline does not grow around the webview:
+Synchronized playback uses these constraints:
 
 1. **Memory.** `decodeAudioData` turns each stem into a full float32 buffer. A 32-stem, 10-minute, 48 kHz stereo session is on the order of 7 GB of PCM before the UI exists. The Milestone 1 engine must not decode every stem into an `AudioBuffer` at once. The interface is here so a streaming native backend can replace the webview engine without a timeline rewrite.
 
@@ -150,4 +150,4 @@ Structured events for this slice: `project.create`, `project.open`, `project.sav
 
 Included: application shell, schema version 1, migration runner, WAV/AIFF inspection, role guesses, import warnings, project bundle create, save, and reopen.
 
-Not included: playback, mixer controls, section editing, undo, and autosave beyond the recovery copy written on each explicit save. The timeline draws cached waveforms, a playhead, section boundaries, and a selected range.
+Not included: section editing, undo, and autosave beyond the recovery copy written on each explicit save. Playback, mute, solo, gain, pan, and looping a selected range use the shared clock.

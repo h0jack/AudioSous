@@ -132,7 +132,7 @@ export function withUpdatedAt(document: ProjectDocument, now = new Date()): Proj
 export function updateTrack(
   document: ProjectDocument,
   trackId: string,
-  patch: Partial<Pick<Track, "name" | "role" | "customLabel">>,
+  patch: Partial<Pick<Track, "name" | "role" | "customLabel" | "gainDb" | "pan" | "muted" | "solo">>,
 ): ProjectDocument {
   return {
     ...document,

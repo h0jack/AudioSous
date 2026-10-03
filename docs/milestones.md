@@ -10,14 +10,14 @@ The product target is an AI-assisted visual mixer. Processing is out of scope un
 | 2. Project schema | Done |
 | 3. Stem import | Done |
 | 4. Waveform cache | Done. Peaks are measured per stem and stored in `cache/waveforms/` |
-| 5. Timeline | Shared scale, zoom, scroll, vertical scale, playhead, section boundaries, and selected range are drawn. Transport is not started |
-| 6. Audio engine implementation | Interface only |
-| 7. Synchronized transport | Not started |
-| 8. Mixer controls | Schema reserved; UI not started |
+| 5. Timeline | Shared scale, zoom, scroll, vertical scale, playhead, section boundaries, and selected range |
+| 6. Audio engine implementation | Done. One clock schedules short PCM windows |
+| 7. Synchronized transport | Play, pause, stop, and seek share that clock |
+| 8. Mixer controls | Mute, solo, gain, and pan are on each lane |
 | 9. Selection model editing | Schema reserved; UI not started |
 | 10. Manual sections | Not started |
 | 11. Section and track intent editing | Schema reserved; UI not started |
-| 12. Looping | Interface reserved; not started |
+| 12. Looping | A selected range can loop on the shared clock. Dedicated loop editing is not started |
 | 13. Undo / redo | Not started |
 | 14. Save / reopen | Explicit save, recovery copy, and reopen work. Autosave-on-edit is not started |
 | 15. Experimental section detection | Contract reserved; not started |
