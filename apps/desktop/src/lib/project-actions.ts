@@ -3,6 +3,9 @@ import {
   deserializeProject,
   sanitizeBundleName,
   serializeProject,
+  addManualSection,
+  removeSection,
+  updateSection,
   updateTrack,
   withUpdatedAt,
   type ImportWarning,
@@ -106,6 +109,33 @@ export function editTrack(
   const document = useAppStore.getState().document;
   if (!document) return;
   useAppStore.getState().replaceDocument(updateTrack(document, trackId, patch), true);
+}
+
+export function addSectionFromRange(startTime: number, endTime: number): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const result = addManualSection(document, { startTime, endTime });
+  if (!result.ok) return result.message;
+  useAppStore.getState().replaceDocument(result.document, true);
+  return null;
+}
+
+export function editSection(
+  sectionId: string,
+  patch: { name?: string; type?: ProjectDocument["sections"][number]["type"]; startTime?: number; endTime?: number },
+): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const result = updateSection(document, sectionId, patch);
+  if (!result.ok) return result.message;
+  useAppStore.getState().replaceDocument(result.document, true);
+  return null;
+}
+
+export function deleteSection(sectionId: string): void {
+  const document = useAppStore.getState().document;
+  if (!document) return;
+  useAppStore.getState().replaceDocument(removeSection(document, sectionId), true);
 }
 
 export function editProjectName(name: string): void {

@@ -14,8 +14,8 @@ The product target is an AI-assisted visual mixer. Processing is out of scope un
 | 6. Audio engine implementation | Done. One clock schedules short PCM windows |
 | 7. Synchronized transport | Play, pause, stop, and seek share that clock |
 | 8. Mixer controls | Mute, solo, gain, and pan are on each lane |
-| 9. Selection model editing | Schema reserved; UI not started |
-| 10. Manual sections | Not started |
+| 9. Selection model editing | A lane click selects the track. A drag selects a time range. A section mark selects that section |
+| 10. Manual sections | A selected range becomes a named section. Name, type, bounds, and deletion are saved with the project |
 | 11. Section and track intent editing | Schema reserved; UI not started |
 | 12. Looping | A selected range can loop on the shared clock. Dedicated loop editing is not started |
 | 13. Undo / redo | Not started |

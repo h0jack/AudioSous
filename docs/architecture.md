@@ -48,7 +48,7 @@ There is no cloud client, account system, or upload step.
 
 ## Project schema
 
-The on-disk document is schema version 1. The shape is **song → sections → tracks → track × section**, even though this slice only edits tracks.
+The on-disk document is schema version 1. The shape is **song → sections → tracks → track × section**. Tracks and manual sections can be edited. Track × section intent is still empty.
 
 Persisted now, and left empty until later slices fill them in:
 

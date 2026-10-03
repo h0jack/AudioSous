@@ -8,10 +8,18 @@ import {
   xToTime,
   type WaveformPeaks,
 } from "@audiosous/audio-files";
-import { formatClock, type ProjectDocument, type SongSection, type UiState } from "@audiosous/project-model";
+import {
+  SECTION_TYPE_LABELS,
+  SECTION_TYPES,
+  formatClock,
+  type ProjectDocument,
+  type SectionType,
+  type SongSection,
+  type UiState,
+} from "@audiosous/project-model";
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { usePlayback } from "../lib/playback";
-import { editTrack } from "../lib/project-actions";
+import { addSectionFromRange, deleteSection, editSection, editTrack } from "../lib/project-actions";
 import type { LoadedWaveform } from "../lib/waveforms";
 import { isTauri } from "../platform";
 import { useAppStore } from "../state/app-store";
@@ -41,6 +49,7 @@ export function Timeline({
   const [scrollSeconds, setScrollSeconds] = useState(document.uiState.timelineScroll);
   const [range, setRange] = useState(document.uiState.timeRange);
   const [amplitude, setAmplitude] = useState(1);
+  const [sectionError, setSectionError] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(960);
   const viewportRef = useRef<HTMLDivElement>(null);
   const pending = useRef<Partial<UiState>>({});
@@ -213,6 +222,17 @@ export function Timeline({
         >
           {playback.looping ? "Looping" : "Loop"}
         </button>
+        <button
+          type="button"
+          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs disabled:opacity-40"
+          disabled={!range}
+          onClick={() => {
+            if (!range) return;
+            setSectionError(addSectionFromRange(range.start, range.end));
+          }}
+        >
+          Add section
+        </button>
         <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => zoomAround(zoom / 1.25)}>
           Zoom out
         </button>
@@ -248,6 +268,7 @@ export function Timeline({
           Playhead {formatClock(playhead)}
           {range ? ` · Range ${formatClock(range.start)}–${formatClock(range.end)}` : ""}
         </p>
+        {sectionError ? <p className="text-xs text-muted">{sectionError}</p> : null}
         <p className="ml-auto text-xs text-faint">
           {status ??
             (anyPreview
@@ -257,6 +278,15 @@ export function Timeline({
                 : "Peaks were measured from the files in this window.")}
         </p>
       </div>
+      <SectionEditor
+        document={document}
+        range={range}
+        onError={setSectionError}
+        onSelectRange={(next) => {
+          setRange(next);
+          commitNow({ timeRange: next });
+        }}
+      />
       <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
         <div style={{ width: NAME_WIDTH + contentWidth, minHeight: "100%" }}>
           <div className="sticky top-0 z-20 flex border-b border-line bg-canvas" style={{ width: NAME_WIDTH + contentWidth, height: RULER_HEIGHT }}>
@@ -268,7 +298,19 @@ export function Timeline({
                 </span>
               ))}
               {document.sections.map((section) => (
-                <SectionMark key={section.id} section={section} pixelsPerSecond={pps} scrollSeconds={scrollSeconds} />
+                <SectionMark
+                  key={section.id}
+                  section={section}
+                  selected={section.id === document.uiState.selectedSectionId}
+                  pixelsPerSecond={pps}
+                  scrollSeconds={scrollSeconds}
+                  onSelect={() => {
+                    const next = { start: section.startTime, end: section.endTime };
+                    setRange(next);
+                    setSectionError(null);
+                    commitNow({ selectedSectionId: section.id, timeRange: next });
+                  }}
+                />
               ))}
             </div>
           </div>
@@ -379,23 +421,122 @@ export function Timeline({
   );
 }
 
+function SectionEditor({
+  document,
+  range,
+  onError,
+  onSelectRange,
+}: {
+  document: ProjectDocument;
+  range: { start: number; end: number } | null;
+  onError: (message: string | null) => void;
+  onSelectRange: (range: { start: number; end: number }) => void;
+}) {
+  const selected = document.sections.find((section) => section.id === document.uiState.selectedSectionId);
+  if (!selected) return null;
+  const rangeDiffers =
+    range !== null && (Math.abs(range.start - selected.startTime) >= 0.001 || Math.abs(range.end - selected.endTime) >= 0.001);
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+      <SectionNameField sectionId={selected.id} name={selected.name} onError={onError} />
+      <select
+        value={selected.type ?? ""}
+        aria-label="Section type"
+        onChange={(event) => {
+          const type = event.target.value ? (event.target.value as SectionType) : null;
+          onError(editSection(selected.id, { type }));
+        }}
+        className="rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+      >
+        <option value="">No type</option>
+        {SECTION_TYPES.map((type) => (
+          <option key={type} value={type}>
+            {SECTION_TYPE_LABELS[type]}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs disabled:opacity-40"
+        disabled={!rangeDiffers}
+        onClick={() => {
+          if (!range) return;
+          const message = editSection(selected.id, { startTime: range.start, endTime: range.end });
+          onError(message);
+          if (!message) onSelectRange(range);
+        }}
+        >
+        Use range
+      </button>
+      <button
+        type="button"
+        className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"
+        onClick={() => {
+          deleteSection(selected.id);
+          onError(null);
+        }}
+      >
+        Delete section
+      </button>
+      <p className="font-mono text-xs text-muted">
+        {formatClock(selected.startTime)}–{formatClock(selected.endTime)}
+      </p>
+    </div>
+  );
+}
+
+function SectionNameField({
+  sectionId,
+  name,
+  onError,
+}: {
+  sectionId: string;
+  name: string;
+  onError: (message: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  useEffect(() => setDraft(name), [sectionId, name]);
+  return (
+    <input
+      value={draft}
+      aria-label="Section name"
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        if (!next.trim()) return;
+        onError(editSection(sectionId, { name: next }));
+      }}
+      onBlur={() => setDraft(name)}
+      className="w-40 rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+    />
+  );
+}
+
 function SectionMark({
   section,
+  selected,
   pixelsPerSecond,
   scrollSeconds,
+  onSelect,
 }: {
   section: SongSection;
+  selected: boolean;
   pixelsPerSecond: number;
   scrollSeconds: number;
+  onSelect: () => void;
 }) {
   const x = timeToX(section.startTime, pixelsPerSecond, scrollSeconds);
   return (
-    <span
-      className={`absolute top-0 h-full border-l text-[10px] text-muted ${section.source === "automatic" ? "border-dashed" : ""}`}
-      style={{ left: x, borderColor: "rgba(243,239,230,0.45)" }}
+    <button
+      type="button"
+      aria-label={`Section ${section.name}`}
+      aria-pressed={selected}
+      className={`absolute top-0 h-full border-l text-left text-[10px] ${selected ? "text-accent" : "text-muted"} ${section.source === "automatic" ? "border-dashed" : ""}`}
+      style={{ left: x, borderColor: selected ? "var(--color-accent)" : "rgba(243,239,230,0.45)" }}
+      onClick={onSelect}
     >
       <span className="ml-1">{section.name}</span>
-    </span>
+    </button>
   );
 }
 
