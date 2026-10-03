@@ -4,6 +4,7 @@ coverage/
 .DS_Store
 *.log
 .vite/
+test-assets/**/*.wav
 
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/

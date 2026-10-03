@@ -66,21 +66,47 @@ export type SectionAnalysisResult = z.infer<typeof sectionAnalysisResultSchema>;
 
 const MIN_SECTION_SECONDS = 8;
 
+export interface StemEnergy {
+  role: string;
+  energy: number[];
+}
+
 /**
- * Experimental section guess from a normalized energy envelope.
- * A later sidecar can return the same contract. This function does not read audio files.
+ * Experimental section guess from cached stem energy.
+ * Cuts come from energy change plus how many stems are active. Labels use arrangement
+ * heuristics (intro, build, drop, breakdown, outro). Similar shapes share a group id.
+ * Spectral centroid, chroma, and tempo stay on the analysis contract for a later sidecar;
+ * this pass does not decode PCM and does not start Python.
  */
-export function suggestSections(input: { durationSeconds: number; energy: number[] }): SectionAnalysisResult {
+export function suggestSections(input: { durationSeconds: number; energy: number[]; stems?: StemEnergy[] }): SectionAnalysisResult {
   const duration = input.durationSeconds;
-  const energy = input.energy.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0));
+  const energy = sanitize(input.energy);
   if (duration < MIN_SECTION_SECONDS || energy.length < 8) {
     return { contractVersion: ANALYSIS_CONTRACT_VERSION, suggestions: [] };
   }
   const peak = Math.max(...energy);
   if (peak <= 0) return { contractVersion: ANALYSIS_CONTRACT_VERSION, suggestions: [] };
   const normal = energy.map((value) => value / peak);
+  const stems = (input.stems ?? [])
+    .map((stem) => {
+      const values = resample(sanitize(stem.energy), normal.length);
+      const stemPeak = Math.max(...values);
+      return { role: stem.role, values, peak: stemPeak };
+    })
+    .filter((stem) => stem.peak > 0.02);
+  const activity = normal.map((_, index) => {
+    if (stems.length === 0) return normal[index] ?? 0;
+    const active = stems.filter((stem) => (stem.values[index] ?? 0) / stem.peak > 0.35).length;
+    return active / stems.length;
+  });
   const smooth = movingAverage(normal, Math.max(3, Math.round(normal.length / 48)));
-  const novelty = smooth.map((value, index) => Math.abs(value - (smooth[index - 1] ?? value)));
+  const smoothActivity = movingAverage(activity, Math.max(3, Math.round(activity.length / 48)));
+  const novelty = smooth.map((value, index) => {
+    const energyChange = Math.abs(value - (smooth[index - 1] ?? value));
+    const currentActivity = smoothActivity[index] ?? 0;
+    const activityChange = Math.abs(currentActivity - (smoothActivity[index - 1] ?? currentActivity));
+    return energyChange + activityChange * 0.65;
+  });
   const strongest = Math.max(...novelty);
   if (strongest < 0.02) return { contractVersion: ANALYSIS_CONTRACT_VERSION, suggestions: [] };
 
@@ -99,8 +125,7 @@ export function suggestSections(input: { durationSeconds: number; energy: number
   }
   cuts.push(roundSeconds(duration));
 
-  const suggestions = [];
-  const counts = new Map<string, number>();
+  const drafts = [];
   for (let index = 0; index < cuts.length - 1; index += 1) {
     const startTime = cuts[index] ?? 0;
     const endTime = cuts[index + 1] ?? duration;
@@ -108,30 +133,109 @@ export function suggestSections(input: { durationSeconds: number; energy: number
     const from = Math.round((startTime / duration) * (smooth.length - 1));
     const to = Math.max(from + 1, Math.round((endTime / duration) * (smooth.length - 1)));
     const slice = smooth.slice(from, to);
-    const mean = slice.reduce((sum, value) => sum + value, 0) / Math.max(1, slice.length);
+    const mean = average(slice);
+    const rise = average(slice.slice(Math.floor(slice.length * 0.7))) - average(slice.slice(0, Math.max(1, Math.ceil(slice.length * 0.3))));
+    const lowEnergy = roleMean(stems, LOW_ROLES, from, to);
+    const kind = labelRegion(index, cuts.length - 1, mean, rise, lowEnergy);
     const boundary = Math.max(novelty[from] ?? 0, novelty[Math.min(novelty.length - 1, to)] ?? 0);
-    const kind = kindFor(index, cuts.length - 1, mean);
-    const seen = (counts.get(kind.type) ?? 0) + 1;
-    counts.set(kind.type, seen);
-    suggestions.push({
+    drafts.push({
       startTime,
       endTime,
-      suggestedName: seen === 1 ? kind.label : `${kind.label} ${seen}`,
-      suggestedType: kind.type,
-      confidence: roundSeconds(Math.min(0.85, 0.34 + 0.5 * (boundary / strongest))),
-      structuralGroupId: kind.group,
+      kind,
+      profile: resample(slice, 8),
+      mean,
+      confidence: roundSeconds(Math.min(0.9, 0.34 + 0.5 * (boundary / strongest))),
     });
   }
+  const groups = assignGroups(drafts.map((draft) => ({ bins: draft.profile, mean: draft.mean })));
+  const counts = new Map<string, number>();
+  const suggestions = drafts.map((draft, index) => {
+    const seen = (counts.get(draft.kind.type) ?? 0) + 1;
+    counts.set(draft.kind.type, seen);
+    return {
+      startTime: draft.startTime,
+      endTime: draft.endTime,
+      suggestedName: seen === 1 ? draft.kind.label : `${draft.kind.label} ${seen}`,
+      suggestedType: draft.kind.type,
+      confidence: draft.confidence,
+      structuralGroupId: groups[index] ?? null,
+    };
+  });
   const parsed = sectionAnalysisResultSchema.safeParse({ contractVersion: ANALYSIS_CONTRACT_VERSION, suggestions });
   return parsed.success ? parsed.data : { contractVersion: ANALYSIS_CONTRACT_VERSION, suggestions: [] };
 }
 
-function kindFor(index: number, count: number, mean: number): { type: string; label: string; group: string | null } {
-  if (index === 0 && mean < 0.62) return { type: "intro", label: "Intro", group: null };
-  if (index === count - 1 && mean < 0.62) return { type: "outro", label: "Outro", group: null };
-  if (mean >= 0.72) return { type: "chorus", label: "Chorus", group: "chorus" };
-  if (mean >= 0.45) return { type: "verse", label: "Verse", group: "verse" };
-  return { type: "breakdown", label: "Breakdown", group: null };
+const LOW_ROLES = new Set(["kick", "bass", "drums"]);
+
+function labelRegion(index: number, count: number, mean: number, rise: number, lowEnergy: number): { type: string; label: string } {
+  if (index === 0 && mean < 0.55) return { type: "intro", label: "Intro" };
+  if (index === count - 1 && mean < 0.62) return { type: "outro", label: "Outro" };
+  if (rise > 0.18 && mean < 0.8) return { type: "build", label: "Build" };
+  if (mean >= 0.72 || lowEnergy >= 0.7) return { type: "drop", label: "Drop" };
+  if (mean < 0.4) return { type: "breakdown", label: "Breakdown" };
+  return { type: "verse", label: "Verse" };
+}
+
+function assignGroups(profiles: Array<{ bins: number[]; mean: number }>): Array<string | null> {
+  const ids: Array<string | null> = profiles.map(() => null);
+  let next = 1;
+  for (let left = 0; left < profiles.length; left += 1) {
+    if (ids[left]) continue;
+    const matches: number[] = [];
+    for (let right = left + 1; right < profiles.length; right += 1) {
+      if (ids[right]) continue;
+      const shape = cosine(profiles[left]?.bins ?? [], profiles[right]?.bins ?? []);
+      const level = 1 - Math.abs((profiles[left]?.mean ?? 0) - (profiles[right]?.mean ?? 0));
+      if (shape >= 0.9 && level >= 0.75) matches.push(right);
+    }
+    if (matches.length === 0) continue;
+    const id = `group-${next}`;
+    next += 1;
+    ids[left] = id;
+    for (const match of matches) ids[match] = id;
+  }
+  return ids;
+}
+
+function roleMean(stems: Array<{ role: string; values: number[]; peak: number }>, roles: Set<string>, from: number, to: number): number {
+  const chosen = stems.filter((stem) => roles.has(stem.role));
+  if (chosen.length === 0) return 0;
+  const means = chosen.map((stem) => average(stem.values.slice(from, to)) / stem.peak);
+  return average(means);
+}
+
+function sanitize(values: number[]): number[] {
+  return values.map((value) => (Number.isFinite(value) ? Math.max(0, value) : 0));
+}
+
+function resample(values: number[], length: number): number[] {
+  if (length <= 0) return [];
+  if (values.length === 0) return new Array<number>(length).fill(0);
+  return Array.from({ length }, (_, index) => {
+    const at = Math.round((index / Math.max(1, length - 1)) * (values.length - 1));
+    return values[Math.min(values.length - 1, Math.max(0, at))] ?? 0;
+  });
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function cosine(left: number[], right: number[]): number {
+  let dot = 0;
+  let leftEnergy = 0;
+  let rightEnergy = 0;
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = left[index] ?? 0;
+    const b = right[index] ?? 0;
+    dot += a * b;
+    leftEnergy += a * a;
+    rightEnergy += b * b;
+  }
+  if (leftEnergy <= 0 || rightEnergy <= 0) return 0;
+  return dot / Math.sqrt(leftEnergy * rightEnergy);
 }
 
 function movingAverage(values: number[], radius: number): number[] {

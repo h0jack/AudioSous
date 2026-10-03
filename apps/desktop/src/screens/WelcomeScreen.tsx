@@ -47,14 +47,14 @@ export function WelcomeScreen() {
         Bring in the WAV stems from a session. Audiosous keeps a copy, guesses what each one is, and saves a project you can reopen.
       </p>
       <div className="mt-8 flex flex-wrap gap-3">
-        <Button tone="accent" onClick={startImport} disabled={busy}>
+        <Button title="Start a project from stems" tone="accent" onClick={startImport} disabled={busy}>
           New project
         </Button>
-        <Button onClick={() => void openProject()} disabled={busy}>
+        <Button title="Open a saved project" onClick={() => void openProject()} disabled={busy}>
           Open project
         </Button>
         {!desktop && platform.hasPreview() ? (
-          <Button onClick={() => void reopenPreview()} disabled={busy}>
+          <Button title="Reopen the last browser preview" onClick={() => void reopenPreview()} disabled={busy}>
             Reopen preview
           </Button>
         ) : null}

@@ -13,23 +13,31 @@ import {
 import {
   SECTION_TYPE_LABELS,
   SECTION_TYPES,
+  TRACK_ROLE_LABELS,
+  channelLabel,
+  formatBitDepth,
   formatClock,
+  formatSampleRate,
   type ProjectDocument,
   type SectionType,
   type SongSection,
   type UiState,
 } from "@audiosous/project-model";
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type PointerEvent as ReactPointerEvent } from "react";
 import { usePlayback } from "../lib/playback";
-import { acceptSectionSuggestions, addSectionFromRange, deleteSection, editSection, editTrack, editTrackSection } from "../lib/project-actions";
+import { acceptSectionSuggestions, addSectionFromRange, deleteSection, dragSectionBoundary, editSection, editTrack, editTrackSection, finishBoundaryDrag, mergeSection, rejectSectionSuggestions, splitSectionAt } from "../lib/project-actions";
+import { logEvent } from "../lib/log";
+import { getPlatform } from "../platform";
 import type { LoadedWaveform } from "../lib/waveforms";
 import { isTauri } from "../platform";
 import { useAppStore } from "../state/app-store";
-import { RoleSelect } from "./ui";
+import { HoverTip, RoleSelect } from "./ui";
 
 const NAME_WIDTH = 232;
 const ROW_HEIGHT = 156;
+const OTHER_ROW_HEIGHT = 204;
 const RULER_HEIGHT = 32;
+const SECTION_BAND = 22;
 const AMPLITUDES = [0.5, 1, 2, 4];
 
 export function Timeline({
@@ -55,8 +63,11 @@ export function Timeline({
   const [viewportWidth, setViewportWidth] = useState(960);
   const viewportRef = useRef<HTMLDivElement>(null);
   const pending = useRef<Partial<UiState>>({});
+  const commitMode = useRef<"record" | "skip" | null>(null);
   const timer = useRef<number | null>(null);
   const drag = useRef<{ trackId: string; startX: number; startTime: number; moved: boolean } | null>(null);
+  const boundaryDrag = useRef<{ origin: number; current: number; key: string; sectionId: string | null } | null>(null);
+  const boundaryListeners = useRef<{ move: (event: PointerEvent) => void; up: () => void } | null>(null);
   const view = useRef({ zoom, scrollSeconds, duration, laneWidth: 1, pps: 1 });
 
   const laneWidth = Math.max(1, viewportWidth - NAME_WIDTH);
@@ -91,6 +102,8 @@ export function Timeline({
   function flush() {
     const patch = pending.current;
     pending.current = {};
+    const modeOverride = commitMode.current;
+    commitMode.current = null;
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = null;
     if (Object.keys(patch).length === 0) return;
@@ -99,9 +112,21 @@ export function Timeline({
     const keys = Object.keys(patch);
     const chrome = keys.every((key) => key === "playheadSeconds" || key === "timelineZoom" || key === "timelineScroll" || key === "selectedTrackId");
     useAppStore.getState().replaceDocument({ ...current, uiState: { ...current.uiState, ...patch } }, true, {
-      mode: chrome ? "skip" : "record",
+      mode: modeOverride ?? (chrome ? "skip" : "record"),
     });
   }
+
+  useEffect(
+    () => () => {
+      const listeners = boundaryListeners.current;
+      if (!listeners) return;
+      window.removeEventListener("pointermove", listeners.move);
+      window.removeEventListener("pointerup", listeners.up);
+      window.document.body.style.cursor = "";
+      useAppStore.getState().setHoldAutosave(false);
+    },
+    [],
+  );
 
   function scheduleCommit(patch: Partial<UiState>) {
     pending.current = { ...pending.current, ...patch };
@@ -197,9 +222,61 @@ export function Timeline({
     commitNow({ timeRange: next, selectedTrackId: current.trackId });
   }
 
-  function commitNow(patch: Partial<UiState>) {
+  function commitNow(patch: Partial<UiState>, mode: "record" | "skip" = "record") {
+    if (mode === "skip" && Object.keys(pending.current).length > 0) flush();
     pending.current = { ...pending.current, ...patch };
+    commitMode.current = mode === "skip" ? "skip" : null;
     flush();
+  }
+
+  function timeFromClientX(clientX: number): number {
+    const node = viewportRef.current;
+    const current = view.current;
+    if (!node) return 0;
+    const x = clientX - node.getBoundingClientRect().left - NAME_WIDTH;
+    return Math.min(current.duration, Math.max(0, xToTime(x, current.pps, current.scrollSeconds)));
+  }
+
+  function beginBoundaryDrag(event: ReactPointerEvent<HTMLElement>, time: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    const state = useAppStore.getState().document;
+    const selected = state?.sections.find((section) => section.id === state.uiState.selectedSectionId);
+    const follows =
+      selected !== undefined &&
+      range !== null &&
+      Math.abs(range.start - selected.startTime) < 0.001 &&
+      Math.abs(range.end - selected.endTime) < 0.001;
+    useAppStore.getState().setHoldAutosave(true);
+    boundaryDrag.current = { origin: time, current: time, key: `boundary:${time}`, sectionId: follows ? selected.id : null };
+    const move = (pointer: PointerEvent) => {
+      const dragState = boundaryDrag.current;
+      if (!dragState) return;
+      const result = dragSectionBoundary(dragState.current, timeFromClientX(pointer.clientX), dragState.key);
+      if (!result.ok) return;
+      dragState.current = result.time;
+      if (!dragState.sectionId) return;
+      const next = useAppStore.getState().document?.sections.find((section) => section.id === dragState.sectionId);
+      if (next) setRange({ start: next.startTime, end: next.endTime });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.document.body.style.cursor = "";
+      boundaryListeners.current = null;
+      useAppStore.getState().setHoldAutosave(false);
+      const dragState = boundaryDrag.current;
+      boundaryDrag.current = null;
+      if (dragState) finishBoundaryDrag(dragState.origin, dragState.current);
+      if (!dragState?.sectionId) return;
+      const next = useAppStore.getState().document?.sections.find((section) => section.id === dragState.sectionId);
+      if (!next) return;
+      commitNow({ timeRange: { start: next.startTime, end: next.endTime } }, "skip");
+    };
+    window.document.body.style.cursor = "col-resize";
+    boundaryListeners.current = { move, up };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   }
 
   const step = rulerStepSeconds(pps);
@@ -210,27 +287,26 @@ export function Timeline({
   }
   const anyPreview = document.tracks.some((track) => waveforms[track.id] && !waveforms[track.id]?.measured);
   const selectedId = document.uiState.selectedTrackId;
+  const boundaries = sectionBoundaries(document.sections);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-        <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => void playback.toggle()}>
+        <TipButton label={playing ? "Pause playback" : "Play from the playhead"} onClick={() => void playback.toggle()}>
           {playing ? "Pause" : "Play"}
-        </button>
-        <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => playback.stop()}>
+        </TipButton>
+        <TipButton label="Stop and return to the start" onClick={() => playback.stop()}>
           Stop
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs disabled:opacity-40"
+        </TipButton>
+        <TipButton
+          label={playback.looping ? "Turn the loop off" : "Loop the selected range or section"}
           disabled={!range && !document.uiState.selectedSectionId && !playback.looping}
           onClick={() => playback.setLoopEnabled(!playback.looping)}
         >
           {playback.looping ? "Looping" : "Loop"}
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs disabled:opacity-40"
+        </TipButton>
+        <TipButton
+          label="Add a section from the selected range"
           disabled={!range}
           onClick={() => {
             if (!range) return;
@@ -238,30 +314,44 @@ export function Timeline({
           }}
         >
           Add section
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"
+        </TipButton>
+        <TipButton
+          label="Suggest sections from the waveforms"
           onClick={() => {
-            const energy = energyEnvelope(
-              document.tracks.map((track) => waveforms[track.id]?.peaks),
-              duration,
-            );
-            const suggested = suggestSections({ durationSeconds: duration, energy });
-            setSectionError(acceptSectionSuggestions(suggested.suggestions));
+            void logEvent(getPlatform(), "info", "section.analysis.start", "Started section suggestions.", {
+              tracks: document.tracks.length,
+            });
+            const peaks = document.tracks.map((track) => waveforms[track.id]?.peaks);
+            const energy = energyEnvelope(peaks, duration);
+            const stems = document.tracks.map((track) => ({
+              role: track.role,
+              energy: energyEnvelope([waveforms[track.id]?.peaks], duration),
+            }));
+            const suggested = suggestSections({ durationSeconds: duration, energy, stems });
+            const message = acceptSectionSuggestions(suggested.suggestions);
+            if (message) {
+              void logEvent(getPlatform(), "warn", "section.analysis.failure", message, { tracks: document.tracks.length });
+            }
+            setSectionError(message);
           }}
         >
           Suggest sections
-        </button>
-        <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => zoomAround(zoom / 1.25)}>
+        </TipButton>
+        <TipButton
+          label="Remove suggestions that have not been edited"
+          disabled={!document.sections.some((section) => section.source === "automatic")}
+          onClick={() => setSectionError(rejectSectionSuggestions())}
+        >
+          Clear suggestions
+        </TipButton>
+        <TipButton label="Zoom out" onClick={() => zoomAround(zoom / 1.25)}>
           Zoom out
-        </button>
-        <button type="button" className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs" onClick={() => zoomAround(zoom * 1.25)}>
+        </TipButton>
+        <TipButton label="Zoom in" onClick={() => zoomAround(zoom * 1.25)}>
           Zoom in
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"
+        </TipButton>
+        <TipButton
+          label="Fit the song to the timeline"
           onClick={() => {
             setZoom(1);
             setScrollSeconds(0);
@@ -269,21 +359,16 @@ export function Timeline({
           }}
         >
           Fit
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"
-          onClick={() => setAmplitude((current) => AMPLITUDES[Math.max(0, AMPLITUDES.indexOf(current) - 1)] ?? 0.5)}
-        >
+        </TipButton>
+        <TipButton label="Draw shorter waveforms" onClick={() => setAmplitude((current) => AMPLITUDES[Math.max(0, AMPLITUDES.indexOf(current) - 1)] ?? 0.5)}>
           Shorter
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"
+        </TipButton>
+        <TipButton
+          label="Draw taller waveforms"
           onClick={() => setAmplitude((current) => AMPLITUDES[Math.min(AMPLITUDES.length - 1, AMPLITUDES.indexOf(current) + 1)] ?? 4)}
         >
           Taller
-        </button>
+        </TipButton>
         <p className="font-mono text-xs text-muted">
           Playhead {formatClock(playhead)}
           {range ? ` · Range ${formatClock(range.start)}–${formatClock(range.end)}` : ""}
@@ -302,113 +387,142 @@ export function Timeline({
       <SectionEditor
         document={document}
         range={range}
+        playhead={playhead}
         onError={setSectionError}
         onSelectRange={(next) => {
           setRange(next);
           commitNow({ timeRange: next });
         }}
       />
+      <TrackInspector document={document} />
       <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
         <div style={{ width: NAME_WIDTH + contentWidth, minHeight: "100%" }}>
-          <div className="sticky top-0 z-20 flex border-b border-line bg-canvas" style={{ width: NAME_WIDTH + contentWidth, height: RULER_HEIGHT }}>
-            <div className="sticky left-0 z-10 shrink-0 bg-canvas" style={{ width: NAME_WIDTH }} />
-            <div className="sticky shrink-0 overflow-hidden" style={{ left: NAME_WIDTH, width: laneWidth, height: RULER_HEIGHT }}>
-              {ticks.map((time) => (
-                <span key={time} className="absolute top-2 font-mono text-[10px] text-faint" style={{ left: timeToX(time, pps, scrollSeconds) }}>
-                  {formatClock(time)}
-                </span>
-              ))}
-              {document.sections.map((section) => (
-                <SectionMark
-                  key={section.id}
-                  section={section}
-                  selected={section.id === document.uiState.selectedSectionId}
-                  pixelsPerSecond={pps}
-                  scrollSeconds={scrollSeconds}
-                  onSelect={() => {
-                    const next = { start: section.startTime, end: section.endTime };
-                    setRange(next);
-                    setSectionError(null);
-                    commitNow({ selectedSectionId: section.id, timeRange: next });
-                  }}
-                />
-              ))}
+          <div className="sticky top-0 z-20 border-b border-line bg-canvas" style={{ width: NAME_WIDTH + contentWidth }}>
+            <div className="flex" style={{ height: SECTION_BAND }}>
+              <div className="sticky left-0 z-10 flex shrink-0 items-center bg-canvas px-3 text-[10px] tracking-wide text-faint uppercase" style={{ width: NAME_WIDTH }}>
+                Sections
+              </div>
+              <div className="sticky shrink-0" style={{ left: NAME_WIDTH, width: laneWidth, height: SECTION_BAND }}>
+                {document.sections.map((section) => (
+                  <SectionName
+                    key={section.id}
+                    section={section}
+                    selected={section.id === document.uiState.selectedSectionId}
+                    pixelsPerSecond={pps}
+                    scrollSeconds={scrollSeconds}
+                    onSelect={() => {
+                      const next = { start: section.startTime, end: section.endTime };
+                      setRange(next);
+                      setSectionError(null);
+                      commitNow({ selectedSectionId: section.id, timeRange: next });
+                    }}
+                  />
+                ))}
+                {boundaries.map((time) => (
+                  <BoundaryHandle key={time} time={time} pixelsPerSecond={pps} scrollSeconds={scrollSeconds} onDrag={beginBoundaryDrag} />
+                ))}
+              </div>
+            </div>
+            <div className="flex border-t border-line" style={{ height: RULER_HEIGHT }}>
+              <div className="sticky left-0 z-10 shrink-0 bg-canvas" style={{ width: NAME_WIDTH }} />
+              <div className="sticky shrink-0 overflow-hidden" style={{ left: NAME_WIDTH, width: laneWidth, height: RULER_HEIGHT }}>
+                {ticks.map((time) => (
+                  <span key={time} className="absolute top-2 font-mono text-[10px] text-faint" style={{ left: timeToX(time, pps, scrollSeconds) }}>
+                    {formatClock(time)}
+                  </span>
+                ))}
+                {boundaries.map((time) => (
+                  <span
+                    key={time}
+                    className="pointer-events-none absolute inset-y-0 w-px bg-ink/40"
+                    style={{ left: timeToX(time, pps, scrollSeconds) }}
+                  />
+                ))}
+                {boundaries.map((time) => (
+                  <BoundaryHandle key={`ruler-${time}`} time={time} pixelsPerSecond={pps} scrollSeconds={scrollSeconds} onDrag={beginBoundaryDrag} />
+                ))}
+              </div>
             </div>
           </div>
           {document.tracks.map((track) => {
             const waveform = waveforms[track.id];
             const selected = track.id === selectedId;
+            const rowHeight = track.role === "other" ? OTHER_ROW_HEIGHT : ROW_HEIGHT;
+            const gain = Math.min(12, Math.max(-96, track.gainDb));
+            const pan = Math.round(track.pan * 100);
             return (
-              <div key={track.id} className="flex border-b border-line" style={{ width: NAME_WIDTH + contentWidth, height: ROW_HEIGHT }}>
-                <div className={`sticky left-0 z-10 shrink-0 border-r border-line px-3 py-2 ${selected ? "bg-panel-2" : "bg-panel"}`} style={{ width: NAME_WIDTH }}>
-                  <input
-                    value={track.name}
-                    aria-label={`Name for ${track.file.filename}`}
-                    onChange={(event) => editTrack(track.id, { name: event.target.value })}
-                    className="w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-line focus:border-line"
-                  />
+              <div key={track.id} className="flex border-b border-line" style={{ width: NAME_WIDTH + contentWidth, height: rowHeight }}>
+                <div className={`sticky left-0 z-10 flex shrink-0 flex-col border-r border-line px-3 py-2 ${selected ? "bg-panel-2" : "bg-panel"}`} style={{ width: NAME_WIDTH, height: rowHeight }}>
+                  <TrackNameInput filename={track.file.filename} value={track.name} onChange={(name) => editTrack(track.id, { name })} />
                   <RoleSelect
                     value={track.role}
                     aria-label={`Role for ${track.file.filename}`}
+                    className="mt-1 py-1 text-xs"
                     onChange={(role) => editTrack(track.id, { role })}
                   />
                   {track.role === "other" ? (
-                    <input
+                    <TrackNameInput
+                      filename={track.file.filename}
                       value={track.customLabel ?? ""}
                       placeholder="Custom label"
-                      aria-label={`Custom label for ${track.file.filename}`}
-                      onChange={(event) => editTrack(track.id, { customLabel: event.target.value || null })}
+                      label={`Custom label for ${track.file.filename}`}
+                      onChange={(customLabel) => editTrack(track.id, { customLabel: customLabel || null })}
                       className="mt-1 w-full rounded-md border border-line bg-canvas px-2 py-1 text-xs"
                     />
                   ) : null}
                   <div className="mt-1 flex items-center gap-1">
-                    <button
-                      type="button"
-                      aria-pressed={track.muted}
-                      aria-label={`Mute ${track.name}`}
+                    <TipButton
+                      label={track.muted ? `Unmute ${track.name}` : `Mute ${track.name}`}
+                      aria-label={track.muted ? `Unmute ${track.name}` : `Mute ${track.name}`}
+                      pressed={track.muted}
                       className={`rounded px-1.5 py-0.5 text-[11px] ${track.muted ? "bg-accent text-accent-ink" : "bg-canvas text-muted"}`}
                       onClick={() => editTrack(track.id, { muted: !track.muted })}
                     >
                       M
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={track.solo}
-                      aria-label={`Solo ${track.name}`}
+                    </TipButton>
+                    <TipButton
+                      label={track.solo ? `Unsolo ${track.name}` : `Solo ${track.name}`}
+                      aria-label={track.solo ? `Unsolo ${track.name}` : `Solo ${track.name}`}
+                      pressed={track.solo}
                       className={`rounded px-1.5 py-0.5 text-[11px] ${track.solo ? "bg-accent text-accent-ink" : "bg-canvas text-muted"}`}
                       onClick={() => editTrack(track.id, { solo: !track.solo })}
                     >
                       S
-                    </button>
+                    </TipButton>
+                    <HoverTip className="block min-w-0 flex-1" label={`Gain ${formatDb(gain)}`}>
+                      <input
+                        type="range"
+                        min={-96}
+                        max={12}
+                        step={0.5}
+                        value={gain}
+                        aria-label={`Gain for ${track.name}`}
+                        onPointerDown={holdSave}
+                        onChange={(event) => editTrack(track.id, { gainDb: Number(event.target.value) })}
+                        className="w-full"
+                      />
+                    </HoverTip>
+                  </div>
+                  <HoverTip className="mt-1 block" label={panLabel(pan)}>
                     <input
                       type="range"
-                      min={-24}
-                      max={12}
-                      step={0.5}
-                      value={Math.min(12, Math.max(-24, track.gainDb))}
-                      aria-label={`Gain for ${track.name}`}
-                      onChange={(event) => editTrack(track.id, { gainDb: Number(event.target.value) })}
+                      min={-100}
+                      max={100}
+                      step={1}
+                      value={pan}
+                      aria-label={`Pan for ${track.name}`}
+                      onPointerDown={holdSave}
+                      onChange={(event) => editTrack(track.id, { pan: Number(event.target.value) / 100 })}
                       className="w-full"
                     />
-                  </div>
-                  <input
-                    type="range"
-                    min={-100}
-                    max={100}
-                    step={1}
-                    value={Math.round(track.pan * 100)}
-                    aria-label={`Pan for ${track.name}`}
-                    title={track.file.filename}
-                    onChange={(event) => editTrack(track.id, { pan: Number(event.target.value) / 100 })}
-                    className="mt-1 w-full"
-                  />
+                  </HoverTip>
                 </div>
                 <div
                   className="relative sticky shrink-0 cursor-crosshair touch-none select-none"
                   role="button"
                   tabIndex={0}
                   aria-label={`Waveform for ${track.name}`}
-                  style={{ left: NAME_WIDTH, width: laneWidth, height: ROW_HEIGHT }}
+                  style={{ left: NAME_WIDTH, width: laneWidth, height: rowHeight }}
                   onPointerDown={(event) => onPointerDown(event, track.id)}
                   onPointerMove={onPointerMove}
                   onPointerUp={onPointerUp}
@@ -423,7 +537,7 @@ export function Timeline({
                   <WaveformCanvas
                     peaks={waveform?.peaks ?? null}
                     width={laneWidth}
-                    height={ROW_HEIGHT}
+                    height={rowHeight}
                     pixelsPerSecond={pps}
                     scrollSeconds={scrollSeconds}
                     amplitude={amplitude}
@@ -432,6 +546,9 @@ export function Timeline({
                     loop={document.uiState.loop}
                     sections={document.sections}
                   />
+                  {boundaries.map((time) => (
+                    <BoundaryHandle key={time} time={time} pixelsPerSecond={pps} scrollSeconds={scrollSeconds} onDrag={beginBoundaryDrag} />
+                  ))}
                   <div className="pointer-events-none absolute inset-y-0 w-px bg-ink" style={{ left: timeToX(playhead, pps, scrollSeconds) }} />
                 </div>
               </div>
@@ -443,14 +560,27 @@ export function Timeline({
   );
 }
 
+function holdSave() {
+  useAppStore.getState().setHoldAutosave(true);
+  const release = () => {
+    window.removeEventListener("pointerup", release);
+    window.removeEventListener("pointercancel", release);
+    useAppStore.getState().setHoldAutosave(false);
+  };
+  window.addEventListener("pointerup", release);
+  window.addEventListener("pointercancel", release);
+}
+
 function SectionEditor({
   document,
   range,
+  playhead,
   onError,
   onSelectRange,
 }: {
   document: ProjectDocument;
   range: { start: number; end: number } | null;
+  playhead: number;
   onError: (message: string | null) => void;
   onSelectRange: (range: { start: number; end: number }) => void;
 }) {
@@ -458,9 +588,16 @@ function SectionEditor({
   if (!selected) return null;
   const rangeDiffers =
     range !== null && (Math.abs(range.start - selected.startTime) >= 0.001 || Math.abs(range.end - selected.endTime) >= 0.001);
+  const ordered = [...document.sections].sort((left, right) => left.startTime - right.startTime);
+  const following = ordered[ordered.findIndex((section) => section.id === selected.id) + 1];
+  const canMerge = following !== undefined && Math.abs(following.startTime - selected.endTime) <= 0.001;
+  const canSplit = playhead >= selected.startTime + 0.25 && playhead <= selected.endTime - 0.25;
+  const similar = document.sections.filter(
+    (section) => section.id !== selected.id && selected.structuralGroupId !== null && section.structuralGroupId === selected.structuralGroupId,
+  );
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-      <SectionNameField sectionId={selected.id} name={selected.name} onError={onError} />
+      <SectionNameField key={selected.id} sectionId={selected.id} name={selected.name} onError={onError} />
       <select
         value={selected.type ?? ""}
         aria-label="Section type"
@@ -477,9 +614,8 @@ function SectionEditor({
           </option>
         ))}
       </select>
-      <button
-        type="button"
-        className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs disabled:opacity-40"
+      <TipButton
+        label="Set this section to the selected range"
         disabled={!rangeDiffers}
         onClick={() => {
           if (!range) return;
@@ -487,34 +623,76 @@ function SectionEditor({
           onError(message);
           if (!message) onSelectRange(range);
         }}
-        >
+      >
         Use range
-      </button>
-      <button
-        type="button"
-        className="rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"
+      </TipButton>
+      <TipButton label="Split this section at the playhead" disabled={!canSplit} onClick={() => onError(splitSectionAt(selected.id, playhead))}>
+        Split
+      </TipButton>
+      <TipButton label={canMerge ? `Merge with ${following.name}` : "The next section has to start where this one ends"} disabled={!canMerge} onClick={() => onError(mergeSection(selected.id))}>
+        Merge
+      </TipButton>
+      <TipButton
+        label="Delete this section"
         onClick={() => {
           deleteSection(selected.id);
           onError(null);
         }}
       >
         Delete section
-      </button>
+      </TipButton>
       <p className="font-mono text-xs text-muted">
         {formatClock(selected.startTime)}–{formatClock(selected.endTime)}
         {selected.source === "automatic" ? " · suggested" : ""}
+        {selected.confidence !== null ? ` · ${Math.round(selected.confidence * 100)}% confidence` : ""}
+        {similar.length > 0 ? ` · Similar to ${similar.map((section) => section.name).join(", ")}` : ""}
       </p>
       <IntentField
         label="Section intent"
         value={selected.userIntent ?? ""}
         onChange={(value) => onError(editSection(selected.id, { userIntent: value }))}
       />
-      <TrackIntent document={document} sectionId={selected.id} onError={onError} />
+      <SectionStemTreatments key={selected.id} document={document} sectionId={selected.id} onError={onError} />
     </div>
   );
 }
 
-function TrackIntent({
+function TrackInspector({ document }: { document: ProjectDocument }) {
+  const track = document.tracks.find((item) => item.id === document.uiState.selectedTrackId);
+  if (!track) return null;
+  const notes = document.sections.flatMap((section) => {
+    const setting = document.sectionTrackSettings.find((item) => item.trackId === track.id && item.sectionId === section.id);
+    if (!setting?.userIntent && !setting?.prominence) return [];
+    return [{ id: section.id, name: section.name, intent: setting.userIntent, prominence: setting.prominence }];
+  });
+  return (
+    <div className="flex flex-wrap items-start gap-x-6 gap-y-1 border-b border-line px-4 py-2 text-xs text-muted">
+      <p className="text-sm text-ink">{track.name}</p>
+      <p>Role {track.role === "other" && track.customLabel ? track.customLabel : TRACK_ROLE_LABELS[track.role]}</p>
+      <p>File {track.file.filename}</p>
+      <p>
+        {formatSampleRate(track.metadata.sampleRate)} / {channelLabel(track.metadata.channelCount)} / {formatBitDepth(track.metadata.bitDepth)}
+      </p>
+      <p>Duration {formatClock(track.metadata.durationSeconds)}</p>
+      <p>Gain {formatDb(track.gainDb)}</p>
+      <p>{panLabel(Math.round(track.pan * 100))}</p>
+      <div className="min-w-64 flex-1">
+        <p className="text-[10px] tracking-wide uppercase">Treatment</p>
+        {notes.length === 0 ? <p className="text-faint">No treatment is set for this stem in any section yet.</p> : null}
+        {notes.map((note) => (
+          <p key={note.id}>
+            <span className="text-ink">{`${note.name}${note.prominence ? ` · ${PROMINENCE_LABELS[note.prominence]}` : ""}.`}</span>
+            {note.intent ? ` ${note.intent}` : ""}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const PROMINENCE_LABELS = { primary: "Primary", focal: "Focal", supporting: "Supporting" } as const;
+
+function SectionStemTreatments({
   document,
   sectionId,
   onError,
@@ -523,31 +701,97 @@ function TrackIntent({
   sectionId: string;
   onError: (message: string | null) => void;
 }) {
-  const track = document.tracks.find((item) => item.id === document.uiState.selectedTrackId);
-  if (!track) return <p className="text-xs text-faint">Select a lane to describe that stem in this section.</p>;
-  const setting = document.sectionTrackSettings.find((item) => item.trackId === track.id && item.sectionId === sectionId);
+  const [pending, setPending] = useState<string[]>([]);
+  useEffect(() => setPending([]), [sectionId]);
+  const settingFor = (trackId: string) =>
+    document.sectionTrackSettings.find((item) => item.trackId === trackId && item.sectionId === sectionId);
+  const listed = document.tracks.filter((track) => {
+    const setting = settingFor(track.id);
+    return pending.includes(track.id) || Boolean(setting?.prominence) || Boolean(setting?.userIntent);
+  });
+  const available = document.tracks.filter((track) => !listed.some((item) => item.id === track.id));
   return (
-    <>
-      <IntentField
-        label={`${track.name} in this section`}
-        value={setting?.userIntent ?? ""}
-        onChange={(value) => onError(editTrackSection(track.id, sectionId, { userIntent: value }))}
-      />
-      <select
-        value={setting?.prominence ?? ""}
-        aria-label={`Prominence for ${track.name}`}
-        onChange={(event) => {
-          const prominence = event.target.value ? (event.target.value as "primary" | "focal" | "supporting") : null;
-          onError(editTrackSection(track.id, sectionId, { prominence }));
-        }}
-        className="rounded-md border border-line bg-canvas px-2 py-1 text-xs"
-      >
-        <option value="">No prominence</option>
-        <option value="primary">Primary</option>
-        <option value="focal">Focal</option>
-        <option value="supporting">Supporting</option>
-      </select>
-    </>
+    <div className="flex min-w-72 flex-1 flex-col gap-2">
+      <span className="text-[10px] tracking-wide text-muted uppercase">Stem treatment</span>
+      {listed.length === 0 ? (
+        <p className="text-xs text-faint">Add a stem that should stand out, or that needs its own texture or fix.</p>
+      ) : null}
+      {listed.map((track) => {
+        const setting = settingFor(track.id);
+        return (
+          <div key={track.id} className="flex flex-wrap items-center gap-2">
+            <span className="w-28 truncate text-xs text-ink">{track.name}</span>
+            <select
+              value={setting?.prominence ?? ""}
+              aria-label={`Prominence for ${track.name}`}
+              onChange={(event) => {
+                const prominence = event.target.value ? (event.target.value as "primary" | "focal" | "supporting") : null;
+                onError(editTrackSection(track.id, sectionId, { prominence }));
+              }}
+              className="rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+            >
+              <option value="">No prominence</option>
+              <option value="primary">Primary</option>
+              <option value="focal">Focal</option>
+              <option value="supporting">Supporting</option>
+            </select>
+            <TreatmentInput
+              value={setting?.userIntent ?? ""}
+              label={`Treatment for ${track.name}`}
+              onChange={(value) => onError(editTrackSection(track.id, sectionId, { userIntent: value }))}
+            />
+            <TipButton
+              label={`Remove ${track.name} from this section`}
+              onClick={() => {
+                setPending((current) => current.filter((id) => id !== track.id));
+                onError(editTrackSection(track.id, sectionId, { prominence: null, userIntent: null }));
+              }}
+            >
+              Remove
+            </TipButton>
+          </div>
+        );
+      })}
+      {available.length > 0 ? (
+        <select
+          aria-label="Add a stem to this section"
+          value=""
+          onChange={(event) => {
+            const trackId = event.target.value;
+            if (!trackId) return;
+            setPending((current) => (current.includes(trackId) ? current : [...current, trackId]));
+          }}
+          className="w-fit rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+        >
+          <option value="">Add a stem</option>
+          {available.map((track) => (
+            <option key={track.id} value={track.id}>
+              {track.name}
+            </option>
+          ))}
+        </select>
+      ) : null}
+    </div>
+  );
+}
+
+function TreatmentInput({ value, label, onChange }: { value: string; label: string; onChange: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    setDraft((current) => (current.trim() === value ? current : value));
+  }, [value]);
+  return (
+    <input
+      value={draft}
+      aria-label={label}
+      placeholder="Texture or fix for this stem only"
+      maxLength={8000}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        onChange(event.target.value);
+      }}
+      className="min-w-40 flex-1 rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+    />
   );
 }
 
@@ -604,7 +848,65 @@ function SectionNameField({
   );
 }
 
-function SectionMark({
+function TipButton({
+  label,
+  className,
+  disabled,
+  pressed,
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; pressed?: boolean }) {
+  return (
+    <HoverTip label={label} className={`inline-flex ${disabled ? "cursor-not-allowed" : ""}`}>
+      <button
+        type="button"
+        {...props}
+        disabled={disabled}
+        aria-pressed={pressed}
+        className={`${className ?? "rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"} ${disabled ? "pointer-events-none opacity-40" : ""}`}
+      >
+        {children}
+      </button>
+    </HoverTip>
+  );
+}
+
+function TrackNameInput({
+  filename,
+  value,
+  onChange,
+  placeholder,
+  label,
+  className,
+}: {
+  filename: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <HoverTip
+      className="block min-w-0"
+      label={(host) => {
+        const node = host.querySelector("input");
+        if (!node || node.scrollWidth <= node.clientWidth + 1) return "";
+        return node.value;
+      }}
+    >
+      <input
+        value={value}
+        placeholder={placeholder}
+        aria-label={label ?? `Name for ${filename}`}
+        onChange={(event) => onChange(event.target.value)}
+        className={className ?? "w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-sm hover:border-line focus:border-line"}
+      />
+    </HoverTip>
+  );
+}
+
+function SectionName({
   section,
   selected,
   pixelsPerSecond,
@@ -618,18 +920,72 @@ function SectionMark({
   onSelect: () => void;
 }) {
   const x = timeToX(section.startTime, pixelsPerSecond, scrollSeconds);
+  const width = Math.max(0, (section.endTime - section.startTime) * pixelsPerSecond);
+  const rangeLabel = `${formatClock(section.startTime)}–${formatClock(section.endTime)}`;
   return (
-    <button
-      type="button"
-      aria-label={`Section ${section.name}`}
-      aria-pressed={selected}
-      className={`absolute top-0 h-full border-l text-left text-[10px] ${selected ? "text-accent" : "text-muted"} ${section.source === "automatic" ? "border-dashed" : ""}`}
-      style={{ left: x, borderColor: selected ? "var(--color-accent)" : "rgba(243,239,230,0.45)" }}
-      onClick={onSelect}
+    <HoverTip
+      label={`${section.name} · ${rangeLabel}`}
+      className="absolute inset-y-0 z-10 overflow-hidden"
+      style={{ left: x, width }}
     >
-      <span className="ml-1">{section.name}</span>
-    </button>
+      <button
+        type="button"
+        aria-label={`Section ${section.name}, ${rangeLabel}`}
+        aria-pressed={selected}
+        className={`h-full w-full truncate px-1 text-left text-[10px] ${selected ? "text-accent" : "text-muted"}`}
+        onClick={onSelect}
+      >
+        {section.name}
+      </button>
+    </HoverTip>
   );
+}
+
+function BoundaryHandle({
+  time,
+  pixelsPerSecond,
+  scrollSeconds,
+  onDrag,
+}: {
+  time: number;
+  pixelsPerSecond: number;
+  scrollSeconds: number;
+  onDrag: (event: ReactPointerEvent<HTMLElement>, time: number) => void;
+}) {
+  return (
+    <HoverTip
+      label={`Drag to move this guide · ${formatClock(time)}`}
+      className="absolute inset-y-0 z-30 w-2 -translate-x-1/2 cursor-col-resize"
+      style={{ left: timeToX(time, pixelsPerSecond, scrollSeconds) }}
+    >
+      <button
+        type="button"
+        aria-label={`Section guide at ${formatClock(time)}`}
+        className="h-full w-full cursor-col-resize"
+        onPointerDown={(event) => onDrag(event, time)}
+      />
+    </HoverTip>
+  );
+}
+
+function sectionBoundaries(sections: SongSection[]): number[] {
+  const times = new Set<number>();
+  for (const section of sections) {
+    times.add(section.startTime);
+    times.add(section.endTime);
+  }
+  return [...times].sort((left, right) => left - right);
+}
+
+function formatDb(value: number): string {
+  if (value <= -96) return "−∞";
+  const shown = Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+  return `${shown} dB`;
+}
+
+function panLabel(value: number): string {
+  if (value === 0) return "Pan center";
+  return value < 0 ? `Pan ${Math.abs(value)} left` : `Pan ${value} right`;
 }
 
 function WaveformCanvas({

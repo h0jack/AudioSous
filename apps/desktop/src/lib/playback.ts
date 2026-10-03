@@ -4,6 +4,7 @@ import type { ProjectDocument } from "@audiosous/project-model";
 import { useEffect, useRef, useState } from "react";
 import { getPlatform } from "../platform";
 import type { DesktopPlatform } from "../platform/types";
+import { logEvent } from "./log";
 import { useAppStore } from "../state/app-store";
 import { createWebAudioOutput } from "./web-audio-output";
 
@@ -71,6 +72,12 @@ function commitPlayhead(time: number): void {
     true,
     { mode: "skip" },
   );
+}
+
+export function arrowSeekStep(event: { shiftKey: boolean; ctrlKey: boolean }): number {
+  if (event.ctrlKey) return 0.001;
+  if (event.shiftKey) return 5;
+  return 1;
 }
 
 export function usePlayback(document: ProjectDocument, projectFile: string | null) {
@@ -177,6 +184,7 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
     try {
       await engine.play();
       setPlaying(true);
+      void logEvent(getPlatform(), "info", "audio.play", "Started playback.", { time: engine.getCurrentTime() });
     } catch (error) {
       console.error(error);
     }
@@ -189,10 +197,14 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
     commitPlayhead(0);
   }
 
-  function seek(seconds: number) {
-    const time = Math.min(duration, Math.max(0, seconds));
+  function seek(seconds: number, options?: { log?: boolean }) {
+    const time = Math.round(Math.min(duration, Math.max(0, seconds)) * 1000) / 1000;
     engineRef.current?.seek(time);
     setPlayhead(time);
+    commitPlayhead(time);
+    if (options?.log !== false) {
+      void logEvent(getPlatform(), "info", "audio.seek", "Moved the playhead.", { time });
+    }
   }
 
   function setLoopEnabled(enabled: boolean) {
@@ -217,13 +229,31 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
 
   const toggleRef = useRef(toggle);
   toggleRef.current = toggle;
+  const seekRef = useRef(seek);
+  seekRef.current = seek;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== " " || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.closest("input, textarea, select")) return;
-      event.preventDefault();
-      void toggleRef.current();
+      const command = event.metaKey || event.ctrlKey;
+      if (event.key === " " && !command && !event.altKey && !event.repeat) {
+        event.preventDefault();
+        void toggleRef.current();
+        return;
+      }
+      if (event.altKey || event.metaKey) return;
+      const engine = engineRef.current;
+      if (!engine) return;
+      if (event.key === "Home" && !event.ctrlKey && !event.repeat) {
+        event.preventDefault();
+        seekRef.current(0);
+        return;
+      }
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        const step = arrowSeekStep(event) * (event.key === "ArrowLeft" ? -1 : 1);
+        seekRef.current(engine.getCurrentTime() + step, { log: !event.repeat });
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

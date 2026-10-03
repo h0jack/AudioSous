@@ -17,6 +17,7 @@ interface AppState {
   dirty: boolean;
   notice: string | null;
   history: EditHistory<ProjectDocument>;
+  holdAutosave: boolean;
   goWelcome: () => void;
   startImport: () => void;
   openDocument: (document: ProjectDocument, projectFilePath: string | null, warnings: ImportWarning[]) => void;
@@ -25,6 +26,7 @@ interface AppState {
   redo: () => void;
   setNotice: (notice: string | null) => void;
   setWarnings: (warnings: ImportWarning[]) => void;
+  setHoldAutosave: (held: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -35,10 +37,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   dirty: false,
   notice: null,
   history: emptyHistory(),
+  holdAutosave: false,
   goWelcome: () => set({ screen: "welcome", notice: null }),
   startImport: () => set({ screen: "import", notice: null }),
   openDocument: (document, projectFilePath, warnings) =>
-    set({ screen: "project", document, projectFilePath, warnings, dirty: false, notice: null, history: emptyHistory() }),
+    set({ screen: "project", document, projectFilePath, warnings, dirty: false, notice: null, history: emptyHistory(), holdAutosave: false }),
   replaceDocument: (document, dirty, edit) => {
     const current = get().document;
     if (!current) {
@@ -68,4 +71,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setNotice: (notice) => set({ notice }),
   setWarnings: (warnings) => set({ warnings }),
+  setHoldAutosave: (holdAutosave) => set({ holdAutosave }),
 }));

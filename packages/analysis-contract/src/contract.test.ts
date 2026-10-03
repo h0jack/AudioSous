@@ -55,10 +55,34 @@ describe("analysis contract", () => {
     const energy = Array.from({ length: 90 }, (_, index) => (index < 30 ? 0.15 : index < 60 ? 0.95 : 0.2));
     const result = suggestSections({ durationSeconds: 90, energy });
     expect(result.contractVersion).toBe(1);
-    expect(result.suggestions.map((section) => section.suggestedType)).toEqual(["intro", "chorus", "outro"]);
+    expect(result.suggestions.map((section) => section.suggestedType)).toEqual(["intro", "drop", "outro"]);
     expect(result.suggestions[0]?.startTime).toBe(0);
     expect(result.suggestions.at(-1)?.endTime).toBe(90);
     expect(result.suggestions.every((section, index) => index === 0 || section.startTime >= (result.suggestions[index - 1]?.endTime ?? 0))).toBe(true);
     expect(suggestSections({ durationSeconds: 90, energy: Array.from({ length: 90 }, () => 0.4) }).suggestions).toEqual([]);
+  });
+
+  it("groups two similar drops and treats a kick entrance as a boundary", () => {
+    const energy = Array.from({ length: 120 }, (_, index) => {
+      const place = index / 119;
+      if (place < 0.25 || (place >= 0.5 && place < 0.75)) return 0.9;
+      if (place < 0.5) return 0.2;
+      return 0.15;
+    });
+    const kick = energy.map((value) => (value > 0.5 ? 1 : 0.05));
+    const pad = Array.from({ length: 120 }, () => 0.4);
+    const result = suggestSections({
+      durationSeconds: 120,
+      energy,
+      stems: [
+        { role: "kick", energy: kick },
+        { role: "pad", energy: pad },
+      ],
+    });
+    const drops = result.suggestions.filter((section) => section.suggestedType === "drop");
+    expect(drops.length).toBeGreaterThan(1);
+    expect(new Set(drops.map((section) => section.structuralGroupId)).size).toBe(1);
+    expect(drops[0]?.structuralGroupId).toBeTruthy();
+    expect(result.suggestions.every((section) => section.confidence >= 0 && section.confidence <= 1)).toBe(true);
   });
 });

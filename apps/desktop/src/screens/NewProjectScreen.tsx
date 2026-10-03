@@ -8,7 +8,7 @@ import {
   PathSafetyError,
   sanitizeBundleName,
 } from "@audiosous/project-model";
-import { Button, Panel, RoleSelect, TextField } from "../components/ui";
+import { Button, Panel, RoleSelect, TextField, Truncated } from "../components/ui";
 import { logEvent } from "../lib/log";
 import { inspectListedFiles } from "../lib/inspect-stems";
 import { createProjectFromStems } from "../lib/project-actions";
@@ -149,7 +149,7 @@ export function NewProjectScreen() {
           <h1 className="font-display text-4xl">New project</h1>
           <p className="mt-2 text-sm text-muted">Drop stems exported from the same session. Originals are only read, then copied into the project folder.</p>
         </div>
-        <Button onClick={goWelcome} disabled={Boolean(busy)}>
+        <Button title="Return to the start screen" onClick={goWelcome} disabled={Boolean(busy)}>
           Back
         </Button>
       </div>
@@ -176,6 +176,7 @@ export function NewProjectScreen() {
         <p className="mt-1 text-sm text-muted">WAV and AIFF. Other formats are listed so you can see why they were skipped.</p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           <Button
+            title="Choose WAV or AIFF files"
             onClick={() => {
               void platform.pickAudioFiles().then((files) => {
                 if (files) void addListed(files);
@@ -187,6 +188,7 @@ export function NewProjectScreen() {
           </Button>
           {desktop ? (
             <Button
+              title="Add every stem in a folder"
               onClick={() => {
                 void platform.pickAudioFolder().then((files) => {
                   if (files) void addListed(files);
@@ -197,7 +199,7 @@ export function NewProjectScreen() {
               Add folder
             </Button>
           ) : (
-            <Button onClick={() => setStems(demoStems())} disabled={Boolean(busy)}>
+            <Button title="Load the Night Drive demo stems" onClick={() => setStems(demoStems())} disabled={Boolean(busy)}>
               Use demo stems
             </Button>
           )}
@@ -224,12 +226,14 @@ export function NewProjectScreen() {
                   ) : (
                     <p className="px-2 py-1 text-danger">{stem.filename}</p>
                   )}
-                  <p className="truncate px-2 text-xs text-faint">
-                    {stem.filename}
-                    {stem.inspection.ok
-                      ? ` · ${formatSampleRate(stem.inspection.sampleRate)} · ${channelLabel(stem.inspection.channelCount)} · ${formatBitDepth(stem.inspection.bitDepth)} · ${formatClock(stem.inspection.durationSeconds)}`
-                      : ` · ${stem.inspection.message}`}
-                  </p>
+                  <Truncated
+                    text={`${stem.filename}${
+                      stem.inspection.ok
+                        ? ` · ${formatSampleRate(stem.inspection.sampleRate)} · ${channelLabel(stem.inspection.channelCount)} · ${formatBitDepth(stem.inspection.bitDepth)} · ${formatClock(stem.inspection.durationSeconds)}`
+                        : ` · ${stem.inspection.message}`
+                    }`}
+                    className="px-2 text-xs text-faint"
+                  />
                   {stem.inspection.ok && stem.role === "other" ? (
                     <input
                       value={stem.customLabel}
@@ -246,7 +250,7 @@ export function NewProjectScreen() {
                   disabled={!stem.inspection.ok}
                   onChange={(role) => updateStem(stem.key, { role })}
                 />
-                <Button className="self-start" onClick={() => setStems((current) => current.filter((item) => item.key !== stem.key))}>
+                <Button title={`Remove ${stem.filename}`} className="self-start" onClick={() => setStems((current) => current.filter((item) => item.key !== stem.key))}>
                   Remove
                 </Button>
               </li>
@@ -266,7 +270,7 @@ export function NewProjectScreen() {
       ) : null}
 
       <div className="flex justify-end">
-        <Button tone="accent" disabled={Boolean(busy) || report.readableCount === 0 || !folderName} onClick={() => void create()}>
+        <Button title="Create the project from these stems" tone="accent" disabled={Boolean(busy) || report.readableCount === 0 || !folderName} onClick={() => void create()}>
           Create project
         </Button>
       </div>

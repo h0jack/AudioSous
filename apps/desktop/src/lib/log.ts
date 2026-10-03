@@ -7,7 +7,15 @@ export type LogEvent =
   | "project.open"
   | "project.save"
   | "track.import"
-  | "track.decode.failure";
+  | "track.decode.failure"
+  | "audio.play"
+  | "audio.seek"
+  | "section.create"
+  | "section.update"
+  | "section.delete"
+  | "section.analysis.start"
+  | "section.analysis.complete"
+  | "section.analysis.failure";
 
 export async function logEvent(
   platform: DesktopPlatform,

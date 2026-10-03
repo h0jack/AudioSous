@@ -5,7 +5,11 @@ import {
   serializeProject,
   addManualSection,
   applyAutomaticSections,
+  clearSuggestedSections,
+  mergeSectionWithNext,
+  moveSectionBoundary,
   removeSection,
+  splitSection,
   setTrackSectionState,
   updateSection,
   updateTrack,
@@ -16,7 +20,7 @@ import {
   type TrackRole,
   type TrackSectionState,
 } from "@audiosous/project-model";
-import type { DesktopPlatform } from "../platform/types";
+import { getPlatform, type DesktopPlatform } from "../platform";
 import { useAppStore, type DocumentEdit } from "../state/app-store";
 import { logEvent } from "./log";
 import { documentFromStems, type PendingStem } from "./stems";
@@ -136,6 +140,7 @@ export function addSectionFromRange(startTime: number, endTime: number): string 
   const result = addManualSection(document, { startTime, endTime });
   if (!result.ok) return result.message;
   useAppStore.getState().replaceDocument(result.document, true);
+  void logEvent(getPlatform(), "info", "section.create", "Created a section.", { startTime, endTime });
   return null;
 }
 
@@ -154,6 +159,7 @@ export function editSection(
   const result = updateSection(document, sectionId, patch);
   if (!result.ok) return result.message;
   useAppStore.getState().replaceDocument(result.document, true, editForSection(sectionId, patch));
+  void logEvent(getPlatform(), "info", "section.update", "Updated a section.", { sectionId });
   return null;
 }
 
@@ -171,12 +177,61 @@ export function editTrackSection(
   return null;
 }
 
+export function dragSectionBoundary(fromTime: number, toTime: number, key: string): { ok: true; time: number } | { ok: false; message: string } {
+  const document = useAppStore.getState().document;
+  if (!document) return { ok: false, message: "No project is open." };
+  const result = moveSectionBoundary(document, fromTime, toTime);
+  if (!result.ok) return result;
+  if (result.document !== document) {
+    useAppStore.getState().replaceDocument(result.document, true, { mode: "coalesce", key });
+  }
+  return { ok: true, time: result.time ?? fromTime };
+}
+
+export function finishBoundaryDrag(fromTime: number, toTime: number): void {
+  if (Math.abs(fromTime - toTime) < 0.0005) return;
+  void logEvent(getPlatform(), "info", "section.update", "Moved a section guide.", { fromTime, toTime });
+}
+
+export function splitSectionAt(sectionId: string, time: number): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const result = splitSection(document, sectionId, time);
+  if (!result.ok) return result.message;
+  useAppStore.getState().replaceDocument(result.document, true);
+  void logEvent(getPlatform(), "info", "section.update", "Split a section.", { sectionId, time });
+  return null;
+}
+
+export function mergeSection(sectionId: string): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const result = mergeSectionWithNext(document, sectionId);
+  if (!result.ok) return result.message;
+  useAppStore.getState().replaceDocument(result.document, true);
+  void logEvent(getPlatform(), "info", "section.update", "Merged a section with the next one.", { sectionId });
+  return null;
+}
+
+export function rejectSectionSuggestions(): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const next = clearSuggestedSections(document);
+  if (next === document) return "There are no unedited suggestions to clear.";
+  useAppStore.getState().replaceDocument(next, true);
+  void logEvent(getPlatform(), "info", "section.delete", "Cleared suggested sections.", {});
+  return null;
+}
+
 export function acceptSectionSuggestions(suggestions: SuggestedSection[]): string | null {
   const document = useAppStore.getState().document;
   if (!document) return "No project is open.";
   const result = applyAutomaticSections(document, suggestions);
   if (!result.ok) return result.message;
   useAppStore.getState().replaceDocument(result.document, true);
+  void logEvent(getPlatform(), "info", "section.analysis.complete", "Applied section suggestions.", {
+    sections: result.document.sections.length,
+  });
   return null;
 }
 
@@ -193,6 +248,7 @@ export function deleteSection(sectionId: string): void {
   const document = useAppStore.getState().document;
   if (!document) return;
   useAppStore.getState().replaceDocument(removeSection(document, sectionId), true);
+  void logEvent(getPlatform(), "info", "section.delete", "Deleted a section.", { sectionId });
 }
 
 export function editProjectName(name: string): void {

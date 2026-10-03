@@ -156,7 +156,7 @@ describe("streaming engine", () => {
     engine.dispose();
   });
 
-  it("schedules 32 stems from one window instead of the whole file", async () => {
+  it("schedules 32 stems of a 10 minute song from one window instead of the whole file", async () => {
     const output = fakeOutput();
     const requests: number[] = [];
     const wide = createProject({

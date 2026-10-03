@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createProject } from "./create-project";
 import { projectDocumentSchema } from "./schema";
-import { addManualSection, applyAutomaticSections, removeSection, setTrackSectionState, updateSection } from "./sections";
+import { addManualSection, applyAutomaticSections, clearSuggestedSections, mergeSectionWithNext, moveSectionBoundary, removeSection, setTrackSectionState, splitSection, updateSection } from "./sections";
 
 function document() {
   return createProject({
@@ -179,5 +179,109 @@ describe("manual sections", () => {
     ]);
     expect(projectDocumentSchema.safeParse(applied.document).success).toBe(true);
     expect(applyAutomaticSections(applied.document, []).ok).toBe(false);
+  });
+
+  it("drags a shared guide without letting sections cross", () => {
+    const first = addManualSection(document(), { name: "Verse", startTime: 0, endTime: 20 });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = addManualSection(first.document, { name: "Chorus", type: "chorus", startTime: 20, endTime: 40 });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const moved = moveSectionBoundary(second.document, 20, 28);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.time).toBe(28);
+    expect(moved.document.sections.map((section) => [section.startTime, section.endTime])).toEqual([
+      [0, 28],
+      [28, 40],
+    ]);
+    const clamped = moveSectionBoundary(moved.document, 28, 39.9);
+    expect(clamped.ok).toBe(true);
+    if (!clamped.ok) return;
+    expect(clamped.time).toBe(39.75);
+    const gapped = addManualSection(document(), { name: "Intro", startTime: 0, endTime: 10 });
+    expect(gapped.ok).toBe(true);
+    if (!gapped.ok) return;
+    const later = addManualSection(gapped.document, { name: "Outro", startTime: 30, endTime: 40 });
+    expect(later.ok).toBe(true);
+    if (!later.ok) return;
+    const edge = moveSectionBoundary(later.document, 10, 36);
+    expect(edge.ok).toBe(true);
+    if (!edge.ok) return;
+    expect(edge.document.sections.map((section) => [section.name, section.startTime, section.endTime])).toEqual([
+      ["Intro", 0, 30],
+      ["Outro", 30, 40],
+    ]);
+  });
+
+  it("marks a suggested section edited and keeps a linked loop on the new bounds", () => {
+    const added = addManualSection(document(), { name: "Intro", startTime: 0, endTime: 20 });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    const section = added.document.sections[0];
+    if (!section) return;
+    const suggested = {
+      ...added.document,
+      sections: [{ ...section, source: "automatic" as const }],
+      uiState: {
+        ...added.document.uiState,
+        loop: { enabled: true, start: 0, end: 20, sectionId: section.id },
+      },
+    };
+    const moved = moveSectionBoundary(suggested, 20, 24);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.document.sections[0]).toMatchObject({ source: "automatic-edited", endTime: 24 });
+    expect(moved.document.uiState.loop).toMatchObject({ start: 0, end: 24, sectionId: section.id });
+  });
+
+  it("splits a section and merges it back with the piece that follows", () => {
+    const added = addManualSection(document(), { name: "Drop", type: "drop", startTime: 10, endTime: 40 });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    const section = added.document.sections[0];
+    if (!section) return;
+    const split = splitSection(added.document, section.id, 25);
+    expect(split.ok).toBe(true);
+    if (!split.ok) return;
+    expect(split.document.sections.map((item) => [item.name, item.startTime, item.endTime])).toEqual([
+      ["Drop", 10, 25],
+      ["Drop 2", 25, 40],
+    ]);
+    expect(splitSection(split.document, section.id, 10.1).ok).toBe(false);
+    const merged = mergeSectionWithNext(split.document, section.id);
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) return;
+    expect(merged.document.sections.map((item) => [item.name, item.startTime, item.endTime])).toEqual([["Drop", 10, 40]]);
+    const gapped = addManualSection(merged.document, { name: "Outro", startTime: 50, endTime: 70 });
+    expect(gapped.ok).toBe(true);
+    if (!gapped.ok) return;
+    expect(mergeSectionWithNext(gapped.document, section.id).ok).toBe(false);
+  });
+
+  it("clears unedited suggestions and leaves confirmed sections", () => {
+    const manual = addManualSection(document(), { name: "Verse", startTime: 0, endTime: 20 });
+    expect(manual.ok).toBe(true);
+    if (!manual.ok) return;
+    const suggested = {
+      ...manual.document,
+      sections: [
+        ...manual.document.sections,
+        {
+          ...manual.document.sections[0]!,
+          id: "section-auto",
+          name: "Chorus",
+          startTime: 20,
+          endTime: 40,
+          source: "automatic" as const,
+        },
+      ],
+      uiState: { ...manual.document.uiState, selectedSectionId: "section-auto" },
+    };
+    const cleared = clearSuggestedSections(suggested);
+    expect(cleared.sections.map((section) => section.name)).toEqual(["Verse"]);
+    expect(cleared.uiState.selectedSectionId).toBeNull();
+    expect(clearSuggestedSections(cleared)).toBe(cleared);
   });
 });

@@ -1,4 +1,6 @@
 export { decodePcmFrames } from "./decode";
+export { TEST_ARRANGEMENT, TEST_STEMS, arrangementLevel, encodePcm16Wav, renderTestStem } from "./synthesize";
+export type { TestStemKind } from "./synthesize";
 export { bufferSource, decodeExtended80, encodeExtended80, inspectAudioFile } from "./inspect";
 export type { AudioInspection, ByteSource, PcmLayout } from "./inspect";
 export {
