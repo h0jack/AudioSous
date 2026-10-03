@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.log
+.vite/
+
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+target/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

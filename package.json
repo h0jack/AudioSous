@@ -1,0 +1,20 @@
+{
+  "name": "audiosous",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local desktop environment for hearing stems, marking song sections, and describing mix intent.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "npm run tauri --workspace @audiosous/desktop -- dev",
+    "build": "npm run build --workspace @audiosous/desktop"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
