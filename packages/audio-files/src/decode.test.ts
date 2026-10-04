@@ -22,6 +22,16 @@ describe("PCM window decode", () => {
     expect(right?.[0]).toBeCloseTo(-1, 5);
   });
 
+  it("deinterleaves little-endian float32 without treating it as an integer", () => {
+    const bytes = new Uint8Array(8);
+    const view = new DataView(bytes.buffer);
+    view.setFloat32(0, 0.25, true);
+    view.setFloat32(4, -0.5, true);
+    const [left, right] = decodePcmFrames(bytes, { ...layout16, encoding: "float", blockAlign: 8, bitsPerSample: 32, dataBytes: 8 }, 2);
+    expect(left?.[0]).toBeCloseTo(0.25, 5);
+    expect(right?.[0]).toBeCloseTo(-0.5, 5);
+  });
+
   it("scales a full-scale 24-bit sample", () => {
     const bytes = new Uint8Array([0xff, 0xff, 0x7f]);
     const [channel] = decodePcmFrames(bytes, { ...layout16, blockAlign: 3, bitsPerSample: 24, dataBytes: 3 }, 1);

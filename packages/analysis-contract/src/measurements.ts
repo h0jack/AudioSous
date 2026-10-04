@@ -6,8 +6,8 @@ import { z } from "zod";
  * schemaVersion changes when the JSON shape changes.
  * analysisVersion changes when a number would no longer be comparable with an older cache.
  */
-export const ANALYSIS_SCHEMA_VERSION = 2;
-export const ANALYSIS_ENGINE_VERSION = "0.3.0";
+export const ANALYSIS_SCHEMA_VERSION = 3;
+export const ANALYSIS_ENGINE_VERSION = "0.4.0";
 
 export const FREQUENCY_BANDS = [
   { id: "sub", name: "Sub", lowHz: 20, highHz: 60 },
@@ -114,6 +114,25 @@ export const trackFileMeasurementSchema = z
       integratedLufs: finiteDbSchema,
       crestFactorDb: z.number().finite().min(0).max(120).nullable(),
       integratedLufsStatus: z.enum(["measured", "silent", "too-short"]),
+    }),
+    stereo: z.object({
+      balance: z.number().finite().min(-1).max(1).nullable(),
+      correlation: z.number().finite().min(-1).max(1).nullable(),
+      width: z.number().finite().min(0).max(1).nullable(),
+      midRmsDbfs: finiteDbSchema,
+      sideRmsDbfs: finiteDbSchema,
+    }),
+    dynamics: z.object({
+      dynamicRangeDb: z.number().finite().min(0).max(120).nullable(),
+      onsetDensityPerSecond: z.number().finite().nonnegative().max(10_000),
+      activePercent: z.number().finite().min(0).max(100),
+      silentPercent: z.number().finite().min(0).max(100),
+    }),
+    spectral: z.object({
+      centroidHz: z.number().finite().positive().nullable(),
+      bandwidthHz: z.number().finite().nonnegative().nullable(),
+      rolloffHz: z.number().finite().positive().nullable(),
+      flatness: z.number().finite().min(0).max(1).nullable(),
     }),
     bandEnergy: z.array(bandEnergySchema).length(FREQUENCY_BANDS.length),
     spectrum: z.array(spectrumPointSchema).max(64),

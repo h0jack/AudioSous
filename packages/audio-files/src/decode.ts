@@ -6,6 +6,9 @@ export function decodePcmFrames(bytes: Uint8Array, pcm: PcmLayout, channelCount:
   if (!Number.isInteger(bytesPerSample) || bytesPerSample <= 0 || channelCount <= 0) {
     return [];
   }
+  if (pcm.encoding === "float" && pcm.littleEndian && pcm.bitsPerSample === 32) {
+    return deinterleaveFloat32(bytes, channelCount);
+  }
   const frames = Math.floor(bytes.byteLength / pcm.blockAlign);
   const channels = Array.from({ length: channelCount }, () => new Float32Array(frames));
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -16,6 +19,26 @@ export function decodePcmFrames(bytes: Uint8Array, pcm: PcmLayout, channelCount:
     }
   }
   return channels;
+}
+
+function deinterleaveFloat32(bytes: Uint8Array, channelCount: number): Float32Array[] {
+  const aligned = bytes.byteOffset % 4 === 0 ? bytes : bytes.slice();
+  const interleaved = new Float32Array(aligned.buffer, aligned.byteOffset, Math.floor(aligned.byteLength / 4));
+  const frames = Math.floor(interleaved.length / channelCount);
+  const channels = Array.from({ length: channelCount }, () => new Float32Array(frames));
+  for (let frame = 0; frame < frames; frame += 1) {
+    const base = frame * channelCount;
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      const value = interleaved[base + channel] ?? 0;
+      channels[channel]![frame] = value <= 1 && value >= -1 ? value : clampSample(value);
+    }
+  }
+  return channels;
+}
+
+function clampSample(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(-1, Math.min(1, value));
 }
 
 function readFloatSample(view: DataView, offset: number, pcm: PcmLayout): number {

@@ -1,6 +1,6 @@
 [project]
 name = "audiosous-analysis"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local analysis sidecar for Audiosous. The desktop UI does not import this package."
 requires-python = ">=3.11"
 readme = "README.md"

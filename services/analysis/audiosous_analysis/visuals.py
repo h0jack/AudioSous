@@ -118,6 +118,28 @@ def spectrogram(audio: np.ndarray, sample_rate: int) -> dict[str, float | int | 
     }
 
 
+def frequency_edges(sample_rate: int, bands: int) -> np.ndarray | None:
+    high = min(F_MAX, sample_rate / 2)
+    if sample_rate <= 0 or high <= F_MIN or bands < 1:
+        return None
+    return np.geomspace(F_MIN, high, bands + 1)
+
+
+def summed_band_db(freqs: np.ndarray, power: np.ndarray, edges: np.ndarray) -> list[float]:
+    magnitudes: list[float] = []
+    last = len(edges) - 2
+    for index in range(last + 1):
+        low = float(edges[index])
+        upper = float(edges[index + 1])
+        if index == last:
+            mask = (freqs >= low) & (freqs <= upper)
+        else:
+            mask = (freqs >= low) & (freqs < upper)
+        magnitude = float(np.sum(power[mask])) if np.any(mask) else 0.0
+        magnitudes.append(_power_db(magnitude))
+    return magnitudes
+
+
 def _power_db(power: float) -> float:
     if power <= 0.0 or not math.isfinite(power):
         return DB_FLOOR

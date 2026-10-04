@@ -34,8 +34,21 @@ Milestone 2 measures and draws analysis. It does not change the mix.
 | --- | --- |
 | 1. Track measurement sidecar | Done. Peak, RMS, LUFS, crest factor, and band energy for the selected stem, cached in `cache/analysis/` |
 | 2. Spectrum, loudness timeline, and spectrogram | Done. Drawn from the same measurement as the levels |
-| 3. Section, time-range, and mix scopes | Done. A section or range measures that window. Mix sums the stem files and ignores faders, mute, and pan |
-| 4. Comparison, overlap, and the activity map | Done. Comparison and overlap use two measurements. The activity map is each stem's loudness timeline |
+| 3. Section, time-range, and source-mix scopes | Done. A section or range measures that window. Source mix is the raw sum of the stem files, before faders, mute, and pan. It is not the audible mix |
+| 4. Comparison, overlap, and the activity map | Done. Stem comparison, section comparison, and band overlap use measurements. The activity map is each stem's loudness timeline. Charts follow the shared playhead and can seek |
+
+## Milestone 2.5
+
+Milestone 2.5 moves the playback clock into Rust. The desktop app plays 48 kHz float proxies through `cpal`. The browser preview keeps the Web Audio engine. `AUDIOSOUS_AUDIO_ENGINE=legacy` selects that engine in the desktop app too.
+
+| Slice | Status |
+| --- | --- |
+| 1. Playback proxy | Done. `cache/playback/<trackId>.proxy`, rebuilt when the source identity or resampler id changes |
+| 2. Native transport | Done. One clock, four reader threads, gain, pan, mute, solo, seek, and loop |
+| 3. Device output | Done. 48 kHz float when the device allows it. Otherwise a mixer thread converts before the callback |
+| 4. Diagnostics | Done. The project screen reports fill, underruns, seek prime, and callback time |
+
+Sustained playback of Generated2, and the 32-stem and 64-stem timing runs, are still manual checks on a machine with the stems and an output device. The automated tests cover proxy identity, resampling, mix, seek, loop, and underrun without a sound card.
 
 ## Explicitly later
 

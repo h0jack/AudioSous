@@ -1,5 +1,7 @@
 mod analysis;
+mod audio_host;
 mod bundle;
+mod waveform;
 
 use std::path::PathBuf;
 
@@ -134,10 +136,14 @@ struct AnalyzeAudioRequest {
     scope_type: String,
     start_seconds: Option<f64>,
     end_seconds: Option<f64>,
+    job_id: u64,
 }
 
 #[tauri::command]
-async fn analyze_track_file(project_file: String, relative_path: String) -> Result<analysis::AnalyzeTrackResponse, String> {
+async fn analyze_track_file(
+    project_file: String,
+    relative_path: String,
+) -> Result<analysis::AnalyzeTrackResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         analysis::analyze_project_track(PathBuf::from(project_file).as_path(), &relative_path)
     })
@@ -146,7 +152,9 @@ async fn analyze_track_file(project_file: String, relative_path: String) -> Resu
 }
 
 #[tauri::command]
-async fn analyze_audio(request: AnalyzeAudioRequest) -> Result<analysis::AnalyzeTrackResponse, String> {
+async fn analyze_audio(
+    request: AnalyzeAudioRequest,
+) -> Result<analysis::AnalyzeTrackResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         analysis::analyze_project_audio(
             PathBuf::from(request.project_file).as_path(),
@@ -154,10 +162,112 @@ async fn analyze_audio(request: AnalyzeAudioRequest) -> Result<analysis::Analyze
             &request.scope_type,
             request.start_seconds,
             request.end_seconds,
+            request.job_id,
         )
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn cancel_analysis(job_id: u64) {
+    analysis::cancel_analysis(job_id);
+}
+
+#[tauri::command]
+async fn measure_waveform(
+    app: AppHandle,
+    project_file: String,
+    relative_path: String,
+    track_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        waveform::measure(app, &project_file, &relative_path, &track_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn cancel_waveform() {
+    waveform::cancel_measure();
+}
+
+#[tauri::command]
+fn audio_engine_kind() -> &'static str {
+    audio_host::engine_kind()
+}
+
+#[tauri::command]
+async fn audio_load(
+    host: tauri::State<'_, audio_host::AudioHost>,
+    request: audio_host::AudioLoadRequest,
+) -> Result<(), String> {
+    let engine = std::sync::Arc::clone(&host.engine);
+    tauri::async_runtime::spawn_blocking(move || {
+        audio_host::load_project(&audio_host::AudioHost { engine }, request)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn audio_play(
+    host: tauri::State<'_, audio_host::AudioHost>,
+    seconds: f64,
+) -> Result<(), String> {
+    let engine = std::sync::Arc::clone(&host.engine);
+    tauri::async_runtime::spawn_blocking(move || engine.play(seconds))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn audio_pause(host: tauri::State<'_, audio_host::AudioHost>) {
+    host.engine.pause();
+}
+
+#[tauri::command]
+fn audio_stop(host: tauri::State<'_, audio_host::AudioHost>) {
+    host.engine.stop();
+}
+
+#[tauri::command]
+fn audio_seek(host: tauri::State<'_, audio_host::AudioHost>, seconds: f64) {
+    host.engine.seek(seconds);
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioTrackUpdate {
+    id: String,
+    gain_db: Option<f32>,
+    pan: Option<f32>,
+    muted: Option<bool>,
+    solo: Option<bool>,
+}
+
+#[tauri::command]
+fn audio_set_track(host: tauri::State<'_, audio_host::AudioHost>, track: AudioTrackUpdate) {
+    host.engine
+        .set_track(&track.id, track.gain_db, track.pan, track.muted, track.solo);
+}
+
+#[tauri::command]
+fn audio_set_loop(
+    host: tauri::State<'_, audio_host::AudioHost>,
+    start: Option<f64>,
+    end: Option<f64>,
+) {
+    host.engine.set_loop(match (start, end) {
+        (Some(start), Some(end)) => Some((start, end)),
+        _ => None,
+    });
+}
+
+#[tauri::command]
+fn audio_status(host: tauri::State<'_, audio_host::AudioHost>) -> audiosous_audio::EngineStatus {
+    audio_host::status(&host)
 }
 
 #[tauri::command]
@@ -173,6 +283,7 @@ fn append_log(app: AppHandle, line: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(audio_host::AudioHost::new())
         .invoke_handler(tauri::generate_handler![
             list_audio_files,
             read_user_file_range,
@@ -185,6 +296,18 @@ pub fn run() {
             write_project_cache,
             analyze_track_file,
             analyze_audio,
+            cancel_analysis,
+            measure_waveform,
+            cancel_waveform,
+            audio_engine_kind,
+            audio_load,
+            audio_play,
+            audio_pause,
+            audio_stop,
+            audio_seek,
+            audio_set_track,
+            audio_set_loop,
+            audio_status,
             append_log
         ])
         .run(tauri::generate_context!())

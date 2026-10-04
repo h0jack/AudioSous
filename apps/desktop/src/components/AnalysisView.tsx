@@ -7,7 +7,8 @@ import {
 } from "@audiosous/analysis-contract";
 import { TRACK_ROLE_LABELS, type ProjectDocument, type SongSection, type Track } from "@audiosous/project-model";
 import { useEffect, useState, type ReactNode } from "react";
-import { loadAnalysis, loadTrackAnalysis, TrackAnalysisError, type AnalysisJobStatus, type AnalysisTarget } from "../lib/track-analysis";
+import { AnalysisCancelled, watchAnalysis } from "../lib/analysis-queue";
+import { TrackAnalysisError, type AnalysisJobStatus, type AnalysisTarget } from "../lib/track-analysis";
 import { getPlatform } from "../platform";
 import { useAppStore } from "../state/app-store";
 import { ActivityMap, LevelComparison, LoudnessChart, OverlapBars, SpectrogramChart, SpectrumChart } from "./analysis-charts";
@@ -28,16 +29,27 @@ const SCOPE_CHOICES: Array<{ id: ScopeChoice; label: string }> = [
   { id: "track", label: "Stem" },
   { id: "section", label: "Section" },
   { id: "time-range", label: "Range" },
-  { id: "mix", label: "Mix" },
+  { id: "mix", label: "Source mix" },
 ];
 
-export function AnalysisView({ document, projectFile }: { document: ProjectDocument; projectFile: string | null }) {
+export function AnalysisView({
+  document,
+  projectFile,
+  playheadSeconds,
+  onSeek,
+}: {
+  document: ProjectDocument;
+  projectFile: string | null;
+  playheadSeconds: number;
+  onSeek: (seconds: number) => void;
+}) {
   const selectedId = document.uiState.selectedTrackId;
   const section = document.sections.find((item) => item.id === document.uiState.selectedSectionId) ?? null;
   const timeRange = document.uiState.timeRange;
   const track = document.tracks.find((item) => item.id === selectedId) ?? null;
   const [scopeChoice, setScopeChoice] = useState<ScopeChoice>("track");
   const [compareId, setCompareId] = useState<string>("");
+  const [sectionCompareId, setSectionCompareId] = useState("");
   const [retry, setRetry] = useState(0);
   const [status, setStatus] = useState<AnalysisJobStatus>("not-analyzed");
   const [measurement, setMeasurement] = useState<TrackFileMeasurement | null>(null);
@@ -46,7 +58,11 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
   const [detail, setDetail] = useState<string | null>(null);
   const [comparison, setComparison] = useState<TrackFileMeasurement | null>(null);
   const [comparisonNote, setComparisonNote] = useState<string | null>(null);
-  const [activity, setActivity] = useState<Array<{ id: string; name: string; timeline: TrackFileMeasurement["loudnessTimeline"]; failed: boolean }>>([]);
+  const [activity, setActivity] = useState<Array<{ id: string; name: string; timeline: TrackFileMeasurement["loudnessTimeline"]; durationSeconds: number; failed: boolean }>>([]);
+  const [sectionEnergy, setSectionEnergy] = useState<Array<{ id: string; name: string; rmsDbfs: number | null; failed: boolean }>>([]);
+  const [baseSectionMeasurement, setBaseSectionMeasurement] = useState<TrackFileMeasurement | null>(null);
+  const [sectionComparison, setSectionComparison] = useState<TrackFileMeasurement | null>(null);
+  const [sectionComparisonNote, setSectionComparisonNote] = useState<string | null>(null);
 
   const target = measurementTarget(document, track, section, scopeChoice);
   const compareTrack = document.tracks.find((item) => item.id === compareId && item.id !== track?.id) ?? null;
@@ -68,9 +84,10 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
     setFromCache(false);
     setMessage(null);
     setDetail(null);
-    void loadAnalysis(getPlatform(), projectFile, target, (next) => {
+    const watched = watchAnalysis(getPlatform(), projectFile, target, (next) => {
       if (!cancelled) setStatus(next);
-    })
+    }, 100);
+    void watched.promise
       .then((loaded) => {
         if (cancelled) return;
         setMeasurement(loaded.measurement);
@@ -78,7 +95,7 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
         setStatus("complete");
       })
       .catch((error: unknown) => {
-        if (cancelled) return;
+        if (cancelled || error instanceof AnalysisCancelled) return;
         setMeasurement(null);
         setFromCache(false);
         setStatus("failed");
@@ -92,6 +109,7 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
       });
     return () => {
       cancelled = true;
+      watched.stop();
     };
   }, [target?.cacheName, target?.scopeKey, scopeChoice, section?.id, section?.startTime, section?.endTime, timeRange?.start, timeRange?.end, projectFile, retry, fileKey]);
 
@@ -104,19 +122,21 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
     let cancelled = false;
     setComparison(null);
     setComparisonNote(null);
-    void loadAnalysis(getPlatform(), projectFile, compareTarget)
+    const watched = watchAnalysis(getPlatform(), projectFile, compareTarget, undefined, 70);
+    void watched.promise
       .then((loaded) => {
         if (cancelled) return;
         setComparison(loaded.measurement);
         setComparisonNote(null);
       })
       .catch((error: unknown) => {
-        if (cancelled) return;
+        if (cancelled || error instanceof AnalysisCancelled) return;
         setComparison(null);
         setComparisonNote(error instanceof Error && error.message ? error.message : `Unable to analyze ${compareTarget.label}.`);
       });
     return () => {
       cancelled = true;
+      watched.stop();
     };
   }, [compareTarget?.cacheName, compareTarget?.scopeKey, projectFile, fileKey]);
 
@@ -127,32 +147,117 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
     }
     let cancelled = false;
     setActivity([]);
-    const rows: Array<{ id: string; name: string; timeline: TrackFileMeasurement["loudnessTimeline"]; failed: boolean }> = [];
+    const stops: Array<() => void> = [];
+    const rows: Array<{ id: string; name: string; timeline: TrackFileMeasurement["loudnessTimeline"]; durationSeconds: number; failed: boolean }> = [];
     void (async () => {
       for (const item of document.tracks) {
         if (cancelled) return;
+        const watched = watchAnalysis(
+          getPlatform(),
+          projectFile,
+          {
+            cacheName: item.id,
+            label: item.file.filename,
+            logId: item.id,
+            files: [{ relativePath: item.file.relativePath, filename: item.file.filename }],
+            scope: { type: "track" },
+          },
+          undefined,
+          10,
+        );
+        stops.push(watched.stop);
         try {
-          const loaded = await loadTrackAnalysis(getPlatform(), projectFile, {
+          const loaded = await watched.promise;
+          if (cancelled) return;
+          rows.push({
             id: item.id,
-            filename: item.file.filename,
-            relativePath: item.file.relativePath,
+            name: item.name,
+            timeline: loaded.measurement.loudnessTimeline,
+            durationSeconds: loaded.measurement.source.durationSeconds,
+            failed: false,
           });
-          if (cancelled) return;
-          rows.push({ id: item.id, name: item.name, timeline: loaded.measurement.loudnessTimeline, failed: false });
-        } catch {
-          if (cancelled) return;
-          rows.push({ id: item.id, name: item.name, timeline: [], failed: true });
+        } catch (error) {
+          if (cancelled || error instanceof AnalysisCancelled) return;
+          rows.push({ id: item.id, name: item.name, timeline: [], durationSeconds: 0, failed: true });
         }
         if (!cancelled) setActivity(rows.slice());
       }
     })();
     return () => {
       cancelled = true;
+      for (const stop of stops) stop();
     };
   }, [projectFile, fileKey]);
 
-  const heading = scopeChoice === "mix" ? "Mix" : (track?.name ?? "Analysis");
+  const baseSection = section ?? document.sections[0] ?? null;
+  const otherSection = document.sections.find((item) => item.id === sectionCompareId && item.id !== baseSection?.id) ?? null;
+  const sectionKey = document.sections.map((item) => `${item.id}:${item.startTime}:${item.endTime}`).join("|");
+
+  useEffect(() => {
+    if (!projectFile || !track || document.sections.length === 0) {
+      setSectionEnergy([]);
+      return;
+    }
+    let cancelled = false;
+    const stops: Array<() => void> = [];
+    const rows: Array<{ id: string; name: string; rmsDbfs: number | null; failed: boolean }> = [];
+    void (async () => {
+      for (const item of document.sections) {
+        if (cancelled) return;
+        const watched = watchAnalysis(getPlatform(), projectFile, sectionTarget(track, item), undefined, 40);
+        stops.push(watched.stop);
+        try {
+          const loaded = await watched.promise;
+          if (cancelled) return;
+          rows.push({ id: item.id, name: item.name, rmsDbfs: loaded.measurement.levels.rmsDbfs, failed: false });
+        } catch (error) {
+          if (cancelled || error instanceof AnalysisCancelled) return;
+          rows.push({ id: item.id, name: item.name, rmsDbfs: null, failed: true });
+        }
+        if (!cancelled) setSectionEnergy(rows.slice());
+      }
+    })();
+    return () => {
+      cancelled = true;
+      for (const stop of stops) stop();
+    };
+  }, [projectFile, track?.id, track?.file.relativePath, sectionKey, fileKey]);
+
+  useEffect(() => {
+    if (!projectFile || !track || !baseSection || !otherSection) {
+      setBaseSectionMeasurement(null);
+      setSectionComparison(null);
+      setSectionComparisonNote(null);
+      return;
+    }
+    let cancelled = false;
+    setBaseSectionMeasurement(null);
+    setSectionComparison(null);
+    setSectionComparisonNote(null);
+    const baseWatch = watchAnalysis(getPlatform(), projectFile, sectionTarget(track, baseSection), undefined, 60);
+    const otherWatch = watchAnalysis(getPlatform(), projectFile, sectionTarget(track, otherSection), undefined, 60);
+    void (async () => {
+      try {
+        const [baseLoaded, otherLoaded] = await Promise.all([baseWatch.promise, otherWatch.promise]);
+        if (cancelled) return;
+        setBaseSectionMeasurement(baseLoaded.measurement);
+        setSectionComparison(otherLoaded.measurement);
+      } catch (error) {
+        if (cancelled || error instanceof AnalysisCancelled) return;
+        setSectionComparisonNote(error instanceof Error && error.message ? error.message : "Unable to compare these sections.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      baseWatch.stop();
+      otherWatch.stop();
+    };
+  }, [projectFile, track?.id, track?.file.relativePath, baseSection?.id, baseSection?.startTime, baseSection?.endTime, otherSection?.id, otherSection?.startTime, otherSection?.endTime, fileKey]);
+
+  const heading = scopeChoice === "mix" ? "Source mix" : (track?.name ?? "Analysis");
   const scopeLabel = describeScope(scopeChoice, section, timeRange, measurement);
+  const chartOrigin = measurement && (measurement.scope.type === "section" || measurement.scope.type === "time-range") ? measurement.scope.startSeconds : 0;
+  const chartSpan = measurement?.source.durationSeconds ?? 0;
 
   return (
     <div className="flex h-full min-h-0">
@@ -215,7 +320,9 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
             </div>
           ) : null}
           {!target && message ? <p className="mt-6 text-sm text-muted">{message}</p> : null}
-          {measurement ? <MeasurementSummary measurement={measurement} /> : null}
+          {measurement ? (
+            <MeasurementSummary measurement={measurement} playheadSeconds={playheadSeconds} originSeconds={chartOrigin} spanSeconds={chartSpan} onSeek={onSeek} />
+          ) : null}
           {!measurement && target && status !== "failed" ? <p className="mt-6 text-sm text-muted">{STATUS_LABEL[status]}…</p> : null}
           <div className="mt-10">
             <h3 className="text-[10px] tracking-wide text-muted uppercase">Compare</h3>
@@ -251,8 +358,48 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
             ) : null}
           </div>
           <div className="mt-10">
+            <h3 className="text-[10px] tracking-wide text-muted uppercase">Sections</h3>
+            {document.sections.length === 0 ? (
+              <p className="mt-3 text-sm text-muted">Add a section on the timeline to compare parts of this stem.</p>
+            ) : (
+              <>
+                <SectionEnergy rows={sectionEnergy} />
+                <label className="mt-4 block text-sm text-muted">
+                  Compare {baseSection?.name ?? "a section"} with
+                  <select
+                    className="mt-1 block rounded-md border border-line bg-canvas px-2 py-1 pr-7 text-sm text-ink"
+                    value={sectionCompareId}
+                    onChange={(event) => setSectionCompareId(event.target.value)}
+                  >
+                    <option value="">None</option>
+                    {document.sections
+                      .filter((item) => item.id !== baseSection?.id)
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                {otherSection && baseSectionMeasurement && sectionComparison ? (
+                  <div className="mt-4 space-y-6">
+                    <LevelComparison selected={baseSectionMeasurement.levels} other={sectionComparison.levels} otherName={otherSection.name} />
+                    <div>
+                      <h3 className="mb-3 text-[10px] tracking-wide text-muted uppercase">Shared band energy</h3>
+                      <OverlapBars left={baseSectionMeasurement.bandEnergy} right={sectionComparison.bandEnergy} />
+                    </div>
+                  </div>
+                ) : sectionComparisonNote ? (
+                  <p className="mt-3 text-sm text-muted">{sectionComparisonNote}</p>
+                ) : otherSection ? (
+                  <p className="mt-3 text-sm text-muted">Measuring {baseSection?.name} and {otherSection.name}…</p>
+                ) : null}
+              </>
+            )}
+          </div>
+          <div className="mt-10">
             <h3 className="mb-3 text-[10px] tracking-wide text-muted uppercase">Activity</h3>
-            <ActivityMap rows={activity} />
+            <ActivityMap rows={activity} playheadSeconds={playheadSeconds} onSeek={onSeek} />
           </div>
         </div>
       </section>
@@ -260,7 +407,19 @@ export function AnalysisView({ document, projectFile }: { document: ProjectDocum
   );
 }
 
-function MeasurementSummary({ measurement }: { measurement: TrackFileMeasurement }) {
+function MeasurementSummary({
+  measurement,
+  playheadSeconds,
+  originSeconds,
+  spanSeconds,
+  onSeek,
+}: {
+  measurement: TrackFileMeasurement;
+  playheadSeconds: number;
+  originSeconds: number;
+  spanSeconds: number;
+  onSeek: (seconds: number) => void;
+}) {
   const { levels, bandEnergy } = measurement;
   const dominant = bandEnergy.reduce((best, band) => (band.normalizedEnergy > best.normalizedEnergy ? band : best));
   return (
@@ -270,6 +429,19 @@ function MeasurementSummary({ measurement }: { measurement: TrackFileMeasurement
         <Level label="RMS" value={levels.rmsDbfs} unit="dBFS" />
         <Level label="Integrated LUFS" value={levels.integratedLufs} unit="LUFS" note={lufsNote(levels.integratedLufsStatus, levels.peakDbfs)} />
         <Level label="Crest factor" value={levels.crestFactorDb} unit="dB" />
+        <Level label="L/R balance" value={measurement.stereo.balance} unit="" note={balanceNote(measurement.stereo.balance)} />
+        <Level label="Correlation" value={measurement.stereo.correlation} unit="" note={measurement.stereo.correlation === null ? "Mono, or one side is silent." : null} />
+        <Level label="Width" value={measurement.stereo.width} unit="" note="Side share of mid/side energy." />
+        <Level label="Mid" value={measurement.stereo.midRmsDbfs} unit="dBFS" />
+        <Level label="Side" value={measurement.stereo.sideRmsDbfs} unit="dBFS" />
+        <Level label="Dynamic range" value={measurement.dynamics.dynamicRangeDb} unit="dB" note="10th to 95th percentile of windowed RMS." />
+        <Level label="Onsets" value={measurement.dynamics.onsetDensityPerSecond} unit="/s" />
+        <Level label="Active" value={measurement.dynamics.activePercent} unit="%" />
+        <Level label="Silent" value={measurement.dynamics.silentPercent} unit="%" />
+        <Level label="Centroid" value={measurement.spectral.centroidHz} unit="Hz" />
+        <Level label="Bandwidth" value={measurement.spectral.bandwidthHz} unit="Hz" />
+        <Level label="Rolloff" value={measurement.spectral.rolloffHz} unit="Hz" note="85% of spectrum power." />
+        <Level label="Flatness" value={measurement.spectral.flatness} unit="" />
       </dl>
       <div>
         <div className="mb-3 flex items-baseline justify-between">
@@ -297,10 +469,10 @@ function MeasurementSummary({ measurement }: { measurement: TrackFileMeasurement
         <SpectrumChart points={measurement.spectrum} />
       </ChartBlock>
       <ChartBlock title="Loudness timeline">
-        <LoudnessChart points={measurement.loudnessTimeline} />
+        <LoudnessChart points={measurement.loudnessTimeline} playheadSeconds={playheadSeconds} originSeconds={originSeconds} spanSeconds={spanSeconds} onSeek={onSeek} />
       </ChartBlock>
       <ChartBlock title="Spectrogram">
-        <SpectrogramChart image={measurement.spectrogram} />
+        <SpectrogramChart image={measurement.spectrogram} playheadSeconds={playheadSeconds} originSeconds={originSeconds} spanSeconds={spanSeconds} onSeek={onSeek} />
       </ChartBlock>
     </div>
   );
@@ -416,7 +588,7 @@ function choiceDisabled(choice: ScopeChoice, section: SongSection | null, timeRa
 function choiceTitle(choice: ScopeChoice, section: SongSection | null, timeRange: ProjectDocument["uiState"]["timeRange"]): string {
   if (choice === "section" && !section) return "Select a section on the timeline first.";
   if (choice === "time-range" && !timeRange) return "Drag a time range on the timeline first.";
-  if (choice === "mix") return "Sum of the stem files. Faders, mute, and pan stay out of this measurement.";
+  if (choice === "mix") return "Raw sum of the stem files, before faders, mute, and pan. This is not the audible mix.";
   if (choice === "section") return "Measure the selected section of this stem.";
   if (choice === "time-range") return "Measure the selected time range of this stem.";
   return "Measure the whole stem.";
@@ -435,7 +607,7 @@ function describeScope(
   timeRange: ProjectDocument["uiState"]["timeRange"],
   measurement: TrackFileMeasurement | null,
 ): string {
-  if (choice === "mix") return "Sum of the stem files. Mixer controls are not part of this measurement.";
+  if (choice === "mix") return "Raw sum of the stem files. This is not the mix you hear.";
   if (choice === "section" && section) {
     const bounds = measurement?.scope.type === "section" ? measurement.scope : null;
     return bounds ? `${section.name} · ${bounds.startSeconds.toFixed(2)}–${bounds.endSeconds.toFixed(2)} s` : section.name;
@@ -446,12 +618,52 @@ function describeScope(
   return "Whole stem";
 }
 
+function SectionEnergy({ rows }: { rows: Array<{ id: string; name: string; rmsDbfs: number | null; failed: boolean }> }) {
+  const finite = rows.map((row) => row.rmsDbfs).filter((value): value is number => value !== null);
+  const loudest = finite.length ? Math.max(...finite) : 0;
+  return (
+    <ul className="mt-3 space-y-2" aria-label="Section energy">
+      {rows.length === 0 ? <li className="text-sm text-muted">Measuring sections…</li> : null}
+      {rows.map((row) => {
+        const width = row.rmsDbfs === null ? 0 : Math.max(2, Math.min(100, 100 * 10 ** ((row.rmsDbfs - loudest) / 20)));
+        return (
+          <li key={row.id} className="grid grid-cols-[7.5rem_1fr_4.5rem] items-center gap-3 text-sm">
+            <span className="truncate text-ink">{row.name}</span>
+            <span className="h-2 overflow-hidden rounded bg-panel-2">
+              <span className="block h-2 rounded bg-accent" style={{ width: `${width}%` }} />
+            </span>
+            <span className="text-right font-mono text-xs text-muted">{row.failed ? "Failed" : row.rmsDbfs === null ? "—" : `${row.rmsDbfs.toFixed(1)} dB`}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function sectionTarget(track: Track, section: SongSection): AnalysisTarget {
+  return {
+    cacheName: sectionAnalysisCacheName(track.id, section.id),
+    label: track.file.filename,
+    logId: track.id,
+    files: [{ relativePath: track.file.relativePath, filename: track.file.filename }],
+    scope: { type: "section", startSeconds: section.startTime, endSeconds: section.endTime },
+  };
+}
+
+function balanceNote(balance: number | null): string | null {
+  if (balance === null) return null;
+  if (balance < -0.05) return "Louder on the left.";
+  if (balance > 0.05) return "Louder on the right.";
+  return "Centered.";
+}
+
 function Level({ label, value, unit, note }: { label: string; value: number | null; unit: string; note?: string | null }) {
+  const digits = unit === "Hz" || unit === "/s" || unit === "%" ? 1 : Math.abs(value ?? 0) <= 1 && unit === "" ? 2 : 1;
   return (
     <div>
       <dt className="text-[10px] tracking-wide text-muted uppercase">{label}</dt>
       <dd className="font-mono text-ink">
-        {value === null ? "—" : `${value.toFixed(1)} ${unit}`}
+        {value === null ? "—" : `${value.toFixed(digits)} ${unit}`.trim()}
         {note ? <span className="mt-0.5 block font-sans text-[11px] text-faint">{note}</span> : null}
       </dd>
     </div>

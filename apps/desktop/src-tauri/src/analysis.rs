@@ -2,6 +2,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -31,8 +33,36 @@ struct FileStamp {
     modified_at_ns: String,
 }
 
-pub fn analyze_project_track(project_file: &Path, relative: &str) -> Result<AnalyzeTrackResponse, String> {
-    analyze_project_audio(project_file, &[relative.to_string()], "track", None, None)
+struct ActiveJob {
+    id: u64,
+    child: Child,
+    cancelled: Arc<AtomicBool>,
+}
+
+static ACTIVE: Mutex<Option<ActiveJob>> = Mutex::new(None);
+
+pub fn analyze_project_track(
+    project_file: &Path,
+    relative: &str,
+) -> Result<AnalyzeTrackResponse, String> {
+    analyze_project_audio(
+        project_file,
+        &[relative.to_string()],
+        "track",
+        None,
+        None,
+        0,
+    )
+}
+
+pub fn cancel_analysis(job_id: u64) {
+    let mut active = ACTIVE.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(job) = active.as_mut() {
+        if job.id == job_id {
+            job.cancelled.store(true, Ordering::SeqCst);
+            let _ = job.child.kill();
+        }
+    }
 }
 
 pub fn analyze_project_audio(
@@ -41,6 +71,7 @@ pub fn analyze_project_audio(
     scope_type: &str,
     start_seconds: Option<f64>,
     end_seconds: Option<f64>,
+    job_id: u64,
 ) -> Result<AnalyzeTrackResponse, String> {
     if relatives.is_empty() {
         return Err("The analysis request did not include a stem.".into());
@@ -107,9 +138,40 @@ pub fn analyze_project_audio(
         .stderr
         .take()
         .ok_or("The analysis engine could not be started.")?;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = ACTIVE.lock().unwrap_or_else(|poison| poison.into_inner());
+        if let Some(mut previous) = active.take() {
+            previous.cancelled.store(true, Ordering::SeqCst);
+            let _ = previous.child.kill();
+            let _ = previous.child.wait();
+        }
+        *active = Some(ActiveJob {
+            id: job_id,
+            child,
+            cancelled: Arc::clone(&cancelled),
+        });
+    }
     let stdout_thread = thread::spawn(move || read_capped(stdout, STDOUT_LIMIT));
     let stderr_thread = thread::spawn(move || read_capped(stderr, STDERR_LIMIT));
-    let status = wait_for(&mut child, TIMEOUT)?;
+    let status = wait_for(job_id, TIMEOUT);
+    {
+        let mut active = ACTIVE.lock().unwrap_or_else(|poison| poison.into_inner());
+        if active.as_ref().is_some_and(|job| job.id == job_id) {
+            *active = None;
+        }
+    }
+    if cancelled.load(Ordering::SeqCst) {
+        let _ = join_read(stdout_thread);
+        let _ = join_read(stderr_thread);
+        return Ok(failure(
+            "Analysis was cancelled.",
+            "cancelled",
+            &before[0],
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        ));
+    }
+    let status = status?;
     let stdout_bytes = join_read(stdout_thread)?;
     let stderr_text = join_read(stderr_thread)
         .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
@@ -120,7 +182,13 @@ pub fn analyze_project_audio(
             return Err("The stem changed while it was being analyzed.".into());
         }
     }
-    parse_response(&stdout_bytes, &stderr_text, status.success(), &before[0], duration_ms)
+    parse_response(
+        &stdout_bytes,
+        &stderr_text,
+        status.success(),
+        &before[0],
+        duration_ms,
+    )
 }
 
 fn parse_response(
@@ -133,11 +201,23 @@ fn parse_response(
     let parsed: serde_json::Value = match serde_json::from_slice(stdout_bytes) {
         Ok(value) => value,
         Err(_) => {
-            let detail = format!("The analysis engine stopped unexpectedly. {}", tail(stderr_text));
-            return Ok(failure("Unable to analyze this stem.", &detail, stamp, duration_ms));
+            let detail = format!(
+                "The analysis engine stopped unexpectedly. {}",
+                tail(stderr_text)
+            );
+            return Ok(failure(
+                "Unable to analyze this stem.",
+                &detail,
+                stamp,
+                duration_ms,
+            ));
         }
     };
-    if parsed.get("contractVersion").and_then(|value| value.as_i64()) != Some(1) {
+    if parsed
+        .get("contractVersion")
+        .and_then(|value| value.as_i64())
+        != Some(1)
+    {
         let detail = tail(stderr_text);
         return Ok(failure(
             "The analysis engine returned an unfamiliar result.",
@@ -159,7 +239,12 @@ fn parse_response(
     }
     if !success {
         let detail = tail(stderr_text);
-        return Ok(failure("Unable to analyze this stem.", &detail, stamp, duration_ms));
+        return Ok(failure(
+            "Unable to analyze this stem.",
+            &detail,
+            stamp,
+            duration_ms,
+        ));
     }
     let Some(measurement) = parsed.get("measurement").cloned() else {
         let detail = tail(stderr_text);
@@ -170,7 +255,8 @@ fn parse_response(
             duration_ms,
         ));
     };
-    let measurement_json = serde_json::to_string(&measurement).map_err(|error| error.to_string())?;
+    let measurement_json =
+        serde_json::to_string(&measurement).map_err(|error| error.to_string())?;
     Ok(AnalyzeTrackResponse {
         ok: true,
         message: String::new(),
@@ -182,7 +268,12 @@ fn parse_response(
     })
 }
 
-fn failure(message: &str, detail: &str, stamp: &FileStamp, duration_ms: u64) -> AnalyzeTrackResponse {
+fn failure(
+    message: &str,
+    detail: &str,
+    stamp: &FileStamp,
+    duration_ms: u64,
+) -> AnalyzeTrackResponse {
     AnalyzeTrackResponse {
         ok: false,
         message: message.to_string(),
@@ -229,17 +320,27 @@ fn modified_at_ns(meta: &fs::Metadata) -> String {
         .unwrap_or_else(|| "0".to_string())
 }
 
-fn wait_for(child: &mut Child, limit: Duration) -> Result<ExitStatus, String> {
+fn wait_for(job_id: u64, limit: Duration) -> Result<ExitStatus, String> {
     let started = Instant::now();
     loop {
-        match child.try_wait() {
+        let mut active = ACTIVE.lock().unwrap_or_else(|poison| poison.into_inner());
+        let Some(job) = active.as_mut() else {
+            return Err("Analysis was cancelled.".into());
+        };
+        if job.id != job_id || job.cancelled.load(Ordering::SeqCst) {
+            return Err("Analysis was cancelled.".into());
+        }
+        match job.child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) if started.elapsed() > limit => {
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = job.child.kill();
+                let _ = job.child.wait();
                 return Err("Analysis took too long and was stopped.".into());
             }
-            Ok(None) => thread::sleep(Duration::from_millis(40)),
+            Ok(None) => {
+                drop(active);
+                thread::sleep(Duration::from_millis(40));
+            }
             Err(error) => return Err(error.to_string()),
         }
     }
@@ -277,7 +378,8 @@ mod tests {
     use super::*;
 
     fn temp_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("audiosous-analysis-{name}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("audiosous-analysis-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
@@ -289,7 +391,8 @@ mod tests {
         let mut data = Vec::with_capacity(frames * 2);
         for index in 0..frames {
             let time = index as f32 / sample_rate as f32;
-            let sample = (amplitude * (2.0 * std::f32::consts::PI * frequency * time).sin()).clamp(-1.0, 1.0);
+            let sample = (amplitude * (2.0 * std::f32::consts::PI * frequency * time).sin())
+                .clamp(-1.0, 1.0);
             let pcm = (sample * 32_767.0).round() as i16;
             data.extend_from_slice(&pcm.to_le_bytes());
         }
@@ -341,7 +444,8 @@ mod tests {
         let response = analyze_project_track(&project, "media/track-bass__bass.wav").unwrap();
         assert_eq!(fs::read(&audio).unwrap(), before);
         assert!(response.ok, "{}", response.detail);
-        let measurement: serde_json::Value = serde_json::from_str(&response.measurement_json).unwrap();
+        let measurement: serde_json::Value =
+            serde_json::from_str(&response.measurement_json).unwrap();
         let bass = measurement["bandEnergy"]
             .as_array()
             .unwrap()

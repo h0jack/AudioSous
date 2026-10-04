@@ -19,6 +19,7 @@ interface AppState {
   notice: string | null;
   history: EditHistory<ProjectDocument>;
   holdAutosave: boolean;
+  preparing: boolean;
   workspace: Workspace;
   goWelcome: () => void;
   setWorkspace: (workspace: Workspace) => void;
@@ -31,6 +32,7 @@ interface AppState {
   setProjectFilePath: (projectFilePath: string) => void;
   setWarnings: (warnings: ImportWarning[]) => void;
   setHoldAutosave: (held: boolean) => void;
+  setPreparing: (preparing: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -42,10 +44,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   notice: null,
   history: emptyHistory(),
   holdAutosave: false,
+  preparing: false,
   workspace: "mix",
-  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix" }),
+  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false }),
   setWorkspace: (workspace) => set({ workspace }),
-  startImport: () => set({ screen: "import", notice: null }),
+  startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
     set({
       screen: "project",
@@ -56,6 +59,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       notice: null,
       history: emptyHistory(),
       holdAutosave: false,
+      preparing: document.tracks.length > 0,
       workspace: "mix",
     }),
   replaceDocument: (document, dirty, edit) => {
@@ -89,4 +93,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   setProjectFilePath: (projectFilePath) => set({ projectFilePath }),
   setWarnings: (warnings) => set({ warnings }),
   setHoldAutosave: (holdAutosave) => set({ holdAutosave }),
+  setPreparing: (preparing) => set({ preparing }),
 }));

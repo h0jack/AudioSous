@@ -1,0 +1,13 @@
+[package]
+name = "audiosous-audio"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Native playback engine for Audiosous"
+license = "UNLICENSED"
+
+[dependencies]
+cpal = "0.15"
+rtrb = "0.3"
+rubato = "0.16"
+serde = { version = "1", features = ["derive"] }

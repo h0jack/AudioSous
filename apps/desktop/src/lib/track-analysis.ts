@@ -12,6 +12,7 @@ import {
   type TrackFileMeasurement,
 } from "@audiosous/analysis-contract";
 import type { DesktopPlatform } from "../platform/types";
+import { watchAnalysis } from "./analysis-queue";
 import { logEvent } from "./log";
 
 export type AnalysisJobStatus = "not-analyzed" | "queued" | "analyzing" | "complete" | "failed" | "stale";
@@ -45,6 +46,7 @@ export async function loadTrackAnalysis(
   projectFile: string,
   track: { id: string; filename: string; relativePath: string },
   onStatus?: (status: AnalysisJobStatus) => void,
+  priority = 10,
 ): Promise<LoadedTrackAnalysis> {
   return loadAnalysis(
     platform,
@@ -57,6 +59,7 @@ export async function loadTrackAnalysis(
       scope: { type: "track" },
     },
     onStatus,
+    priority,
   );
 }
 
@@ -64,6 +67,22 @@ export async function loadAnalysis(
   platform: DesktopPlatform,
   projectFile: string,
   target: AnalysisTarget,
+  onStatus?: (status: AnalysisJobStatus) => void,
+  priority = 100,
+): Promise<LoadedTrackAnalysis> {
+  const watched = watchAnalysis(platform, projectFile, target, onStatus, priority);
+  try {
+    return await watched.promise;
+  } finally {
+    watched.stop();
+  }
+}
+
+export async function runAnalysis(
+  platform: DesktopPlatform,
+  projectFile: string,
+  target: AnalysisTarget,
+  jobId: number,
   onStatus?: (status: AnalysisJobStatus) => void,
 ): Promise<LoadedTrackAnalysis> {
   if (platform.kind !== "tauri") {
@@ -119,11 +138,15 @@ export async function loadAnalysis(
       scopeType: target.scope.type,
       startSeconds: window?.startSeconds,
       endSeconds: window?.endSeconds,
+      jobId,
     });
   } catch (error) {
     throw await fail(platform, target, errorText(error, `Unable to analyze ${target.label}.`), "", started);
   }
   if (!result.ok) {
+    if (result.detail === "cancelled") {
+      throw new TrackAnalysisError(result.message || "Analysis was cancelled.", "cancelled");
+    }
     throw await fail(platform, target, result.message || `Unable to analyze ${target.label}.`, result.detail, started, result.durationMs);
   }
   let measurement: TrackFileMeasurement;

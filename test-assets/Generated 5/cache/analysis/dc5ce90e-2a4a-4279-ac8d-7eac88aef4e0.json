@@ -1,0 +1,3274 @@
+{
+  "schemaVersion": 3,
+  "analysisVersion": "0.4.0",
+  "identity": {
+    "relativePath": "media/dc5ce90e-2a4a-4279-ac8d-7eac88aef4e0__Sub Operator v4.23 - SideKick6.wav",
+    "fileSizeBytes": 217234790,
+    "modifiedAtNs": "1791089757637052108"
+  },
+  "scope": {
+    "type": "track"
+  },
+  "measuredAt": "2026-10-04T05:11:03.761Z",
+  "measurement": {
+    "schemaVersion": 3,
+    "analysisVersion": "0.4.0",
+    "scope": {
+      "type": "track"
+    },
+    "source": {
+      "sampleRate": 192000,
+      "channelCount": 2,
+      "durationSeconds": 141.428422,
+      "frameCount": 27154257
+    },
+    "levels": {
+      "peakDbfs": null,
+      "rmsDbfs": null,
+      "integratedLufs": null,
+      "crestFactorDb": null,
+      "integratedLufsStatus": "silent"
+    },
+    "stereo": {
+      "balance": null,
+      "correlation": null,
+      "width": null,
+      "midRmsDbfs": null,
+      "sideRmsDbfs": null
+    },
+    "dynamics": {
+      "dynamicRangeDb": null,
+      "onsetDensityPerSecond": 0,
+      "activePercent": 0,
+      "silentPercent": 100
+    },
+    "spectral": {
+      "centroidHz": null,
+      "bandwidthHz": null,
+      "rolloffHz": null,
+      "flatness": null
+    },
+    "bandEnergy": [
+      {
+        "id": "sub",
+        "name": "Sub",
+        "lowHz": 20,
+        "highHz": 60,
+        "normalizedEnergy": 0
+      },
+      {
+        "id": "bass",
+        "name": "Bass",
+        "lowHz": 60,
+        "highHz": 120,
+        "normalizedEnergy": 0
+      },
+      {
+        "id": "low-mid",
+        "name": "Low Mid",
+        "lowHz": 120,
+        "highHz": 250,
+        "normalizedEnergy": 0
+      },
+      {
+        "id": "mid",
+        "name": "Mid",
+        "lowHz": 250,
+        "highHz": 500,
+        "normalizedEnergy": 0
+      },
+      {
+        "id": "upper-mid",
+        "name": "Upper Mid",
+        "lowHz": 500,
+        "highHz": 2000,
+        "normalizedEnergy": 0
+      },
+      {
+        "id": "presence",
+        "name": "Presence",
+        "lowHz": 2000,
+        "highHz": 5000,
+        "normalizedEnergy": 0
+      },
+      {
+        "id": "brilliance",
+        "name": "Brilliance",
+        "lowHz": 5000,
+        "highHz": 10000,
+        "normalizedEnergy": 0
+      },
+      {
+        "id": "air",
+        "name": "Air",
+        "lowHz": 10000,
+        "highHz": 20000,
+        "normalizedEnergy": 0
+      }
+    ],
+    "spectrum": [
+      {
+        "hz": 21.49,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 24.82,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 28.66,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 33.1,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 38.22,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 44.13,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 50.97,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 58.85,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 67.96,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 78.48,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 90.63,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 104.66,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 120.86,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 139.57,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 161.17,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 186.11,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 214.92,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 248.19,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 286.6,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 330.96,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 382.19,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 441.35,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 509.66,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 588.55,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 679.64,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 784.84,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 906.32,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 1046.6,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 1208.59,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 1395.66,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 1611.68,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 1861.14,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 2149.22,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 2481.88,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 2866.03,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 3309.63,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 3821.91,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 4413.47,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 5096.59,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 5885.45,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 6796.42,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 7848.38,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 9063.17,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 10465.98,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 12085.93,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 13956.61,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 16116.84,
+        "magnitudeDb": -200
+      },
+      {
+        "hz": 18611.44,
+        "magnitudeDb": -200
+      }
+    ],
+    "loudnessTimeline": [
+      {
+        "timeSeconds": 0,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 0.8839,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 1.7679,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 2.6518,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 3.5357,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 4.4197,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 5.3036,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 6.1875,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 7.0715,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 7.9554,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 8.8393,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 9.7233,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 10.6072,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 11.4911,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 12.3751,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 13.259,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 14.1429,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 15.0268,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 15.9108,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 16.7947,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 17.6786,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 18.5626,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 19.4465,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 20.3304,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 21.2144,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 22.0983,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 22.9822,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 23.8662,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 24.7501,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 25.634,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 26.518,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 27.4019,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 28.2858,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 29.1698,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 30.0537,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 30.9376,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 31.8216,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 32.7055,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 33.5894,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 34.4734,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 35.3573,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 36.2412,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 37.1252,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 38.0091,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 38.893,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 39.777,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 40.6609,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 41.5448,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 42.4288,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 43.3127,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 44.1966,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 45.0805,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 45.9645,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 46.8484,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 47.7323,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 48.6163,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 49.5002,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 50.3841,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 51.2681,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 52.152,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 53.0359,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 53.9199,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 54.8038,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 55.6877,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 56.5717,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 57.4556,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 58.3395,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 59.2235,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 60.1074,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 60.9913,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 61.8753,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 62.7592,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 63.6431,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 64.5271,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 65.411,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 66.2949,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 67.1789,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 68.0628,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 68.9467,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 69.8307,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 70.7146,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 71.5985,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 72.4824,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 73.3664,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 74.2503,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 75.1342,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 76.0182,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 76.9021,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 77.786,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 78.67,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 79.5539,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 80.4378,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 81.3218,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 82.2057,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 83.0896,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 83.9736,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 84.8575,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 85.7414,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 86.6254,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 87.5093,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 88.3932,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 89.2772,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 90.1611,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 91.045,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 91.929,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 92.8129,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 93.6968,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 94.5808,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 95.4647,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 96.3486,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 97.2326,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 98.1165,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 99.0004,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 99.8843,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 100.7683,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 101.6522,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 102.5361,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 103.4201,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 104.304,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 105.1879,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 106.0719,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 106.9558,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 107.8397,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 108.7237,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 109.6076,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 110.4915,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 111.3755,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 112.2594,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 113.1433,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 114.0273,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 114.9112,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 115.7951,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 116.6791,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 117.563,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 118.4469,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 119.3309,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 120.2148,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 121.0987,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 121.9827,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 122.8666,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 123.7505,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 124.6345,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 125.5184,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 126.4023,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 127.2862,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 128.1702,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 129.0541,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 129.938,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 130.822,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 131.7059,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 132.5898,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 133.4738,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 134.3577,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 135.2416,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 136.1256,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 137.0095,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 137.8934,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 138.7774,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 139.6613,
+        "rmsDbfs": null
+      },
+      {
+        "timeSeconds": 140.5452,
+        "rmsDbfs": null
+      }
+    ],
+    "spectrogram": {
+      "hopSeconds": 1.7679,
+      "lowHz": 20,
+      "highHz": 20000,
+      "bandCount": 24,
+      "columns": [
+        {
+          "timeSeconds": 0,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 1.7679,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 3.5357,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 5.3036,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 7.0714,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 8.8393,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 10.6072,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 12.375,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 14.1429,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 15.9107,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 17.6786,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 19.4465,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 21.2143,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 22.9822,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 24.75,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 26.5179,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 28.2858,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 30.0536,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 31.8215,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 33.5893,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 35.3572,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 37.125,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 38.8929,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 40.6608,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 42.4286,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 44.1965,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 45.9643,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 47.7322,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 49.5001,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 51.2679,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 53.0358,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 54.8036,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 56.5715,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 58.3394,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 60.1072,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 61.8751,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 63.6429,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 65.4108,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 67.1787,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 68.9465,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 70.7144,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 72.4822,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 74.2501,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 76.018,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 77.7858,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 79.5537,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 81.3215,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 83.0894,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 84.8572,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 86.6251,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 88.393,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 90.1608,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 91.9287,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 93.6965,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 95.4644,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 97.2323,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 99.0001,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 100.768,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 102.5358,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 104.3037,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 106.0716,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 107.8394,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 109.6073,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 111.3751,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 113.143,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 114.9109,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 116.6787,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 118.4466,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 120.2144,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 121.9823,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 123.7502,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 125.518,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 127.2859,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 129.0537,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 130.8216,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 132.5895,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 134.3573,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 136.1252,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 137.893,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        },
+        {
+          "timeSeconds": 139.6609,
+          "magnitudesDb": [
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200,
+            -200
+          ]
+        }
+      ]
+    }
+  }
+}

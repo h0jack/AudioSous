@@ -1,12 +1,18 @@
 import { decodePcmFrames, inspectAudioFile } from "@audiosous/audio-files";
-import { createStreamingEngine, type PcmStream, type StreamingEngine } from "@audiosous/audio-engine";
+import { createStreamingEngine, type AudioEngine, type PcmStream } from "@audiosous/audio-engine";
 import type { ProjectDocument } from "@audiosous/project-model";
 import { useEffect, useRef, useState } from "react";
 import { getPlatform } from "../platform";
 import type { DesktopPlatform } from "../platform/types";
 import { logEvent } from "./log";
+import { audioEngineKind, createNativeAudioEngine, type NativeEngineStatus } from "./native-playback";
 import { useAppStore } from "../state/app-store";
 import { createWebAudioOutput } from "./web-audio-output";
+
+type RunningEngine = AudioEngine & {
+  pump?: () => Promise<void>;
+  poll?: () => Promise<NativeEngineStatus>;
+};
 
 const READ_LIMIT = 1_048_576;
 
@@ -80,38 +86,64 @@ export function arrowSeekStep(event: { shiftKey: boolean; ctrlKey: boolean }): n
   return 1;
 }
 
-export function usePlayback(document: ProjectDocument, projectFile: string | null) {
-  const engineRef = useRef<StreamingEngine | null>(null);
+export function usePlayback(document: ProjectDocument | null, projectFile: string | null) {
+  const engineRef = useRef<RunningEngine | null>(null);
+  const nativeRef = useRef(false);
   const [playing, setPlaying] = useState(false);
-  const [playhead, setPlayhead] = useState(document.uiState.playheadSeconds);
+  const [playhead, setPlayhead] = useState(document?.uiState.playheadSeconds ?? 0);
   const [error, setError] = useState<string | null>(null);
+  const [engineStatus, setEngineStatus] = useState<NativeEngineStatus | null>(null);
   const playingRef = useRef(false);
   playingRef.current = playing;
-  const duration = document.project.durationSeconds;
+  const preparingRef = useRef(false);
+  preparingRef.current = engineStatus?.state === "priming";
+  const duration = document?.project.durationSeconds ?? 0;
 
   useEffect(() => {
-    const output = createWebAudioOutput();
-    const engine = createStreamingEngine(output);
-    engineRef.current = engine;
+    if (!document) return;
     let cancelled = false;
+    let timer = 0;
+    const held: { engine: RunningEngine | null } = { engine: null };
     const platform = getPlatform();
     const file = projectFile;
     setPlaying(false);
+    setEngineStatus(null);
     void (async () => {
       const current = useAppStore.getState().document;
       if (!current || !file) return;
-      await engine.loadProject(current, {
-        resolve: (path) => path,
-        open: async (relativePath) => {
-          const track = current.tracks.find((item) => item.file.relativePath === relativePath);
-          if (!track) return null;
-          try {
-            return await openPcmStream(platform, file, relativePath, track.file.filename);
-          } catch {
-            return null;
-          }
-        },
-      });
+      let native = false;
+      if (platform.kind === "tauri") {
+        try {
+          native = (await audioEngineKind()) === "native";
+        } catch {
+          native = false;
+        }
+      }
+      if (cancelled) return;
+      nativeRef.current = native;
+      const engine: RunningEngine = native ? createNativeAudioEngine(file) : createStreamingEngine(createWebAudioOutput());
+      if (cancelled) {
+        engine.dispose();
+        return;
+      }
+      held.engine = engine;
+      engineRef.current = engine;
+      if (!native) {
+        await engine.loadProject(current, {
+          resolve: (path) => path,
+          open: async (relativePath) => {
+            const track = current.tracks.find((item) => item.file.relativePath === relativePath);
+            if (!track) return null;
+            try {
+              return await openPcmStream(platform, file, relativePath, track.file.filename);
+            } catch {
+              return null;
+            }
+          },
+        });
+      } else {
+        await engine.loadProject(current, { resolve: (path) => path });
+      }
       if (cancelled) return;
       const latest = useAppStore.getState().document;
       if (!latest) return;
@@ -125,37 +157,64 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
       engine.setLoop(loop?.enabled ? { startSeconds: loop.start, endSeconds: loop.end } : null);
       engine.seek(latest.uiState.playheadSeconds);
       setPlayhead(latest.uiState.playheadSeconds);
-    })();
+      if (native && engine.poll) {
+        const poll = engine.poll.bind(engine);
+        timer = window.setInterval(() => {
+          void poll().then((status) => {
+            if (cancelled) return;
+            setEngineStatus(status);
+            if (status.state === "playing") {
+              setPlayhead(status.positionSeconds);
+              const song = useAppStore.getState().document;
+              const looping = Boolean(song?.uiState.loop?.enabled);
+              const songDuration = song?.project.durationSeconds ?? 0;
+              if (!looping && status.positionSeconds >= songDuration - 0.05) {
+                engine.pause();
+                setPlaying(false);
+                commitPlayhead(Math.min(status.positionSeconds, songDuration));
+              }
+            }
+          }).catch(() => undefined);
+        }, 33);
+        if (cancelled) window.clearInterval(timer);
+      }
+    })().catch((caught) => {
+      if (cancelled) return;
+      const message = caught instanceof Error && caught.message ? caught.message : "Playback could not start.";
+      setError(message);
+    });
     return () => {
       cancelled = true;
-      engine.dispose();
+      window.clearInterval(timer);
+      held.engine?.dispose();
       engineRef.current = null;
+      nativeRef.current = false;
     };
-  }, [document.project.id, projectFile]);
+  }, [document?.project.id, projectFile]);
 
   useEffect(() => {
-    const loop = document.uiState.loop;
+    const loop = document?.uiState.loop;
     engineRef.current?.setLoop(loop?.enabled ? { startSeconds: loop.start, endSeconds: loop.end } : null);
-  }, [document.uiState.loop]);
+  }, [document?.uiState.loop]);
 
   useEffect(() => {
     const engine = engineRef.current;
-    if (!engine) return;
+    if (!engine || !document) return;
     for (const track of document.tracks) {
       engine.setTrackGain(track.id, track.gainDb);
       engine.setTrackPan(track.id, track.pan);
       engine.setMute(track.id, track.muted);
       engine.setSolo(track.id, track.solo);
     }
-  }, [document.tracks]);
+  }, [document?.tracks]);
 
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || nativeRef.current) return;
     let frame = 0;
     const tick = () => {
       const engine = engineRef.current;
       if (!engine) return;
-      void engine.pump();
+      void engine.pump?.();
       const time = engine.getCurrentTime();
       setPlayhead(time);
       const loop = useAppStore.getState().document?.uiState.loop;
@@ -173,7 +232,7 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
 
   async function toggle() {
     const engine = engineRef.current;
-    if (!engine) return;
+    if (!engine || preparingRef.current) return;
     setError(null);
     if (playingRef.current) {
       engine.pause();
@@ -185,6 +244,12 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
     }
     try {
       await engine.play();
+      const status = engine.poll ? await engine.poll() : null;
+      if (status && status.state !== "playing") {
+        setPlayhead(status.positionSeconds);
+        setPlaying(false);
+        return;
+      }
       setPlaying(true);
       void logEvent(getPlatform(), "info", "audio.play", "Started playback.", { time: engine.getCurrentTime() });
     } catch (caught) {
@@ -237,6 +302,7 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
   seekRef.current = seek;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (useAppStore.getState().preparing) return;
       const target = event.target;
       if (target instanceof HTMLElement && target.closest("input, textarea, select")) return;
       const command = event.metaKey || event.ctrlKey;
@@ -266,8 +332,10 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
   return {
     playhead,
     playing,
+    preparing: engineStatus?.state === "priming",
     error,
-    looping: Boolean(document.uiState.loop?.enabled),
+    engineStatus,
+    looping: Boolean(document?.uiState.loop?.enabled),
     toggle,
     stop,
     seek,

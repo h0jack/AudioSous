@@ -57,6 +57,9 @@ function fakeOutput() {
     now() {
       return this.time;
     },
+    sampleRate() {
+      return 48_000;
+    },
     async resume() {},
     prepareTrack() {},
     setGain(trackId, linear) {
@@ -137,6 +140,53 @@ describe("streaming engine", () => {
     engine.dispose();
   });
 
+  it("keeps the playhead on the first audio when reading it takes longer than the clock", async () => {
+    const output = fakeOutput();
+    const engine = createStreamingEngine(output, { windowSeconds: 0.5, lookaheadSeconds: 0.5 });
+    await engine.loadProject(project(), {
+      resolve: (path) => path,
+      open: async () => ({
+        sampleRate: 48_000,
+        channelCount: 1,
+        async readFrames(_offset, frameCount) {
+          output.time += 3;
+          return [new Float32Array(frameCount).fill(0.2)];
+        },
+      }),
+    });
+    await engine.play(0);
+    expect(output.time).toBeGreaterThan(2);
+    expect(output.starts.length).toBe(2);
+    expect(output.starts.every((slice) => slice.fileOffsetSeconds === 0)).toBe(true);
+    expect(output.starts.every((slice) => slice.contextTime > output.time)).toBe(true);
+    expect(engine.getCurrentTime()).toBeLessThan(0.2);
+    engine.dispose();
+  });
+
+  it("plays 192 kHz stems at the output rate", async () => {
+    const output = fakeOutput();
+    const requests: number[] = [];
+    const engine = createStreamingEngine(output, { windowSeconds: 0.5, lookaheadSeconds: 0.5 });
+    await engine.loadProject(project(), {
+      resolve: (path) => path,
+      open: async () => ({
+        sampleRate: 192_000,
+        channelCount: 1,
+        async readFrames(_offset, frameCount) {
+          requests.push(frameCount);
+          return [new Float32Array(frameCount).fill(0.25)];
+        },
+      }),
+    });
+    await engine.play(0);
+    const rendered = output.starts[0]?.channels[0];
+    expect(output.starts.every((slice) => slice.sampleRate === 48_000)).toBe(true);
+    expect(rendered?.length).toBeGreaterThan(10_000);
+    expect(Math.max(...requests) / (rendered?.length ?? 1)).toBeCloseTo(4, 0);
+    expect(rendered?.[Math.floor((rendered?.length ?? 0) / 2)]).toBeCloseTo(0.25, 1);
+    engine.dispose();
+  });
+
   it("restarts every stem together after a seek", async () => {
     const output = fakeOutput();
     const engine = createStreamingEngine(output, { windowSeconds: 0.5, lookaheadSeconds: 0.5 });
@@ -190,6 +240,9 @@ describe("streaming engine", () => {
       time: 0,
       now() {
         return this.time;
+      },
+      sampleRate() {
+        return sampleRate;
       },
       async resume() {},
       prepareTrack() {},

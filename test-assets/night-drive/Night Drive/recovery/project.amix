@@ -4,7 +4,7 @@
     "id": "f6088b80-e801-402e-a001-26e8f89e666a",
     "name": "Night Drive",
     "createdAt": "2026-10-04T01:10:02.664Z",
-    "updatedAt": "2026-10-04T01:55:57.877Z",
+    "updatedAt": "2026-10-04T01:56:00.173Z",
     "sampleRate": 48000,
     "durationSeconds": 80
   },
@@ -224,7 +224,7 @@
     "trackId": null
   },
   "uiState": {
-    "selectedTrackId": "5debd0c8-f6e6-491b-b9af-f0abe7b82ef4",
+    "selectedTrackId": "e0437b18-c908-4798-9c92-3278884cb142",
     "selectedSectionId": "303f9e20-8a2a-4ae0-8a21-2ff26e377d1a",
     "timeRange": {
       "start": 22.930980676656652,

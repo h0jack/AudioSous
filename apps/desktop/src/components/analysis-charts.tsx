@@ -1,4 +1,5 @@
 import { bandOverlap, levelDeltaDb, type BandEnergy, type TrackFileMeasurement } from "@audiosous/analysis-contract";
+import type { ReactNode } from "react";
 
 const FLOOR_DB = -80;
 
@@ -22,7 +23,19 @@ export function SpectrumChart({ points }: { points: TrackFileMeasurement["spectr
   );
 }
 
-export function LoudnessChart({ points }: { points: TrackFileMeasurement["loudnessTimeline"] }) {
+export function LoudnessChart({
+  points,
+  playheadSeconds,
+  originSeconds = 0,
+  spanSeconds,
+  onSeek,
+}: {
+  points: TrackFileMeasurement["loudnessTimeline"];
+  playheadSeconds?: number;
+  originSeconds?: number;
+  spanSeconds?: number;
+  onSeek?: (seconds: number) => void;
+}) {
   if (points.length === 0) return <EmptyChart>This selection is too short for a loudness timeline.</EmptyChart>;
   const width = 480;
   const height = 72;
@@ -34,15 +47,42 @@ export function LoudnessChart({ points }: { points: TrackFileMeasurement["loudne
     return <rect key={`${point.timeSeconds}-${index}`} x={index * barWidth} y={height - barHeight} width={Math.max(0.5, barWidth - 0.4)} height={barHeight} className="fill-accent" />;
   });
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-20 w-full" role="img" aria-label="Loudness timeline">
-      {bars}
-    </svg>
+    <TimeChart
+      label="Loudness timeline"
+      playheadSeconds={playheadSeconds}
+      originSeconds={originSeconds}
+      spanSeconds={spanSeconds}
+      onSeek={onSeek}
+    >
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-20 w-full">
+        {bars}
+      </svg>
+    </TimeChart>
   );
 }
 
-export function SpectrogramChart({ image }: { image: TrackFileMeasurement["spectrogram"] }) {
+export function SpectrogramChart({
+  image,
+  playheadSeconds,
+  originSeconds = 0,
+  spanSeconds,
+  onSeek,
+}: {
+  image: TrackFileMeasurement["spectrogram"];
+  playheadSeconds?: number;
+  originSeconds?: number;
+  spanSeconds?: number;
+  onSeek?: (seconds: number) => void;
+}) {
   if (image.columns.length === 0) return <EmptyChart>This selection is too short for a spectrogram.</EmptyChart>;
   return (
+    <TimeChart
+      label="Spectrogram"
+      playheadSeconds={playheadSeconds}
+      originSeconds={originSeconds}
+      spanSeconds={spanSeconds ?? (image.columns.length > 1 ? image.columns[image.columns.length - 1].timeSeconds : image.hopSeconds)}
+      onSeek={onSeek}
+    >
     <div className="flex h-36 gap-px" role="img" aria-label="Spectrogram">
       {image.columns.map((column, index) => (
         <div key={`${column.timeSeconds}-${index}`} className="flex min-w-0 flex-1 flex-col-reverse gap-px">
@@ -52,6 +92,7 @@ export function SpectrogramChart({ image }: { image: TrackFileMeasurement["spect
         </div>
       ))}
     </div>
+    </TimeChart>
   );
 }
 
@@ -102,8 +143,12 @@ export function LevelComparison({
 
 export function ActivityMap({
   rows,
+  playheadSeconds,
+  onSeek,
 }: {
-  rows: Array<{ id: string; name: string; timeline: TrackFileMeasurement["loudnessTimeline"]; failed: boolean }>;
+  rows: Array<{ id: string; name: string; timeline: TrackFileMeasurement["loudnessTimeline"]; durationSeconds: number; failed: boolean }>;
+  playheadSeconds?: number;
+  onSeek?: (seconds: number) => void;
 }) {
   if (rows.length === 0) return <EmptyChart>Activity appears as each stem is measured.</EmptyChart>;
   return (
@@ -114,15 +159,59 @@ export function ActivityMap({
           {row.failed || row.timeline.length === 0 ? (
             <span className="text-xs text-faint">{row.failed ? "Unable to measure" : "Too short"}</span>
           ) : (
-            <span className="flex h-4 gap-px">
-              {row.timeline.map((point, index) => (
-                <span key={`${point.timeSeconds}-${index}`} className="min-w-0 flex-1" style={{ background: heat(point.rmsDbfs ?? FLOOR_DB) }} />
-              ))}
-            </span>
+            <TimeChart label={`${row.name} activity`} playheadSeconds={playheadSeconds} spanSeconds={row.durationSeconds} onSeek={onSeek} className="h-4">
+              <span className="flex h-4 gap-px">
+                {row.timeline.map((point, index) => (
+                  <span key={`${point.timeSeconds}-${index}`} className="min-w-0 flex-1" style={{ background: heat(point.rmsDbfs ?? FLOOR_DB) }} />
+                ))}
+              </span>
+            </TimeChart>
           )}
         </li>
       ))}
     </ul>
+  );
+}
+
+function TimeChart({
+  label,
+  playheadSeconds,
+  originSeconds = 0,
+  spanSeconds,
+  onSeek,
+  className,
+  children,
+}: {
+  label: string;
+  playheadSeconds?: number;
+  originSeconds?: number;
+  spanSeconds?: number;
+  onSeek?: (seconds: number) => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  const span = spanSeconds && spanSeconds > 0 ? spanSeconds : 0;
+  const fraction = playheadSeconds === undefined || span === 0 ? null : (playheadSeconds - originSeconds) / span;
+  const visible = fraction !== null && fraction >= 0 && fraction <= 1;
+  return (
+    <div
+      className={`relative ${onSeek ? "cursor-pointer" : ""} ${className ?? ""}`}
+      role="img"
+      aria-label={label}
+      onClick={
+        onSeek && span > 0
+          ? (event) => {
+              const bounds = event.currentTarget.getBoundingClientRect();
+              if (bounds.width <= 0) return;
+              const next = originSeconds + Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)) * span;
+              onSeek(next);
+            }
+          : undefined
+      }
+    >
+      {children}
+      {visible ? <span className="pointer-events-none absolute inset-y-0 w-px bg-ink" style={{ left: `${fraction * 100}%` }} /> : null}
+    </div>
   );
 }
 

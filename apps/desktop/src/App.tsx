@@ -15,6 +15,7 @@ export function App() {
   const dirty = useAppStore((state) => state.dirty);
   const canUndo = useAppStore((state) => state.history.past.length > 0);
   const canRedo = useAppStore((state) => state.history.future.length > 0);
+  const preparing = useAppStore((state) => state.preparing);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const saveTask = useRef<Promise<void> | null>(null);
@@ -75,6 +76,10 @@ export function App() {
       const command = event.metaKey || event.ctrlKey;
       if (!command) return;
       const key = event.key.toLowerCase();
+      if (useAppStore.getState().preparing) {
+        if (key === "s" || key === "z" || key === "y") event.preventDefault();
+        return;
+      }
       if (key === "s") {
         event.preventDefault();
         void save(getPlatform().kind === "browser");
@@ -113,7 +118,7 @@ export function App() {
         <p className="shrink-0 font-display text-2xl">Audiosous</p>
         {projectOpen ? (
           <>
-            <ProjectTitle name={document.project.name} />
+            <ProjectTitle name={document.project.name} disabled={preparing} />
             <HoverTip label={isTauri() && projectFilePath ? projectFilePath : summary} className="hidden min-w-0 sm:block">
               <p className="truncate font-mono text-xs text-muted">{summary}</p>
             </HoverTip>
@@ -123,20 +128,20 @@ export function App() {
         )}
         {projectOpen ? (
           <div className="ml-auto flex shrink-0 items-center gap-3">
-            <ViewToggle />
+            <ViewToggle disabled={preparing} />
             <HoverTip label="Close this project">
               <button type="button" className="text-sm text-muted underline-offset-2 hover:underline" onClick={leave}>
                 Close
               </button>
             </HoverTip>
             <span className="text-xs text-faint">{saving ? "Saving…" : dirty ? "Unsaved changes" : "Saved"}</span>
-            <Button title="Undo the last edit" onClick={() => useAppStore.getState().undo()} disabled={!canUndo || saving}>
+            <Button title="Undo the last edit" onClick={() => useAppStore.getState().undo()} disabled={!canUndo || saving || preparing}>
               Undo
             </Button>
-            <Button title="Redo the last undone edit" onClick={() => useAppStore.getState().redo()} disabled={!canRedo || saving}>
+            <Button title="Redo the last undone edit" onClick={() => useAppStore.getState().redo()} disabled={!canRedo || saving || preparing}>
               Redo
             </Button>
-            <Button title="Save the project" tone="accent" onClick={() => void save(getPlatform().kind === "browser")} disabled={saving}>
+            <Button title="Save the project" tone="accent" onClick={() => void save(getPlatform().kind === "browser")} disabled={saving || preparing}>
               Save
             </Button>
           </div>
@@ -152,7 +157,7 @@ export function App() {
   );
 }
 
-function ViewToggle() {
+function ViewToggle({ disabled = false }: { disabled?: boolean }) {
   const workspace = useAppStore((state) => state.workspace);
   return (
     <div className="flex rounded-md border border-line p-0.5" role="group" aria-label="Project view">
@@ -161,7 +166,8 @@ function ViewToggle() {
           key={view}
           type="button"
           aria-pressed={workspace === view}
-          className={`rounded px-3 py-1 text-xs tracking-wide uppercase ${workspace === view ? "bg-accent text-accent-ink" : "text-muted"}`}
+          disabled={disabled}
+          className={`rounded px-3 py-1 text-xs tracking-wide uppercase disabled:opacity-40 ${workspace === view ? "bg-accent text-accent-ink" : "text-muted"}`}
           onClick={() => useAppStore.getState().setWorkspace(view)}
         >
           {view === "mix" ? "Mix" : "Analysis"}
@@ -171,7 +177,7 @@ function ViewToggle() {
   );
 }
 
-function ProjectTitle({ name }: { name: string }) {
+function ProjectTitle({ name, disabled = false }: { name: string; disabled?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const cancelEdit = useRef(false);
@@ -203,10 +209,11 @@ function ProjectTitle({ name }: { name: string }) {
     );
   }
   return (
-    <HoverTip label="Rename this project" className="min-w-0 max-w-56">
+    <HoverTip label={disabled ? "Available after the waveforms are measured" : "Rename this project"} className="min-w-0 max-w-56">
       <button
         type="button"
-        className="block w-full truncate text-left text-sm text-muted"
+        disabled={disabled}
+        className="block w-full truncate text-left text-sm text-muted disabled:opacity-40"
         onClick={() => {
           cancelEdit.current = false;
           setDraft(name);

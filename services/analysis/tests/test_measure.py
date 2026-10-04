@@ -42,8 +42,11 @@ def _share(measurement: dict, band_id: str) -> float:
 def _assert_finite_measurement(measurement: dict) -> None:
     encoded = json.dumps(measurement, allow_nan=False)
     parsed = json.loads(encoded)
-    assert parsed["schemaVersion"] == 2
-    assert parsed["analysisVersion"] == "0.3.0"
+    assert parsed["schemaVersion"] == 3
+    assert parsed["analysisVersion"] == "0.4.0"
+    for point in parsed["loudnessTimeline"]:
+        assert point["rmsDbfs"] is None or math.isfinite(point["rmsDbfs"])
+    assert math.isfinite(parsed["dynamics"]["onsetDensityPerSecond"])
     assert [band["id"] for band in parsed["bandEnergy"]] == [band[0] for band in FREQUENCY_BANDS]
     shares = [band["normalizedEnergy"] for band in parsed["bandEnergy"]]
     assert all(math.isfinite(share) and 0.0 <= share <= 1.0 for share in shares)
@@ -266,6 +269,76 @@ def test_sidecar_measures_a_mix(tmp_path: Path):
     payload = json.loads(completed.stdout)
     assert payload["ok"] is True
     assert payload["measurement"]["scope"]["type"] == "mix"
+
+
+def test_one_kilohertz_centroid_stays_near_the_tone(tmp_path: Path):
+    path = tmp_path / "mid.wav"
+    _write(path, _tone(1_000.0))
+    spectral = measure_file(path)["spectral"]
+    assert spectral["centroidHz"] == pytest_approx(1_000.0, abs=150.0)
+    assert spectral["rolloffHz"] >= spectral["centroidHz"]
+    dynamics = measure_file(path)["dynamics"]
+    assert dynamics["dynamicRangeDb"] is not None and dynamics["dynamicRangeDb"] < 3.0
+    assert dynamics["onsetDensityPerSecond"] < 2.0
+    assert dynamics["activePercent"] > 90.0
+
+
+def test_stereo_balance_correlation_and_width(tmp_path: Path):
+    frames = SAMPLE_RATE * 2
+    time = np.arange(frames) / SAMPLE_RATE
+    left = (0.4 * np.sin(2 * math.pi * 440.0 * time)).astype(np.float32)
+    right = left.copy()
+    matched = tmp_path / "matched.wav"
+    _write(matched, np.column_stack([left, right]))
+    stereo = measure_file(matched)["stereo"]
+    assert stereo["balance"] == pytest_approx(0.0, abs=0.05)
+    assert stereo["correlation"] > 0.98
+    assert stereo["width"] < 0.05
+    assert stereo["midRmsDbfs"] is not None
+    assert stereo["sideRmsDbfs"] is None or stereo["sideRmsDbfs"] < stereo["midRmsDbfs"] - 20
+    left_only = tmp_path / "left.wav"
+    _write(left_only, np.column_stack([left, np.zeros(frames, dtype=np.float32)]))
+    assert measure_file(left_only)["stereo"]["balance"] < -0.8
+    opposite = tmp_path / "opposite.wav"
+    _write(opposite, np.column_stack([left, -left]))
+    assert measure_file(opposite)["stereo"]["correlation"] < -0.98
+    assert measure_file(opposite)["stereo"]["width"] > 0.9
+
+
+def test_impulses_are_denser_than_a_steady_tone(tmp_path: Path):
+    frames = SAMPLE_RATE * 2
+    impulse = np.zeros(frames, dtype=np.float32)
+    impulse[:: SAMPLE_RATE // 10] = 0.9
+    clicks = tmp_path / "clicks.wav"
+    tone = tmp_path / "steady.wav"
+    _write(clicks, impulse)
+    _write(tone, _tone(1_000.0))
+    click_density = measure_file(clicks)["dynamics"]["onsetDensityPerSecond"]
+    tone_density = measure_file(tone)["dynamics"]["onsetDensityPerSecond"]
+    assert click_density > tone_density + 4
+
+
+def test_silence_is_inactive_and_has_no_spectral_center(tmp_path: Path):
+    path = tmp_path / "silence.wav"
+    _write(path, np.zeros(SAMPLE_RATE, dtype=np.float32))
+    measurement = measure_file(path)
+    assert measurement["dynamics"]["activePercent"] == 0
+    assert measurement["dynamics"]["silentPercent"] == 100
+    assert measurement["spectral"]["centroidHz"] is None
+    assert measurement["stereo"]["balance"] is None
+    assert measurement["stereo"]["correlation"] is None
+
+
+def test_chunked_blocks_match_one_pass_levels():
+    from audiosous_analysis.accumulate import Accumulator
+
+    audio = _tone(1_000.0, seconds=1.0)
+    whole = Accumulator(SAMPLE_RATE, 1, audio.shape[0])
+    whole.add(audio.reshape(-1, 1))
+    parts = Accumulator(SAMPLE_RATE, 1, audio.shape[0])
+    parts.add(audio[:10_000].reshape(-1, 1))
+    parts.add(audio[10_000:].reshape(-1, 1))
+    assert whole.finish({"type": "track"})["levels"] == parts.finish({"type": "track"})["levels"]
 
 
 def test_sidecar_explains_a_bad_request():

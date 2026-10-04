@@ -7,10 +7,11 @@ Audiosous is a local desktop application. Milestone 1 does not mix, host plugins
 ```text
 Audiosous/
 ├── apps/desktop/          React + Vite UI and the Tauri shell
+├── crates/audio-engine/   Native playback clock, proxies, and device output
 ├── packages/
 │   ├── project-model/     Versioned .amix schema, migrations, roles, import checks
 │   ├── audio-files/       WAV and AIFF header inspection (no full decode)
-│   ├── audio-engine/      One playback clock. Stems are read in short windows.
+│   ├── audio-engine/      Playback interface. Desktop uses the Rust engine; the browser preview uses Web Audio.
 │   └── analysis-contract/ Versioned JSON DTOs for the analysis sidecar
 ├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
@@ -40,6 +41,7 @@ The React app never imports `services/analysis`.
 | --- | --- |
 | UI | React, TypeScript, Vite, Tailwind CSS, Zustand |
 | Desktop shell | Tauri 2 |
+| Playback | `cpal` output, `rtrb` rings, rubato `FftFixedIn` proxies |
 | Project validation | Zod |
 | Tests | Vitest for TypeScript, `cargo test` for path and copy safety |
 | Analysis | Python sidecar (`numpy`, `scipy`, `soundfile`, `pyloudnorm`). The UI does not import it |
@@ -59,11 +61,27 @@ Persisted now:
 
 `schemaVersion` is required. `migrateProject` walks registered migrations until the current version, then validates. A newer file is refused with an update message. Unknown future fields are not silently kept inside a v1 document.
 
-Waveform peaks are not embedded in `project.amix`. Each stem is measured once into min/max pairs at 256, 1024, and 4096 frames, then written to `cache/waveforms/<trackId>.peaks`. The project screen draws every lane from that cache on one horizontal scale. Zoom chooses the coarsest level that still has at least one peak per pixel. The PCM used to build the peaks is discarded.
+Waveform peaks are not embedded in `project.amix`. Each stem is measured once into min/max pairs at 256, 1024, and 4096 frames, then written to `cache/waveforms/<trackId>.peaks`. The desktop app measures those peaks in Rust from the original stem. The browser preview still measures them in JavaScript. The project screen draws every lane from that cache on one horizontal scale. Zoom chooses the coarsest level that still has at least one peak per pixel. The PCM used to build the peaks is discarded.
 
 ## Audio engine
 
-`packages/audio-engine` owns the transport. Every stem is scheduled from one `AudioContext` clock in short PCM windows. The whole stem is never decoded into memory. Mute, solo, gain, and pan are applied on that clock. Looping a selected range wraps on the same clock.
+Desktop playback runs in Rust (`crates/audio-engine`). React sends play, pause, seek, gain, pan, mute, solo, and loop. It polls position and diagnostics about 30 times a second. The playhead does not advance while buffers are priming.
+
+The browser preview still uses `packages/audio-engine`, which schedules short PCM windows on one `AudioContext`. Set `AUDIOSOUS_AUDIO_ENGINE=legacy` before launching the desktop app to force that path. The native engine is the default.
+
+Original stems in `media/` stay untouched. Each stem gets a disposable playback proxy at `cache/playback/<trackId>.proxy`: 48 kHz, little-endian float32, the same channel count up to stereo, with a 64-byte header. The header stores the source size, modification time, format version, and resampler id. A mismatch deletes the proxy and builds it again. `project.amix` does not contain the PCM.
+
+Proxies are resampled offline with rubato's `FftFixedIn` (8192-frame chunks, 2 sub-chunks). A long sinc resampler was rejected because a 192 kHz stem took far too long. The FFT resampler is band-limited and fast enough to build those stems in the background. The audio callback never resamples.
+
+Output uses `cpal`. The engine asks for 32-bit float stereo at 48 kHz. If the device accepts that, the callback mixes the proxy rings directly. If the device rate is different, a mixer thread resamples the stereo bus with a short sinc and the callback only copies. A 16-bit device gets the same mixer thread, then a sample conversion in the callback. Final render quality is independent of this 48 kHz proxy.
+
+Four reader threads fill one `rtrb` ring per stem. Each ring holds about 5 seconds; playback starts after about 1 second is buffered, and readers keep about 3 seconds filled. The callback applies a 10 ms gain ramp, equal-power pan, mute, and solo, then sums. A dry ring writes silence for that stem and increments an underrun counter. It does not lock, allocate, read disk, or call into JavaScript. Seek bumps a generation so an in-flight read cannot enter the new rings. Loop wrap is the same frame on every stem.
+
+The mix order is read, then a per-track process stage that is currently identity, then gain, pan, sum, then a mix-bus stage that is currently identity. Later EQ, dynamics, and sidechain can sit in those stages without replacing the clock. Tracks are pulled into the same callback block, so a later sidechain can read another stem.
+
+Loudness, RMS, correlation, width, onsets, and spectrum inside the audible band can later be measured from the 48 kHz proxy. True peak, crest factor, the source-mix sum, and anything above 20 kHz stay on the original file. Playback does not call Python.
+
+The project screen's Audio engine disclosure shows the output rate, buffer fill, underruns, seek prime time, and callback time.
 
 ```typescript
 interface AudioEngine {
@@ -99,6 +117,9 @@ Night Drive/
 ├── media/
 │   └── <trackId>__<filename>.wav
 ├── cache/
+│   ├── waveforms/
+│   ├── analysis/
+│   └── playback/
 └── recovery/
     └── project.amix
 ```
@@ -118,7 +139,7 @@ Machine-specific absolute paths exist only in memory during the import that the 
 
 ## Analysis sidecar
 
-Measurements run in `services/analysis`. The React app never imports that package. It validates JSON with `@audiosous/analysis-contract` (`contractVersion` 1, `analysisVersion` `0.3.0`). Suggest sections still uses cached peak energy and does not start Python.
+Measurements run in `services/analysis`. The React app never imports that package. It validates JSON with `@audiosous/analysis-contract` (`contractVersion` 1, `analysisVersion` `0.4.0`). Suggest sections still uses cached peak energy and does not start Python. The desktop queue runs one analysis at a time. A newer, higher-priority measurement cancels the job that is no longer the one on screen.
 
 ```text
 media/<track>.wav
@@ -136,9 +157,9 @@ measurement DTO
 cache/analysis/<name>.json
 ```
 
-A measurement includes peak dBFS, RMS dBFS, integrated LUFS, crest factor, energy share across Sub, Bass, Low Mid, Mid, Upper Mid, Presence, Brilliance, and Air, plus a 48-bin spectrum, a loudness timeline, and a spectrogram. The scope is the whole stem, a section, a time range, or the mix. The mix sums the raw stem files. Faders, mute, and pan are not part of it. Stems in one mix measurement must share a sample rate.
+A measurement includes peak dBFS, RMS dBFS, integrated LUFS, crest factor, stereo balance, correlation, width, and mid/side level, plus dynamic range, onset density, and active/silent time. Spectral centroid, bandwidth, rolloff, and flatness sit beside the eight-band energy share, a 48-bin spectrum, a loudness timeline, and a spectrogram. The scope is the whole stem, a section, a time range, or the source mix. The source mix sums the raw stem files in short blocks. Faders, mute, and pan are not part of it, and it is not the mix coming out of the speakers. Stems in one source-mix measurement must share a sample rate.
 
-Comparison, overlap, and the activity map are derived in the UI from those measurements. They do not start a separate analysis operation.
+Long files are read in blocks. The sidecar keeps filter state, a spectrum average, and the drawings, not the whole stem. Comparison, overlap, section energy, and the activity map are derived in the UI from those measurements. They do not start a separate analysis operation. Frequency overlap is the shared band energy. It is not a masking model.
 
 A cache entry is current when the analysis version, file identity, and requested scope all match. Whole-stem cache is `cache/analysis/<trackId>.json`. A section uses `<trackId>__section-<sectionId>`. A time range uses `<trackId>__range`. The mix uses `cache/analysis/mix.json`. Changing a fader does not invalidate a measurement. Changing the stem file, the selected window, or the analysis version does. Drawings stay out of `project.amix`.
 
@@ -146,21 +167,14 @@ A cache entry is current when the analysis version, file identity, and requested
 
 ## Tauri and Web Audio
 
-Synchronized playback uses these constraints:
+The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
 
-1. **Memory.** `decodeAudioData` turns each stem into a full float32 buffer. A 32-stem, 10-minute, 48 kHz stereo session is on the order of 7 GB of PCM before the UI exists. The Milestone 1 engine must not decode every stem into an `AudioBuffer` at once. The interface is here so a streaming native backend can replace the webview engine without a timeline rewrite.
+The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDIO_ENGINE=legacy`:
 
-2. **One clock.** If a webview engine is used for short sessions, every stem is scheduled from a single `AudioContext.currentTime`. Independent `<audio>` elements will drift and are disallowed.
-
-3. **Seek and loop.** A seek or loop restart stops the scheduled nodes and starts them again against the same context time. Loop boundaries use that clock, not `setInterval`.
-
-4. **Gesture and latency.** Playback has to resume the audio context from the play action. WebKitGTK on Linux has higher output latency and no exclusive mode. That is acceptable for early monitoring and a poor final engine.
-
-5. **Sample rate.** The device rate may differ from the project rate. A shared context keeps stems aligned with each other, but later sample-accurate processing should own resampling inside the engine. The UI does not see an `AudioContext`.
-
-6. **File access.** The webview cannot read arbitrary disk paths. Header inspection uses small ranged reads through Tauri. Absolute paths are resolved in the shell and are not written into `project.amix`.
-
-7. **Variants.** `loadProject` already receives the project, including the active mix variant and the A/B scope. A later engine can switch streams behind the same play, seek, gain, and solo methods.
+1. **Memory.** It must not decode every stem into one `AudioBuffer`.
+2. **One clock.** Every stem shares one `AudioContext`. Independent `<audio>` elements are disallowed.
+3. **Seek and loop.** Both restart against that context time.
+4. **Sample rate.** That path low-pass filters each window before scheduling. It is not the production engine.
 
 ## Logging
 

@@ -1,0 +1,289 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "3cde2875-d5fb-453b-a06c-9c9f2b5d129c",
+    "name": "Generated",
+    "createdAt": "2026-10-04T02:47:50.593Z",
+    "updatedAt": "2026-10-04T02:53:03.385Z",
+    "sampleRate": 192000,
+    "durationSeconds": 141.428421875
+  },
+  "tracks": [
+    {
+      "id": "764a69ad-8d08-47b8-94fe-c8ddf958e25a",
+      "name": "Sub Operator V4.23 Stutter Expression",
+      "role": "bass",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/764a69ad-8d08-47b8-94fe-c8ddf958e25a__Sub Operator v4.23 - Stutter Expression.wav",
+        "filename": "Sub Operator v4.23 - Stutter Expression.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "bfaf7776-0985-426a-81a7-a82efe74c9a7",
+      "name": "Sub Operator V4.23 Skimming Air",
+      "role": "atmosphere",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/bfaf7776-0985-426a-81a7-a82efe74c9a7__Sub Operator v4.23 - Skimming Air.wav",
+        "filename": "Sub Operator v4.23 - Skimming Air.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "606c1649-18e6-4072-a93e-6af26e662208",
+      "name": "Sub Operator V4.23 SideKick6",
+      "role": "kick",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/606c1649-18e6-4072-a93e-6af26e662208__Sub Operator v4.23 - SideKick6.wav",
+        "filename": "Sub Operator v4.23 - SideKick6.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "a76b143d-ad9b-4705-b08a-e22a173ad7a9",
+      "name": "Sub Operator V4.23 PunchBox",
+      "role": "kick",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/a76b143d-ad9b-4705-b08a-e22a173ad7a9__Sub Operator v4.23 - PunchBox.wav",
+        "filename": "Sub Operator v4.23 - PunchBox.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "70da302b-c11c-497b-b5ec-778451294c62",
+      "name": "Sub Operator V4.23 Phase Plant 2",
+      "role": "bass",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/70da302b-c11c-497b-b5ec-778451294c62__Sub Operator v4.23 - Phase Plant 2.wav",
+        "filename": "Sub Operator v4.23 - Phase Plant 2.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "a5a43212-9f8c-4c11-996b-90ccab35011e",
+      "name": "Sub Operator V4.23 MasterEQ",
+      "role": "bass",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/a5a43212-9f8c-4c11-996b-90ccab35011e__Sub Operator v4.23 - MasterEQ.wav",
+        "filename": "Sub Operator v4.23 - MasterEQ.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "601c689e-7087-4ef9-8ee5-110ab7616b53",
+      "name": "Sub Operator V4.23 CZ V",
+      "role": "fx",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/601c689e-7087-4ef9-8ee5-110ab7616b53__Sub Operator v4.23 - CZ V.wav",
+        "filename": "Sub Operator v4.23 - CZ V.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "3d1dfae8-acb7-4b84-ba5d-18243f903b26",
+      "name": "Sub Operator V4.23 Bleeps Bus",
+      "role": "keys",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/3d1dfae8-acb7-4b84-ba5d-18243f903b26__Sub Operator v4.23 - Bleeps Bus.wav",
+        "filename": "Sub Operator v4.23 - Bleeps Bus.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "14242635-43d8-4014-8c20-cc04d285476a",
+      "name": "Sub Operator V4.23 Bass Bus",
+      "role": "bass",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/14242635-43d8-4014-8c20-cc04d285476a__Sub Operator v4.23 - Bass Bus.wav",
+        "filename": "Sub Operator v4.23 - Bass Bus.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "c1d24bf5-a791-426c-8934-0ee6097ec8cc",
+      "name": "Sub Operator V4.23 2nd BD",
+      "role": "kick",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/c1d24bf5-a791-426c-8934-0ee6097ec8cc__Sub Operator v4.23 - 2nd BD.wav",
+        "filename": "Sub Operator v4.23 - 2nd BD.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "bb77eae2-e029-4f42-9525-6e7f78a2a85f",
+      "name": "Sub Operator V4.23 Subway",
+      "role": "fx",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/bb77eae2-e029-4f42-9525-6e7f78a2a85f__Sub Operator v4.23 - Subway.wav",
+        "filename": "Sub Operator v4.23 - Subway.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 141.428421875,
+        "fileSizeBytes": 217234790
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    }
+  ],
+  "sections": [],
+  "sectionTrackSettings": [],
+  "mixVariants": [
+    {
+      "id": "variant-original",
+      "name": "Original",
+      "description": "The imported stems, without Audiosous processing.",
+      "createdAt": "2026-10-04T02:47:50.593Z",
+      "kind": "original"
+    },
+    {
+      "id": "variant-working",
+      "name": "Working Mix",
+      "description": "The mix you are auditioning.",
+      "createdAt": "2026-10-04T02:47:50.593Z",
+      "kind": "working"
+    }
+  ],
+  "activeMixVariantId": "variant-working",
+  "comparison": {
+    "scope": "entire-mix",
+    "aVariantId": "variant-original",
+    "bVariantId": "variant-working",
+    "trackId": null
+  },
+  "uiState": {
+    "selectedTrackId": "764a69ad-8d08-47b8-94fe-c8ddf958e25a",
+    "selectedSectionId": null,
+    "timeRange": null,
+    "loop": null,
+    "playheadSeconds": 0,
+    "timelineZoom": 1,
+    "timelineScroll": 0
+  }
+}

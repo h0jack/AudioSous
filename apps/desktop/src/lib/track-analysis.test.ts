@@ -6,11 +6,12 @@ import {
 } from "@audiosous/analysis-contract";
 import { describe, expect, it } from "vitest";
 import type { DesktopPlatform, TrackAnalysisBridgeResult } from "../platform/types";
+import { watchAnalysis } from "./analysis-queue";
 import { loadAnalysis, loadTrackAnalysis, TrackAnalysisError } from "./track-analysis";
 
 function measurement(): TrackFileMeasurement {
   return trackFileMeasurementSchema.parse({
-    schemaVersion: 2,
+    schemaVersion: 3,
     analysisVersion: ANALYSIS_ENGINE_VERSION,
     scope: { type: "track" },
     source: { sampleRate: 48_000, channelCount: 1, durationSeconds: 2, frameCount: 96_000 },
@@ -25,6 +26,9 @@ function measurement(): TrackFileMeasurement {
     spectrum: [{ hz: 100, magnitudeDb: -12 }],
     loudnessTimeline: [{ timeSeconds: 0, rmsDbfs: -9 }],
     spectrogram: { hopSeconds: 0.5, lowHz: 20, highHz: 20000, bandCount: 1, columns: [{ timeSeconds: 0, magnitudesDb: [-40] }] },
+    stereo: { balance: 0, correlation: null, width: 0, midRmsDbfs: -9, sideRmsDbfs: null },
+    dynamics: { dynamicRangeDb: 0.2, onsetDensityPerSecond: 0, activePercent: 100, silentPercent: 0 },
+    spectral: { centroidHz: 1000, bandwidthHz: 40, rolloffHz: 1200, flatness: 0.02 },
   });
 }
 
@@ -45,9 +49,10 @@ function platform(options: {
   cache?: Uint8Array | null;
   identity?: { fileSizeBytes: number; modifiedAtNs: string };
   analyze?: () => Promise<TrackAnalysisBridgeResult>;
-}): { platform: DesktopPlatform; writes: Array<{ path: string; bytes: Uint8Array }>; analyzed: number; requests: unknown[] } {
+}): { platform: DesktopPlatform; writes: Array<{ path: string; bytes: Uint8Array }>; analyzed: number; requests: unknown[]; cancelled: number[] } {
   const writes: Array<{ path: string; bytes: Uint8Array }> = [];
   const requests: unknown[] = [];
+  const cancelled: number[] = [];
   let analyzed = 0;
   const identity = options.identity ?? { fileSizeBytes: 40, modifiedAtNs: "10" };
   const host = {
@@ -70,6 +75,9 @@ function platform(options: {
       if (!options.analyze) return bridge(measurement(), identity);
       return options.analyze();
     },
+    async cancelAnalysis(jobId: number) {
+      cancelled.push(jobId);
+    },
     async appendLog() {},
   };
   return {
@@ -83,6 +91,9 @@ function platform(options: {
     get requests() {
       return requests;
     },
+    get cancelled() {
+      return cancelled;
+    },
   };
 }
 
@@ -93,7 +104,7 @@ describe("selected stem analysis", () => {
     const cached = measurement();
     const entry = new TextEncoder().encode(
       JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         analysisVersion: ANALYSIS_ENGINE_VERSION,
         identity: { relativePath: track.relativePath, fileSizeBytes: 40, modifiedAtNs: "10" },
         scope: { type: "track" },
@@ -112,7 +123,7 @@ describe("selected stem analysis", () => {
   it("measures again when the stem timestamp changes and stores the new cache", async () => {
     const stale = new TextEncoder().encode(
       JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         analysisVersion: ANALYSIS_ENGINE_VERSION,
         identity: { relativePath: track.relativePath, fileSizeBytes: 40, modifiedAtNs: "9" },
         scope: { type: "track" },
@@ -157,7 +168,7 @@ describe("selected stem analysis", () => {
   it("measures a section window and ignores a cache from a different window", async () => {
     const entry = new TextEncoder().encode(
       JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         analysisVersion: ANALYSIS_ENGINE_VERSION,
         identity: { relativePath: track.relativePath, fileSizeBytes: 40, modifiedAtNs: "10" },
         scope: { type: "section", startSeconds: 0, endSeconds: 4 },
@@ -179,5 +190,69 @@ describe("selected stem analysis", () => {
     expect(host.writes[0]?.path).toBe("cache/analysis/track-bass__section-verse.json");
     const stored = JSON.parse(new TextDecoder().decode(host.writes[0]?.bytes ?? new Uint8Array())) as { scope: { endSeconds: number } };
     expect(stored.scope.endSeconds).toBe(16);
+  });
+
+  it("cancels a lower-priority job when a newer measurement takes the only worker", async () => {
+    let finishFirst: (value: TrackAnalysisBridgeResult) => void = () => undefined;
+    const first = new Promise<TrackAnalysisBridgeResult>((resolve) => {
+      finishFirst = resolve;
+    });
+    let calls = 0;
+    const host = platform({
+      analyze: () => {
+        calls += 1;
+        if (calls === 1) return first;
+        return Promise.resolve(bridge(measurement()));
+      },
+    });
+    const lowResult = watchAnalysis(
+      host.platform,
+      "/tmp/Song/project.amix",
+      {
+        cacheName: "track-bass",
+        label: "bass.wav",
+        logId: "track-bass",
+        files: [{ relativePath: track.relativePath, filename: "bass.wav" }],
+        scope: { type: "track" },
+      },
+      undefined,
+      10,
+    );
+    const lowDone = lowResult.promise.then(
+      () => "done",
+      () => "cancelled",
+    );
+    for (let attempt = 0; attempt < 20 && host.analyzed < 1; attempt += 1) await Promise.resolve();
+    expect(host.analyzed).toBe(1);
+    const high = watchAnalysis(
+      host.platform,
+      "/tmp/Song/project.amix",
+      {
+        cacheName: "mix",
+        label: "the mix",
+        logId: "mix",
+        files: [{ relativePath: track.relativePath, filename: "bass.wav" }],
+        scope: { type: "mix" },
+      },
+      undefined,
+      100,
+    );
+    for (let attempt = 0; attempt < 20 && host.cancelled.length < 1; attempt += 1) await Promise.resolve();
+    expect(host.cancelled.length).toBeGreaterThan(0);
+    lowResult.stop();
+    finishFirst({
+      ok: false,
+      message: "Analysis was cancelled.",
+      detail: "cancelled",
+      measurementJson: "{}",
+      fileSizeBytes: 40,
+      modifiedAtNs: "10",
+      durationMs: 1,
+    });
+    const loaded = await high.promise;
+    expect(loaded.measurement.levels.peakDbfs).toBe(-6.02);
+    expect(await lowDone).toBe("cancelled");
+    expect(host.analyzed).toBe(2);
+    high.stop();
   });
 });

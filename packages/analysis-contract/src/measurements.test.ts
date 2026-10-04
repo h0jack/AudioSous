@@ -16,7 +16,7 @@ import {
 
 function measurement(overrides?: Partial<TrackFileMeasurement["levels"]>): TrackFileMeasurement {
   return trackFileMeasurementSchema.parse({
-    schemaVersion: 2,
+    schemaVersion: 3,
     analysisVersion: ANALYSIS_ENGINE_VERSION,
     scope: { type: "track" },
     source: { sampleRate: 48_000, channelCount: 1, durationSeconds: 2, frameCount: 96_000 },
@@ -35,12 +35,15 @@ function measurement(overrides?: Partial<TrackFileMeasurement["levels"]>): Track
     spectrum: [{ hz: 100, magnitudeDb: -12 }],
     loudnessTimeline: [{ timeSeconds: 0, rmsDbfs: -9 }],
     spectrogram: { hopSeconds: 0.5, lowHz: 20, highHz: 20000, bandCount: 1, columns: [{ timeSeconds: 0, magnitudesDb: [-40] }] },
+    stereo: { balance: 0, correlation: null, width: 0, midRmsDbfs: -9, sideRmsDbfs: null },
+    dynamics: { dynamicRangeDb: 0.2, onsetDensityPerSecond: 0, activePercent: 100, silentPercent: 0 },
+    spectral: { centroidHz: 1000, bandwidthHz: 40, rolloffHz: 1200, flatness: 0.02 },
   });
 }
 
 function entry(identityNs = "1000"): AnalysisCacheEntry {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     analysisVersion: ANALYSIS_ENGINE_VERSION,
     identity: { relativePath: "media/track-bass__bass.wav", fileSizeBytes: 128, modifiedAtNs: identityNs },
     scope: { type: "track" },

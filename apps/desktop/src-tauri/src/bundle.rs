@@ -49,11 +49,19 @@ fn parse_cache_relative(relative: &str) -> Result<(&'static str, String), String
         return Err("Cache files must stay inside the project cache.".into());
     }
     if let Some(name) = relative.strip_prefix("cache/waveforms/") {
-        validate_cache_name(name, ".peaks", "Waveform cache must stay inside cache/waveforms.")?;
+        validate_cache_name(
+            name,
+            ".peaks",
+            "Waveform cache must stay inside cache/waveforms.",
+        )?;
         return Ok(("waveforms", name.to_string()));
     }
     if let Some(name) = relative.strip_prefix("cache/analysis/") {
-        validate_cache_name(name, ".json", "Analysis cache must stay inside cache/analysis.")?;
+        validate_cache_name(
+            name,
+            ".json",
+            "Analysis cache must stay inside cache/analysis.",
+        )?;
         return Ok(("analysis", name.to_string()));
     }
     Err("Cache files must stay inside cache/waveforms or cache/analysis.".into())
@@ -84,7 +92,8 @@ pub fn write_project_cache(
     if bytes.len() > MAX_CACHE_BYTES {
         return Err("Waveform cache is too large.".into());
     }
-    let path = resolve_cache_path(project_file, relative, true)?.ok_or("Cache folder does not exist.")?;
+    let path =
+        resolve_cache_path(project_file, relative, true)?.ok_or("Cache folder does not exist.")?;
     if path
         .symlink_metadata()
         .map(|meta| meta.file_type().is_symlink())
@@ -527,7 +536,9 @@ pub fn write_project_file(project_file: &Path, project_json: &str) -> Result<Pat
         None
     };
     write_atomic(&primary, project_json)?;
-    let recovery = bundle_dir_for(&primary)?.join("recovery").join("project.amix");
+    let recovery = bundle_dir_for(&primary)?
+        .join("recovery")
+        .join("project.amix");
     if let Some(previous) = previous {
         if previous.as_slice() != project_json.as_bytes() {
             if let Some(parent) = recovery.parent() {
@@ -578,7 +589,8 @@ fn write_atomic_bytes(path: &Path, contents: &[u8]) -> Result<(), String> {
     let temporary = path.with_extension("tmp");
     {
         let mut file = File::create(&temporary).map_err(|error| error.to_string())?;
-        file.write_all(contents).map_err(|error| error.to_string())?;
+        file.write_all(contents)
+            .map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
     fs::rename(&temporary, path).map_err(|error| error.to_string())?;
@@ -681,7 +693,9 @@ mod tests {
             .unwrap();
         assert_eq!(read, payload);
         assert!(bundle.join("cache/analysis/track-bass.json").is_file());
-        assert!(write_project_cache(&project, "cache/analysis/../track-bass.json", payload).is_err());
+        assert!(
+            write_project_cache(&project, "cache/analysis/../track-bass.json", payload).is_err()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

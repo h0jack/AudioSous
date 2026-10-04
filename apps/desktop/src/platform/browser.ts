@@ -114,6 +114,11 @@ export const browserPlatform: DesktopPlatform = {
   async analyzeAudio() {
     throw new Error("Stem analysis runs in the desktop app.");
   },
+  async cancelAnalysis() {},
+  async measureWaveform() {
+    throw new Error("Waveform measurement in the browser uses the JavaScript measurer.");
+  },
+  async cancelWaveform() {},
   hasPreview() {
     return localStorage.getItem(PREVIEW_KEY) !== null;
   },

@@ -32,6 +32,7 @@ export interface AnalyzeAudioRequest {
   scopeType: "track" | "section" | "time-range" | "mix";
   startSeconds?: number;
   endSeconds?: number;
+  jobId: number;
 }
 
 export interface DesktopPlatform {
@@ -58,6 +59,9 @@ export interface DesktopPlatform {
   writeProjectCache(projectFile: string, relativePath: string, bytes: Uint8Array): Promise<void>;
   analyzeTrackFile(projectFile: string, relativePath: string): Promise<TrackAnalysisBridgeResult>;
   analyzeAudio(projectFile: string, request: AnalyzeAudioRequest): Promise<TrackAnalysisBridgeResult>;
+  cancelAnalysis(jobId: number): Promise<void>;
+  measureWaveform(projectFile: string, relativePath: string, trackId: string, onProgress: (ratio: number) => void): Promise<void>;
+  cancelWaveform(): Promise<void>;
   hasPreview(): boolean;
   readPreview(): string | null;
   appendLog(line: string): Promise<void>;

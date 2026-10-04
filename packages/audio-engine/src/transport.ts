@@ -1,5 +1,5 @@
-export const PLAYBACK_WINDOW_SECONDS = 0.75;
-export const PLAYBACK_LOOKAHEAD_SECONDS = 1.5;
+export const PLAYBACK_WINDOW_SECONDS = 1;
+export const PLAYBACK_LOOKAHEAD_SECONDS = 2;
 export const PLAYBACK_START_DELAY_SECONDS = 0.08;
 
 export interface PlaybackCue {

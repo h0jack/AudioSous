@@ -117,8 +117,25 @@ export const tauriPlatform: DesktopPlatform = {
         scopeType: request.scopeType,
         startSeconds: request.startSeconds ?? null,
         endSeconds: request.endSeconds ?? null,
+        jobId: request.jobId,
       },
     });
+  },
+  cancelAnalysis(jobId) {
+    return invoke("cancel_analysis", { jobId });
+  },
+  async measureWaveform(projectFile, relativePath, trackId, onProgress) {
+    const unlisten = await listen<{ trackId: string; ratio: number }>("waveform-measure-progress", (event) => {
+      if (event.payload.trackId === trackId) onProgress(event.payload.ratio);
+    });
+    try {
+      await invoke("measure_waveform", { projectFile, relativePath, trackId });
+    } finally {
+      unlisten();
+    }
+  },
+  cancelWaveform() {
+    return invoke("cancel_waveform");
   },
   hasPreview() {
     return false;

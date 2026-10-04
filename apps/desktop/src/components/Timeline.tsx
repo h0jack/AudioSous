@@ -24,7 +24,9 @@ import {
   type UiState,
 } from "@audiosous/project-model";
 import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type PointerEvent as ReactPointerEvent } from "react";
-import { usePlayback } from "../lib/playback";
+import type { usePlayback } from "../lib/playback";
+
+type Playback = ReturnType<typeof usePlayback>;
 import { acceptSectionSuggestions, addSectionFromRange, deleteSection, dragSectionBoundary, editSection, editTrack, editTrackSection, finishBoundaryDrag, mergeSection, rejectSectionSuggestions, splitSectionAt } from "../lib/project-actions";
 import { logEvent } from "../lib/log";
 import { getPlatform } from "../platform";
@@ -42,18 +44,17 @@ const AMPLITUDES = [0.5, 1, 2, 4];
 
 export function Timeline({
   document,
-  projectFile,
   waveforms,
   status,
+  playback,
 }: {
   document: ProjectDocument;
-  projectFile: string | null;
   waveforms: Record<string, LoadedWaveform | undefined>;
   status: string | null;
+  playback: Playback;
 }) {
   const projectId = document.project.id;
   const duration = Math.max(document.project.durationSeconds, 0.001);
-  const playback = usePlayback(document, projectFile);
   const { playhead, playing, seek } = playback;
   const [zoom, setZoom] = useState(() => clampTimelineZoom(document.uiState.timelineZoom));
   const [scrollSeconds, setScrollSeconds] = useState(document.uiState.timelineScroll);
@@ -293,7 +294,7 @@ export function Timeline({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
         <TipButton label={playing ? "Pause playback" : "Play from the playhead"} onClick={() => void playback.toggle()}>
-          {playing ? "Pause" : "Play"}
+          {playback.preparing ? "Preparing…" : playing ? "Pause" : "Play"}
         </TipButton>
         <TipButton label="Stop and return to the start" onClick={() => playback.stop()}>
           Stop
@@ -374,6 +375,22 @@ export function Timeline({
           {range ? ` · Range ${formatClock(range.start)}–${formatClock(range.end)}` : ""}
           {document.uiState.loop?.enabled ? ` · Loop ${formatClock(document.uiState.loop.start)}–${formatClock(document.uiState.loop.end)}` : ""}
         </p>
+        {playback.preparing || playback.engineStatus?.message ? (
+          <p className="text-xs text-muted">{playback.engineStatus?.message || "Preparing playback…"}</p>
+        ) : null}
+        {playback.engineStatus ? (
+          <details className="text-xs text-muted">
+            <summary>Audio engine</summary>
+            <p className="font-mono">
+              Output {playback.engineStatus.outputSampleRate.toLocaleString()} Hz · Tracks {playback.engineStatus.activeTracks} · Ready{" "}
+              {playback.engineStatus.proxyReadyTracks}/{playback.engineStatus.proxyTotalTracks} · Buffered{" "}
+              {playback.engineStatus.bufferedAheadMin.toFixed(2)} s min · Underruns {playback.engineStatus.underruns}
+              {playback.engineStatus.lastUnderrunTrack ? ` (${playback.engineStatus.lastUnderrunTrack})` : ""} · Seek prime{" "}
+              {playback.engineStatus.seekPrimeMs} ms · Callback {playback.engineStatus.callbackMs.toFixed(2)} ms
+              {playback.engineStatus.callbackBudgetMs > 0 ? ` / ${playback.engineStatus.callbackBudgetMs.toFixed(2)} ms` : ""}
+            </p>
+          </details>
+        ) : null}
         {playback.error ? <p className="text-xs text-danger">{playback.error}</p> : null}
         {sectionError ? <p className="text-xs text-muted">{sectionError}</p> : null}
         <p className="ml-auto text-xs text-faint">
