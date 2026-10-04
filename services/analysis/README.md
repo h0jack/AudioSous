@@ -1,7 +1,16 @@
 # Audiosous analysis
 
-This is the future Python sidecar. Milestone 1 does not run it and does not depend on NumPy, librosa, or PyTorch.
+Python sidecar for stem measurements. The desktop UI does not import this package. Tauri starts `python -m audiosous_analysis`, writes one JSON request to stdin, and reads one JSON response from stdout.
 
-The desktop UI must not import this package. When analysis starts, a Tauri command will spawn the process and exchange JSON defined by `@audiosous/analysis-contract` (`contractVersion` 1). Internal arrays stay in this process.
+Install the engine once:
 
-The importable module is `audiosous_analysis`. A capitalised directory name would not be a legal Python package.
+```sh
+cd services/analysis
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest
+```
+
+The desktop app uses `services/analysis/.venv/bin/python`. Set `AUDIOSOUS_PYTHON` to point somewhere else. Internal arrays stay in this process. The UI only sees the versioned measurement defined by `@audiosous/analysis-contract`.
+
+This slice measures one whole stem: peak, RMS, integrated LUFS, crest factor, and energy share across the shared frequency bands. It does not change the WAV file.

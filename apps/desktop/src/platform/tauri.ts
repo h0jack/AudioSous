@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { CopyProgress, DesktopPlatform, ListedFile, MediaStatus } from "./types";
+import type { CopyProgress, DesktopPlatform, ListedFile, MediaStatus, TrackAnalysisBridgeResult } from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -105,6 +105,9 @@ export const tauriPlatform: DesktopPlatform = {
   },
   async writeProjectCache(projectFile, relativePath, bytes) {
     await invoke("write_project_cache", { projectFile, relativePath, base64Data: encodeBase64(bytes) });
+  },
+  analyzeTrackFile(projectFile, relativePath) {
+    return invoke<TrackAnalysisBridgeResult>("analyze_track_file", { projectFile, relativePath });
   },
   hasPreview() {
     return false;

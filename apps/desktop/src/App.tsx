@@ -123,6 +123,7 @@ export function App() {
         )}
         {projectOpen ? (
           <div className="ml-auto flex shrink-0 items-center gap-3">
+            <ViewToggle />
             <HoverTip label="Close this project">
               <button type="button" className="text-sm text-muted underline-offset-2 hover:underline" onClick={leave}>
                 Close
@@ -147,6 +148,25 @@ export function App() {
         {screen === "import" ? <NewProjectScreen /> : null}
         {screen === "project" ? <ProjectScreen /> : null}
       </main>
+    </div>
+  );
+}
+
+function ViewToggle() {
+  const workspace = useAppStore((state) => state.workspace);
+  return (
+    <div className="flex rounded-md border border-line p-0.5" role="group" aria-label="Project view">
+      {(["mix", "analysis"] as const).map((view) => (
+        <button
+          key={view}
+          type="button"
+          aria-pressed={workspace === view}
+          className={`rounded px-3 py-1 text-xs tracking-wide uppercase ${workspace === view ? "bg-accent text-accent-ink" : "text-muted"}`}
+          onClick={() => useAppStore.getState().setWorkspace(view)}
+        >
+          {view === "mix" ? "Mix" : "Analysis"}
+        </button>
+      ))}
     </div>
   );
 }

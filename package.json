@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
+    "test:analysis": "services/analysis/.venv/bin/python -m pytest -q services/analysis/tests",
     "generate-test-project": "npm run generate-test-project --workspace @audiosous/audio-files",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run tauri --workspace @audiosous/desktop -- dev",

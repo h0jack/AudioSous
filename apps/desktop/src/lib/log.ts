@@ -15,7 +15,14 @@ export type LogEvent =
   | "section.delete"
   | "section.analysis.start"
   | "section.analysis.complete"
-  | "section.analysis.failure";
+  | "section.analysis.failure"
+  | "analysis.track.queued"
+  | "analysis.track.started"
+  | "analysis.track.completed"
+  | "analysis.track.failed"
+  | "analysis.cache.hit"
+  | "analysis.cache.miss"
+  | "analysis.cache.invalidated";
 
 export async function logEvent(
   platform: DesktopPlatform,

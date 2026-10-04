@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+export {
+  ANALYSIS_ENGINE_VERSION,
+  ANALYSIS_SCHEMA_VERSION,
+  FREQUENCY_BANDS,
+  analysisCacheEntrySchema,
+  analysisCacheIsCurrent,
+  analysisCachePath,
+  analysisFileIdentitySchema,
+  bandEnergySchema,
+  trackFileMeasurementSchema,
+  type AnalysisCacheEntry,
+  type AnalysisFileIdentity,
+  type BandEnergy,
+  type FrequencyBandId,
+  type TrackFileMeasurement,
+} from "./measurements";
+
 /** JSON exchanged with the Python analysis sidecar. The UI does not import Python objects. */
 export const ANALYSIS_CONTRACT_VERSION = 1;
 

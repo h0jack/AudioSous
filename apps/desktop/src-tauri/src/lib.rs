@@ -1,3 +1,4 @@
+mod analysis;
 mod bundle;
 
 use std::path::PathBuf;
@@ -125,6 +126,15 @@ fn write_project_cache(
 }
 
 #[tauri::command]
+async fn analyze_track_file(project_file: String, relative_path: String) -> Result<analysis::AnalyzeTrackResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        analysis::analyze_project_track(PathBuf::from(project_file).as_path(), &relative_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn append_log(app: AppHandle, line: String) -> Result<(), String> {
     let directory = app
         .path()
@@ -147,6 +157,7 @@ pub fn run() {
             read_project_file,
             read_project_cache,
             write_project_cache,
+            analyze_track_file,
             append_log
         ])
         .run(tauri::generate_context!())

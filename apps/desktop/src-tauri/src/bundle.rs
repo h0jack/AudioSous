@@ -37,28 +37,39 @@ pub struct MediaStatus {
     pub relative_path: String,
     pub exists: bool,
     pub file_size_bytes: u64,
+    pub modified_at_ns: String,
 }
 
 pub fn validate_relative_cache_path(relative: &str) -> Result<(), String> {
-    let Some(name) = relative.strip_prefix("cache/waveforms/") else {
-        return Err("Waveform cache must stay inside cache/waveforms.".into());
-    };
-    if name.is_empty()
-        || relative.len() > 180
-        || relative.contains('\0')
-        || relative.contains('\\')
-        || name.contains('/')
-        || !name.ends_with(".peaks")
-    {
-        return Err("Waveform cache must stay inside cache/waveforms.".into());
+    parse_cache_relative(relative).map(|_| ())
+}
+
+fn parse_cache_relative(relative: &str) -> Result<(&'static str, String), String> {
+    if relative.len() > 180 || relative.contains('\0') || relative.contains('\\') {
+        return Err("Cache files must stay inside the project cache.".into());
     }
-    let id = name.trim_end_matches(".peaks");
+    if let Some(name) = relative.strip_prefix("cache/waveforms/") {
+        validate_cache_name(name, ".peaks", "Waveform cache must stay inside cache/waveforms.")?;
+        return Ok(("waveforms", name.to_string()));
+    }
+    if let Some(name) = relative.strip_prefix("cache/analysis/") {
+        validate_cache_name(name, ".json", "Analysis cache must stay inside cache/analysis.")?;
+        return Ok(("analysis", name.to_string()));
+    }
+    Err("Cache files must stay inside cache/waveforms or cache/analysis.".into())
+}
+
+fn validate_cache_name(name: &str, extension: &str, message: &str) -> Result<(), String> {
+    let Some(id) = name.strip_suffix(extension) else {
+        return Err(message.into());
+    };
     if id.is_empty()
+        || name.contains('/')
         || !id
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
     {
-        return Err("Waveform cache must stay inside cache/waveforms.".into());
+        return Err(message.into());
     }
     Ok(())
 }
@@ -73,8 +84,7 @@ pub fn write_project_cache(
     if bytes.len() > MAX_CACHE_BYTES {
         return Err("Waveform cache is too large.".into());
     }
-    let path = resolve_cache_path(project_file, relative, true)?
-        .ok_or("Waveform cache folder does not exist.")?;
+    let path = resolve_cache_path(project_file, relative, true)?.ok_or("Cache folder does not exist.")?;
     if path
         .symlink_metadata()
         .map(|meta| meta.file_type().is_symlink())
@@ -115,10 +125,11 @@ fn resolve_cache_path(
     create: bool,
 ) -> Result<Option<PathBuf>, String> {
     validate_relative_cache_path(relative)?;
+    let (folder, file_name) = parse_cache_relative(relative)?;
     let bundle = bundle_dir_for(project_file)?
         .canonicalize()
         .map_err(|error| error.to_string())?;
-    let cache_root = bundle.join("cache").join("waveforms");
+    let cache_root = bundle.join("cache").join(folder);
     if create {
         fs::create_dir_all(&cache_root).map_err(|error| error.to_string())?;
     } else if !cache_root.exists() {
@@ -128,11 +139,8 @@ fn resolve_cache_path(
         .canonicalize()
         .map_err(|error| error.to_string())?;
     if !cache_canonical.starts_with(&bundle) {
-        return Err("Waveform cache must stay inside the project.".into());
+        return Err("Cache files must stay inside the project.".into());
     }
-    let file_name = Path::new(relative)
-        .file_name()
-        .ok_or("Waveform cache must stay inside cache/waveforms.")?;
     Ok(Some(cache_canonical.join(file_name)))
 }
 
@@ -386,20 +394,45 @@ pub fn project_media_status(
     let mut statuses = Vec::new();
     for relative_path in relative_paths {
         let status = match resolve_media(&bundle, relative_path) {
-            Ok(path) if path.is_file() => MediaStatus {
-                relative_path: relative_path.clone(),
-                exists: true,
-                file_size_bytes: fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0),
-            },
+            Ok(path) if path.is_file() => {
+                let meta = fs::metadata(&path).ok();
+                MediaStatus {
+                    relative_path: relative_path.clone(),
+                    exists: true,
+                    file_size_bytes: meta.as_ref().map(|item| item.len()).unwrap_or(0),
+                    modified_at_ns: meta
+                        .as_ref()
+                        .map(modified_at_ns)
+                        .unwrap_or_else(|| "0".to_string()),
+                }
+            }
             _ => MediaStatus {
                 relative_path: relative_path.clone(),
                 exists: false,
                 file_size_bytes: 0,
+                modified_at_ns: "0".into(),
             },
         };
         statuses.push(status);
     }
     Ok(statuses)
+}
+
+pub fn resolve_project_media_file(project_file: &Path, relative: &str) -> Result<PathBuf, String> {
+    let bundle = bundle_dir_for(project_file)?;
+    let path = resolve_media(&bundle, relative)?;
+    if !path.is_file() {
+        return Err("That stem is missing from the project.".into());
+    }
+    Ok(path)
+}
+
+fn modified_at_ns(meta: &fs::Metadata) -> String {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|| "0".to_string())
 }
 
 pub fn read_project_media(
@@ -581,8 +614,10 @@ mod tests {
         assert!(validate_relative_media_path("/etc/passwd").is_err());
         assert!(validate_relative_media_path("notes.txt").is_err());
         assert!(validate_relative_cache_path("cache/waveforms/track-kick.peaks").is_ok());
+        assert!(validate_relative_cache_path("cache/analysis/track-kick.json").is_ok());
         assert!(validate_relative_cache_path("cache/../secret.peaks").is_err());
         assert!(validate_relative_cache_path("cache/waveforms/../secret.peaks").is_err());
+        assert!(validate_relative_cache_path("cache/analysis/../secret.json").is_err());
         assert!(validate_relative_cache_path("media/kick.peaks").is_err());
     }
 
@@ -609,6 +644,24 @@ mod tests {
             let bytes: Vec<u8> = (0..length).map(|index| index * 17).collect();
             assert_eq!(decode_base64(&encode_base64(&bytes)).unwrap(), bytes);
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn analysis_cache_round_trip_stays_beside_the_waveforms() {
+        let root = temp_root("analysis-cache");
+        let bundle = root.join("Song");
+        fs::create_dir_all(bundle.join("media")).unwrap();
+        let project = bundle.join("project.amix");
+        fs::write(&project, b"{}").unwrap();
+        let payload = br#"{"schemaVersion":1}"#;
+        write_project_cache(&project, "cache/analysis/track-bass.json", payload).unwrap();
+        let read = read_project_cache(&project, "cache/analysis/track-bass.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(read, payload);
+        assert!(bundle.join("cache/analysis/track-bass.json").is_file());
+        assert!(write_project_cache(&project, "cache/analysis/../track-bass.json", payload).is_err());
         let _ = fs::remove_dir_all(&root);
     }
 

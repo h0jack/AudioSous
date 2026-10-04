@@ -26,6 +26,17 @@ The product target is an AI-assisted visual mixer. Processing is out of scope un
 
 Import is not real until a project can be opened again, so this slice includes create, explicit save, the recovery copy, and reopen. It does not autosave while a control is being dragged.
 
+## Milestone 2
+
+Milestone 2 measures and draws analysis. It does not change the mix.
+
+| Slice | Status |
+| --- | --- |
+| 1. Track measurement sidecar | Done. Peak, RMS, LUFS, crest factor, and band energy for the selected stem, cached in `cache/analysis/` |
+| 2. Spectrum, loudness timeline, and spectrogram | Not started |
+| 3. Section, time-range, and mix scopes | Not started |
+| 4. Comparison, overlap, and the activity map | Not started |
+
 ## Explicitly later
 
 Automatic EQ, compression, saturation, reverb, delay, mastering, VST hosting, generated mixes, LLM agents, accounts, collaboration, and source separation.

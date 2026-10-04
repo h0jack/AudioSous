@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
 
 export type Screen = "welcome" | "import" | "project";
+export type Workspace = "mix" | "analysis";
 
 export interface DocumentEdit {
   mode?: HistoryMode;
@@ -18,7 +19,9 @@ interface AppState {
   notice: string | null;
   history: EditHistory<ProjectDocument>;
   holdAutosave: boolean;
+  workspace: Workspace;
   goWelcome: () => void;
+  setWorkspace: (workspace: Workspace) => void;
   startImport: () => void;
   openDocument: (document: ProjectDocument, projectFilePath: string | null, warnings: ImportWarning[]) => void;
   replaceDocument: (document: ProjectDocument, dirty: boolean, edit?: DocumentEdit) => void;
@@ -38,10 +41,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   notice: null,
   history: emptyHistory(),
   holdAutosave: false,
-  goWelcome: () => set({ screen: "welcome", notice: null }),
+  workspace: "mix",
+  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix" }),
+  setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null }),
   openDocument: (document, projectFilePath, warnings) =>
-    set({ screen: "project", document, projectFilePath, warnings, dirty: false, notice: null, history: emptyHistory(), holdAutosave: false }),
+    set({
+      screen: "project",
+      document,
+      projectFilePath,
+      warnings,
+      dirty: false,
+      notice: null,
+      history: emptyHistory(),
+      holdAutosave: false,
+      workspace: "mix",
+    }),
   replaceDocument: (document, dirty, edit) => {
     const current = get().document;
     if (!current) {

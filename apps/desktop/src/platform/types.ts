@@ -14,6 +14,17 @@ export interface MediaStatus {
   relativePath: string;
   exists: boolean;
   fileSizeBytes: number;
+  modifiedAtNs: string;
+}
+
+export interface TrackAnalysisBridgeResult {
+  ok: boolean;
+  message: string;
+  detail: string;
+  measurementJson: string;
+  fileSizeBytes: number;
+  modifiedAtNs: string;
+  durationMs: number;
 }
 
 export interface DesktopPlatform {
@@ -38,6 +49,7 @@ export interface DesktopPlatform {
   rememberMedia(relativePath: string, sourcePath: string): void;
   readProjectCache(projectFile: string, relativePath: string): Promise<Uint8Array | null>;
   writeProjectCache(projectFile: string, relativePath: string, bytes: Uint8Array): Promise<void>;
+  analyzeTrackFile(projectFile: string, relativePath: string): Promise<TrackAnalysisBridgeResult>;
   hasPreview(): boolean;
   readPreview(): string | null;
   appendLog(line: string): Promise<void>;

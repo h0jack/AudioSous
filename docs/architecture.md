@@ -11,8 +11,8 @@ Audiosous/
 │   ├── project-model/     Versioned .amix schema, migrations, roles, import checks
 │   ├── audio-files/       WAV and AIFF header inspection (no full decode)
 │   ├── audio-engine/      One playback clock. Stems are read in short windows.
-│   └── analysis-contract/ Versioned JSON DTOs for the future analysis sidecar
-├── services/analysis/     Python package boundary. The UI does not import it.
+│   └── analysis-contract/ Versioned JSON DTOs for the analysis sidecar
+├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
 └── test-assets/           Reserved for generated stems in a later slice
 ```
@@ -42,7 +42,7 @@ The React app never imports `services/analysis`.
 | Desktop shell | Tauri 2 |
 | Project validation | Zod |
 | Tests | Vitest for TypeScript, `cargo test` for path and copy safety |
-| Analysis (later) | A separate Python project. No NumPy, librosa, or PyTorch in this slice |
+| Analysis | Python sidecar (`numpy`, `scipy`, `soundfile`, `pyloudnorm`). The UI does not import it |
 
 There is no cloud client, account system, or upload step.
 
@@ -116,11 +116,31 @@ Opening a project re-reads headers from those relative paths. A missing file is 
 
 Machine-specific absolute paths exist only in memory during the import that the user just picked.
 
-## Analysis sidecar boundary
+## Analysis sidecar
 
-Later milestones can spawn `services/analysis` and pass JSON. The UI depends on `@audiosous/analysis-contract` (`contractVersion: 1`). Suggest sections fills that same result from cached peak energy. It does not spawn Python and does not add analysis libraries.
+Measurements run in `services/analysis`. The React app never imports that package. It validates JSON with `@audiosous/analysis-contract` (`contractVersion` 1, `analysisVersion` `0.2.0`). Suggest sections still uses cached peak energy and does not start Python.
 
-The intended bridge is a Tauri command that starts the Python process, writes a request, reads a response, and parses it with the contract schema before any UI state changes. Python may use whatever internal arrays it needs. Those structures stop at the process boundary.
+```text
+media/<track>.wav
+    │
+    ▼
+Tauri analyze_track_file
+    │  path must stay inside the project media folder
+    ▼
+python -m audiosous_analysis
+    │  one JSON object on stdin, one on stdout
+    ▼
+track measurement DTO
+    │
+    ▼
+cache/analysis/<trackId>.json
+```
+
+The first measurement is a whole stem: peak dBFS, RMS dBFS, integrated LUFS, crest factor, and energy share across Sub, Bass, Low Mid, Mid, Upper Mid, Presence, Brilliance, and Air. Scope types for a section, a time range, the mix, and several tracks are reserved. Only `track` is measured.
+
+A cache entry is current when the analysis version, media path, file size, and modification time in nanoseconds all match. Changing a fader does not invalidate it. Changing the stem file or the analysis version does. FFT frames and later time series stay out of `project.amix`.
+
+`analyze_track_file` runs off the UI thread, so playback keeps the existing clock. The desktop app looks for `services/analysis/.venv/bin/python`, or `AUDIOSOUS_PYTHON`. A late result for a stem the user already left is ignored. Stopping the Python process itself waits for the job queue. The dev build is not yet a packaged sidecar.
 
 ## Tauri and Web Audio
 

@@ -1,9 +1,21 @@
 [project]
 name = "audiosous-analysis"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local analysis sidecar for Audiosous. The desktop UI does not import this package."
 requires-python = ">=3.11"
 readme = "README.md"
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.13",
+  "soundfile>=0.12",
+  "pyloudnorm>=0.1.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+audiosous-analysis = "audiosous_analysis.__main__:main"
 
 [build-system]
 requires = ["setuptools>=69"]
@@ -12,3 +24,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["audiosous_analysis*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

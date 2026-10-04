@@ -83,7 +83,12 @@ export const browserPlatform: DesktopPlatform = {
   async projectMediaStatus(_projectFile, relativePaths) {
     return relativePaths.map((relativePath) => {
       const file = projectMedia.get(relativePath);
-      return { relativePath, exists: file !== undefined, fileSizeBytes: file?.size ?? 0 };
+      return {
+        relativePath,
+        exists: file !== undefined,
+        fileSizeBytes: file?.size ?? 0,
+        modifiedAtNs: file ? `${Math.round(file.lastModified)}000000` : "0",
+      };
     });
   },
   rememberMedia(relativePath, sourcePath) {
@@ -95,10 +100,15 @@ export const browserPlatform: DesktopPlatform = {
     return bytes ? bytes.slice() : null;
   },
   async writeProjectCache(_projectFile, relativePath, bytes) {
-    if (!relativePath.startsWith("cache/waveforms/") || relativePath.includes("..")) {
-      throw new Error("Waveform cache must stay inside cache/waveforms.");
+    const waveform = /^cache\/waveforms\/[A-Za-z0-9_-]+\.peaks$/.test(relativePath);
+    const analysis = /^cache\/analysis\/[A-Za-z0-9_-]+\.json$/.test(relativePath);
+    if (!waveform && !analysis) {
+      throw new Error("Cache files must stay inside cache/waveforms or cache/analysis.");
     }
     waveformCache.set(relativePath, bytes.slice());
+  },
+  async analyzeTrackFile() {
+    throw new Error("Stem analysis runs in the desktop app.");
   },
   hasPreview() {
     return localStorage.getItem(PREVIEW_KEY) !== null;
