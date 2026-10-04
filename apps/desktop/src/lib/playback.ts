@@ -93,6 +93,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
   const [playhead, setPlayhead] = useState(document?.uiState.playheadSeconds ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [engineStatus, setEngineStatus] = useState<NativeEngineStatus | null>(null);
+  const [engineKind, setEngineKind] = useState<"native" | "legacy" | "browser">("browser");
   const playingRef = useRef(false);
   playingRef.current = playing;
   const preparingRef = useRef(false);
@@ -108,6 +109,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     const file = projectFile;
     setPlaying(false);
     setEngineStatus(null);
+    setEngineKind("browser");
     void (async () => {
       const current = useAppStore.getState().document;
       if (!current || !file) return;
@@ -121,6 +123,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
       }
       if (cancelled) return;
       nativeRef.current = native;
+      setEngineKind(native ? "native" : platform.kind === "tauri" ? "legacy" : "browser");
       const engine: RunningEngine = native ? createNativeAudioEngine(file) : createStreamingEngine(createWebAudioOutput());
       if (cancelled) {
         engine.dispose();
@@ -335,6 +338,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     preparing: engineStatus?.state === "priming",
     error,
     engineStatus,
+    engineKind,
     looping: Boolean(document?.uiState.loop?.enabled),
     toggle,
     stop,

@@ -19,6 +19,8 @@ export interface NativeEngineStatus {
   seekPrimeMs: number;
   callbackMs: number;
   callbackBudgetMs: number;
+  deviceFormat: string;
+  proxyPercent: number;
   message: string;
 }
 

@@ -46,9 +46,10 @@ Milestone 2.5 moves the playback clock into Rust. The desktop app plays 48 kHz f
 | 1. Playback proxy | Done. `cache/playback/<trackId>.proxy`, rebuilt when the source identity or resampler id changes |
 | 2. Native transport | Done. One clock, four reader threads, gain, pan, mute, solo, seek, and loop |
 | 3. Device output | Done. 48 kHz float when the device allows it. Otherwise a mixer thread converts before the callback |
-| 4. Diagnostics | Done. The project screen reports fill, underruns, seek prime, and callback time |
+| 4. Diagnostics | Done. The Audio engine panel reports fill, underruns, seek prime, callback time, and a budget warning |
+| 5. Real-time callback | Done. The device callback does not lock, allocate, or read disk |
 
-Sustained playback of Generated2, and the 32-stem and 64-stem timing runs, are still manual checks on a machine with the stems and an output device. The automated tests cover proxy identity, resampling, mix, seek, loop, and underrun without a sound card.
+`npm run stress:audio` is the release check. It mixes synthetic 32- and 64-stem loads and plays five minutes of Generated 5 and Generated2 offline. Those soaks had 0 underruns. A sound-card listen is still a manual check; CI does not open a device.
 
 ## Explicitly later
 

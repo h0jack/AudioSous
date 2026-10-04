@@ -75,13 +75,31 @@ Proxies are resampled offline with rubato's `FftFixedIn` (8192-frame chunks, 2 s
 
 Output uses `cpal`. The engine asks for 32-bit float stereo at 48 kHz. If the device accepts that, the callback mixes the proxy rings directly. If the device rate is different, a mixer thread resamples the stereo bus with a short sinc and the callback only copies. A 16-bit device gets the same mixer thread, then a sample conversion in the callback. Final render quality is independent of this 48 kHz proxy.
 
-Four reader threads fill one `rtrb` ring per stem. Each ring holds about 5 seconds; playback starts after about 1 second is buffered, and readers keep about 3 seconds filled. The callback applies a 10 ms gain ramp, equal-power pan, mute, and solo, then sums. A dry ring writes silence for that stem and increments an underrun counter. It does not lock, allocate, read disk, or call into JavaScript. Seek bumps a generation so an in-flight read cannot enter the new rings. Loop wrap is the same frame on every stem.
+Four reader threads fill one `rtrb` ring per stem. Each ring holds about 5 seconds; playback starts after about 1 second is buffered, and readers keep about 3 seconds filled. Proxies are built one stem at a time. One builder keeps the machine responsive: it does not saturate the CPU or the disk, and Play waits until every required proxy is ready before the transport advances. Stems do not fade in one by one.
+
+The device callback reads the ring consumers, an atomic mix snapshot, and the smoothed gain atomics. It ramps gain over about 10 ms, applies pan or balance, honors mute and solo, sums, and copies the block. A dry ring writes silence for that stem only and counts one underrun for the block. The callback does not allocate, free, lock, read disk, resample, log, or call JavaScript, Tauri, or Python. It does read the clock once so the diagnostics panel can show callback time. The cpal error callback stores an atomic flag and does not allocate either.
+
+The control thread publishes mixer state by writing atomics between an odd and even sequence, so the callback copies a consistent snapshot or retries. Ring consumers are not behind a mutex. The callback and the device-rate mixer set `in_callback` or `mixer_busy` before touching them and leave immediately when playback is not consuming. The control thread clears that flag, waits until both are idle, and only then replaces or flushes rings. Seek bumps a generation so an in-flight read cannot enter the new rings, then flushes every ring before readers continue.
+
+Loop wrap is the same frame on every stem. The reader reaches the loop end and continues from the loop start in the same fill, so a primed ring has no intentional gap. An empty ring at the wrap is an underrun, not a silent skip of the transport.
+
+A mono stem uses equal-power pan. A stereo stem uses the same coefficients as a balance control: the left sample is scaled by the left coefficient and the right sample by the right coefficient, with no crossfeed. The lane calls that control Balance on stereo stems and Pan on mono stems. A later mixer can add a true stereo panner.
+
+If the device is not 48 kHz float, a mixer thread outside the callback does the rate conversion. Its stereo, planar, and interleaved buffers are allocated once and reused. The callback only copies from that device ring, or converts float to 16-bit from a buffer allocated when the stream opened.
+
+Steady-state playback memory is the rings plus a small scratch buffer per reader. A 5-second stereo float ring is about 1.9 MB, so 11 stems are about 21 MB, 32 stems about 61 MB, and 64 stems about 123 MB. The proxy file stays on disk. The reader never loads it whole.
 
 The mix order is read, then a per-track process stage that is currently identity, then gain, pan, sum, then a mix-bus stage that is currently identity. Later EQ, dynamics, and sidechain can sit in those stages without replacing the clock. Tracks are pulled into the same callback block, so a later sidechain can read another stem.
 
 Loudness, RMS, correlation, width, onsets, and spectrum inside the audible band can later be measured from the 48 kHz proxy. True peak, crest factor, the source-mix sum, and anything above 20 kHz stay on the original file. Playback does not call Python.
 
-The project screen's Audio engine disclosure shows the output rate, buffer fill, underruns, seek prime time, and callback time.
+The project screen's Audio engine disclosure shows the engine kind, device format, output rate, callback size, proxy progress, buffer minimum and average, reader backlog, underruns, seek prime time, and callback time against the callback budget. A line in that panel notes when callback time exceeds 70% of the budget. It is not a user-facing alarm.
+
+`npm run stress:audio` runs the ignored release tests: synthetic 32×48 kHz, 32×96 kHz, 11×192 kHz, and 64×48 kHz mixes, then a 5-minute offline soak of Generated 5 and Generated2 when those projects are on disk. CI runs `cargo test --workspace` and does not open a sound device. The soak and the synthetic stress tests are marked ignored so CI stays short. Compare a debug run with `cargo test -p audiosous-audio --lib -- --ignored --nocapture` only when investigating; acceptance numbers come from the release command.
+
+## Test assets
+
+Commit small deterministic sources, `project.amix`, generator code, and a golden file only when a test reads those exact bytes. Do not commit playback proxies, waveform caches, analysis cache output, or user-sized stems. `test-assets/**/cache/` is ignored. Generated2 and Generated 5 stay as local regression projects: 11 stereo 192 kHz 32-bit stems, about 141 seconds and 217 MB each. Their caches are rebuilt by the app.
 
 ```typescript
 interface AudioEngine {

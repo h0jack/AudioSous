@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 const MAX_TRACKS: usize = 64;
 #[cfg(test)]
 const RAMP_SECONDS: f32 = 0.01;
@@ -53,6 +55,106 @@ pub fn linear_gain(db: f32) -> f32 {
 pub fn equal_power_pan(pan: f32) -> (f32, f32) {
     let position = ((pan.clamp(-1.0, 1.0) + 1.0) * 0.5).clamp(0.0, 1.0);
     ((1.0 - position).sqrt(), position.sqrt())
+}
+
+/// Lock-free mix snapshot. The control thread publishes; the callback copies atomics.
+/// A torn publish is discarded. Nothing is allocated.
+pub struct PublishedMix {
+    sequence: AtomicU64,
+    header: AtomicU64,
+    tracks: [PublishedTrack; MAX_TRACKS],
+}
+
+struct PublishedTrack {
+    gain_pan: AtomicU64,
+    flags: AtomicU64,
+}
+
+impl PublishedMix {
+    pub fn silent() -> Self {
+        Self {
+            sequence: AtomicU64::new(0),
+            header: AtomicU64::new(0),
+            tracks: std::array::from_fn(|_| PublishedTrack {
+                gain_pan: AtomicU64::new(0),
+                flags: AtomicU64::new(0),
+            }),
+        }
+    }
+
+    pub fn publish(&self, snap: &MixSnapshot) {
+        let start = self.sequence.fetch_add(1, Ordering::AcqRel);
+        self.header.store(pack_header(snap), Ordering::Relaxed);
+        for index in 0..MAX_TRACKS {
+            let track = snap.tracks[index];
+            self.tracks[index]
+                .gain_pan
+                .store(pack_gain_pan(track.gain, track.pan), Ordering::Relaxed);
+            self.tracks[index]
+                .flags
+                .store(pack_flags(&track), Ordering::Relaxed);
+        }
+        self.sequence
+            .store(start.wrapping_add(2), Ordering::Release);
+    }
+
+    pub fn load(&self) -> MixSnapshot {
+        loop {
+            let start = self.sequence.load(Ordering::Acquire);
+            if start & 1 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let snap = self.read();
+            if self.sequence.load(Ordering::Acquire) == start {
+                return snap;
+            }
+        }
+    }
+
+    fn read(&self) -> MixSnapshot {
+        let header = self.header.load(Ordering::Relaxed);
+        let mut snap = MixSnapshot::silent();
+        snap.count = (header & 0xffff) as usize;
+        snap.any_solo = header & (1 << 16) != 0;
+        for index in 0..MAX_TRACKS {
+            let gain_pan = self.tracks[index].gain_pan.load(Ordering::Relaxed);
+            let flags = self.tracks[index].flags.load(Ordering::Relaxed);
+            snap.tracks[index] = TrackMix {
+                gain: f32::from_bits(gain_pan as u32),
+                pan: f32::from_bits((gain_pan >> 32) as u32),
+                mute: flags & 1 != 0,
+                solo: flags & 2 != 0,
+                active: flags & 4 != 0,
+                channels: ((flags >> 16) & 0xffff) as u16,
+            };
+        }
+        snap
+    }
+}
+
+fn pack_header(snap: &MixSnapshot) -> u64 {
+    let count = snap.count.min(MAX_TRACKS) as u64;
+    let solo = if snap.any_solo { 1 << 16 } else { 0 };
+    count | solo
+}
+
+fn pack_gain_pan(gain: f32, pan: f32) -> u64 {
+    u64::from(gain.to_bits()) | (u64::from(pan.to_bits()) << 32)
+}
+
+fn pack_flags(track: &TrackMix) -> u64 {
+    let mut flags = u64::from(track.channels) << 16;
+    if track.mute {
+        flags |= 1;
+    }
+    if track.solo {
+        flags |= 2;
+    }
+    if track.active {
+        flags |= 4;
+    }
+    flags
 }
 
 #[cfg(test)]
@@ -230,6 +332,70 @@ mod tests {
         assert_eq!(underruns, 1);
         assert_eq!(track, Some(0));
         assert_eq!(out, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn stereo_balance_scales_each_channel_and_does_not_crossfeed() {
+        let mut pull = SlicePull {
+            samples: &[1.0, 0.0],
+            cursor: 0,
+            channel_count: 2,
+            ended: true,
+        };
+        let mut mix = MixSnapshot::silent();
+        mix.count = 1;
+        mix.tracks[0] = TrackMix {
+            gain: 1.0,
+            pan: 1.0,
+            mute: false,
+            solo: false,
+            channels: 2,
+            active: true,
+        };
+        let mut gains = [1.0];
+        let mut out = [0.0; 2];
+        mix_frames(&mut [&mut pull], &mix, &mut gains, 48_000.0, &mut out);
+        assert!(out[0].abs() < 0.0001);
+        assert!(out[1].abs() < 0.0001);
+    }
+
+    #[test]
+    fn mute_ramp_changes_by_one_step_per_frame() {
+        let (mut pull, mut track) = mono(&[1.0, 1.0], 1.0, -1.0);
+        track.mute = true;
+        let mut mix = MixSnapshot::silent();
+        mix.count = 1;
+        mix.tracks[0] = track;
+        let mut gains = [1.0];
+        let mut out = [0.0; 4];
+        mix_frames(&mut [&mut pull], &mix, &mut gains, 48_000.0, &mut out);
+        let step = 1.0 / (0.01 * 48_000.0);
+        assert!((out[0] - (1.0 - step)).abs() < 0.0001);
+        assert!((out[2] - (1.0 - 2.0 * step)).abs() < 0.0001);
+    }
+
+    #[test]
+    fn published_mix_round_trips_without_a_lock() {
+        let published = PublishedMix::silent();
+        let mut snap = MixSnapshot::silent();
+        snap.count = 2;
+        snap.any_solo = true;
+        snap.tracks[1] = TrackMix {
+            gain: 0.5,
+            pan: -0.25,
+            mute: true,
+            solo: true,
+            channels: 1,
+            active: true,
+        };
+        published.publish(&snap);
+        let loaded = published.load();
+        assert_eq!(loaded.count, 2);
+        assert!(loaded.any_solo);
+        assert!(loaded.tracks[1].mute && loaded.tracks[1].solo && loaded.tracks[1].active);
+        assert_eq!(loaded.tracks[1].channels, 1);
+        assert!((loaded.tracks[1].gain - 0.5).abs() < 0.0001);
+        assert!((loaded.tracks[1].pan + 0.25).abs() < 0.0001);
     }
 
     #[test]

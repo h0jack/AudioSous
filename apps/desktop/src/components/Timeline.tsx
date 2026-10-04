@@ -378,19 +378,7 @@ export function Timeline({
         {playback.preparing || playback.engineStatus?.message ? (
           <p className="text-xs text-muted">{playback.engineStatus?.message || "Preparing playback…"}</p>
         ) : null}
-        {playback.engineStatus ? (
-          <details className="text-xs text-muted">
-            <summary>Audio engine</summary>
-            <p className="font-mono">
-              Output {playback.engineStatus.outputSampleRate.toLocaleString()} Hz · Tracks {playback.engineStatus.activeTracks} · Ready{" "}
-              {playback.engineStatus.proxyReadyTracks}/{playback.engineStatus.proxyTotalTracks} · Buffered{" "}
-              {playback.engineStatus.bufferedAheadMin.toFixed(2)} s min · Underruns {playback.engineStatus.underruns}
-              {playback.engineStatus.lastUnderrunTrack ? ` (${playback.engineStatus.lastUnderrunTrack})` : ""} · Seek prime{" "}
-              {playback.engineStatus.seekPrimeMs} ms · Callback {playback.engineStatus.callbackMs.toFixed(2)} ms
-              {playback.engineStatus.callbackBudgetMs > 0 ? ` / ${playback.engineStatus.callbackBudgetMs.toFixed(2)} ms` : ""}
-            </p>
-          </details>
-        ) : null}
+        {playback.engineStatus ? <EngineDetails kind={playback.engineKind} status={playback.engineStatus} /> : null}
         {playback.error ? <p className="text-xs text-danger">{playback.error}</p> : null}
         {sectionError ? <p className="text-xs text-muted">{sectionError}</p> : null}
         <p className="ml-auto text-xs text-faint">
@@ -521,14 +509,14 @@ export function Timeline({
                       />
                     </HoverTip>
                   </div>
-                  <HoverTip className="mt-1 block" label={panLabel(pan)}>
+                  <HoverTip className="mt-1 block" label={panLabel(pan, track.metadata.channelCount)}>
                     <input
                       type="range"
                       min={-100}
                       max={100}
                       step={1}
                       value={pan}
-                      aria-label={`Pan for ${track.name}`}
+                      aria-label={`${track.metadata.channelCount === 1 ? "Pan" : "Balance"} for ${track.name}`}
                       onPointerDown={holdSave}
                       onChange={(event) => editTrack(track.id, { pan: Number(event.target.value) / 100 })}
                       className="w-full"
@@ -693,7 +681,7 @@ function TrackInspector({ document }: { document: ProjectDocument }) {
       </p>
       <p>Duration {formatClock(track.metadata.durationSeconds)}</p>
       <p>Gain {formatDb(track.gainDb)}</p>
-      <p>{panLabel(Math.round(track.pan * 100))}</p>
+      <p>{panLabel(Math.round(track.pan * 100), track.metadata.channelCount)}</p>
       <div className="min-w-64 flex-1">
         <p className="text-[10px] tracking-wide uppercase">Treatment</p>
         {notes.length === 0 ? <p className="text-faint">No treatment is set for this stem in any section yet.</p> : null}
@@ -1001,9 +989,35 @@ function formatDb(value: number): string {
   return `${shown} dB`;
 }
 
-function panLabel(value: number): string {
-  if (value === 0) return "Pan center";
-  return value < 0 ? `Pan ${Math.abs(value)} left` : `Pan ${value} right`;
+function panLabel(value: number, channels: number): string {
+  const name = channels === 1 ? "Pan" : "Balance";
+  if (value === 0) return `${name} center`;
+  return value < 0 ? `${name} ${Math.abs(value)} left` : `${name} ${value} right`;
+}
+
+function EngineDetails({ kind, status }: { kind: "native" | "legacy" | "browser"; status: NonNullable<ReturnType<typeof usePlayback>["engineStatus"]> }) {
+  const hot = status.callbackBudgetMs > 0 && status.callbackMs > status.callbackBudgetMs * 0.7;
+  return (
+    <details className="text-xs text-muted">
+      <summary>Audio engine</summary>
+      <p className="font-mono">
+        {kind} · {status.state} · {status.deviceFormat || "f32"} {status.outputSampleRate.toLocaleString()} Hz · {status.callbackFrames} frames
+      </p>
+      <p className="font-mono">
+        Tracks {status.activeTracks} · Proxies {status.proxyReadyTracks}/{status.proxyTotalTracks}
+        {status.proxyPercent > 0 && status.proxyPercent < 100 ? ` · Converting ${status.proxyPercent.toFixed(0)}%` : ""} · Backlog {status.readerBacklog}
+      </p>
+      <p className="font-mono">
+        Buffer {status.bufferedAheadMin.toFixed(2)} s min / {status.bufferedAheadAvg.toFixed(2)} s avg · Underruns {status.underruns}
+        {status.lastUnderrunTrack ? ` (${status.lastUnderrunTrack})` : ""} · Seek prime {status.seekPrimeMs} ms
+      </p>
+      <p className={`font-mono ${hot ? "text-danger" : ""}`}>
+        Callback {status.callbackMs.toFixed(2)} ms
+        {status.callbackBudgetMs > 0 ? ` / ${status.callbackBudgetMs.toFixed(2)} ms` : ""}
+        {hot ? " · above 70% of the callback budget" : ""}
+      </p>
+    </details>
+  );
 }
 
 function WaveformCanvas({

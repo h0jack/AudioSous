@@ -11,7 +11,7 @@ Night Drive/
     └── project.amix
 ```
 
-`media/` holds copies of imported stems. `cache/waveforms/<trackId>.peaks` holds derived waveform peaks (not part of the schema, and safe to delete). `recovery/project.amix` keeps the previous successful save. A new project starts with the same bytes in both files. The next save leaves that version in `recovery/` and writes the new document to `project.amix`. Opening `recovery/project.amix` reads that previous copy even when the primary file is still there. The next save writes the primary file and keeps the replaced primary as the new recovery copy.
+`media/` holds copies of imported stems. `cache/waveforms/<trackId>.peaks` holds derived waveform peaks, `cache/playback/` holds disposable 48 kHz proxies, and `cache/analysis/` holds measurement JSON. None of those caches are part of the schema, and all of them are safe to delete. They are not committed. `recovery/project.amix` keeps the previous successful save. A new project starts with the same bytes in both files. The next save leaves that version in `recovery/` and writes the new document to `project.amix`. Opening `recovery/project.amix` reads that previous copy even when the primary file is still there. The next save writes the primary file and keeps the replaced primary as the new recovery copy.
 
 Source files chosen at import are never modified.
 

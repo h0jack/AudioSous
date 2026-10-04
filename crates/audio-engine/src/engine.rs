@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -12,7 +13,7 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 
-use crate::mix::{equal_power_pan, linear_gain, MixSnapshot, TrackMix};
+use crate::mix::{equal_power_pan, linear_gain, MixSnapshot, PublishedMix, TrackMix};
 use crate::proxy::{ensure_proxy, ProxyReader, PLAYBACK_RATE};
 
 const MAX_TRACKS: usize = 64;
@@ -60,8 +61,58 @@ pub struct EngineStatus {
     pub seek_prime_ms: u64,
     pub callback_ms: f64,
     pub callback_budget_ms: f64,
+    pub device_format: String,
+    pub proxy_percent: f32,
     pub message: String,
 }
+
+const FORMAT_F32: u8 = 1;
+const FORMAT_I16: u8 = 2;
+
+/// Ring consumers shared by the callback, the device-rate mixer, and the control thread.
+///
+/// Only one of those uses the consumers at a time. The callback and mixer set
+/// `in_callback` or `mixer_busy` with `SeqCst` before reading, and they leave
+/// if `consume` is false. The control thread clears `consume`, then waits until
+/// both flags are false, and only then mutates the rings. That handoff is the
+/// exclusion. There is no mutex on this path.
+struct SharedRings {
+    tracks: UnsafeCell<Vec<Consumer<f32>>>,
+    device: UnsafeCell<Option<Consumer<f32>>>,
+}
+
+impl SharedRings {
+    fn new() -> Self {
+        Self {
+            tracks: UnsafeCell::new(Vec::new()),
+            device: UnsafeCell::new(None),
+        }
+    }
+
+    fn tracks(&self) -> &mut Vec<Consumer<f32>> {
+        unsafe { &mut *self.tracks.get() }
+    }
+
+    fn device(&self) -> &mut Option<Consumer<f32>> {
+        unsafe { &mut *self.device.get() }
+    }
+
+    fn device_slots(&self) -> usize {
+        unsafe {
+            (*self.device.get())
+                .as_ref()
+                .map(|consumer| consumer.slots())
+                .unwrap_or(0)
+        }
+    }
+}
+
+// The rings move between the callback, the mixer thread, and the control thread.
+// `Send` is required for that move. `Sync` is sound only because the SeqCst
+// consume / in_callback / mixer_busy handoff gives one of those threads the
+// consumers at a time.
+unsafe impl Send for SharedRings {}
+unsafe impl Sync for SharedRings {}
 
 #[allow(dead_code)]
 struct TrackState {
@@ -110,10 +161,8 @@ impl TrackState {
 
 struct Realtime {
     offline: bool,
-    consumers: Mutex<Vec<Consumer<f32>>>,
-    device: Mutex<Option<Consumer<f32>>>,
-    mix_slots: [Mutex<MixSnapshot>; 2],
-    mix_index: AtomicUsize,
+    rings: SharedRings,
+    published: PublishedMix,
     gains: [AtomicU32; MAX_TRACKS],
     produced: [AtomicU64; MAX_TRACKS],
     consumed: [AtomicU64; MAX_TRACKS],
@@ -144,22 +193,18 @@ struct Realtime {
     duration_frames: AtomicU64,
     eof_bits: AtomicU64,
     load_id: AtomicU64,
+    device_format: AtomicU8,
+    device_fault: AtomicU8,
     ids: Mutex<Vec<String>>,
     message: Mutex<String>,
-    device_error: Mutex<String>,
 }
 
 impl Realtime {
     fn new(offline: bool) -> Self {
         Self {
             offline,
-            consumers: Mutex::new(Vec::new()),
-            device: Mutex::new(None),
-            mix_slots: [
-                Mutex::new(MixSnapshot::silent()),
-                Mutex::new(MixSnapshot::silent()),
-            ],
-            mix_index: AtomicUsize::new(0),
+            rings: SharedRings::new(),
+            published: PublishedMix::silent(),
             gains: std::array::from_fn(|_| AtomicU32::new(1.0_f32.to_bits())),
             produced: std::array::from_fn(|_| AtomicU64::new(0)),
             consumed: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -190,9 +235,16 @@ impl Realtime {
             duration_frames: AtomicU64::new(0),
             eof_bits: AtomicU64::new(0),
             load_id: AtomicU64::new(0),
+            device_format: AtomicU8::new(if offline { FORMAT_F32 } else { 0 }),
+            device_fault: AtomicU8::new(0),
             ids: Mutex::new(Vec::new()),
             message: Mutex::new(String::new()),
-            device_error: Mutex::new(String::new()),
+        }
+    }
+
+    fn wait_audio_idle(&self) {
+        while self.mixer_busy.load(Ordering::SeqCst) || self.in_callback.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
         }
     }
 }
@@ -264,7 +316,6 @@ pub struct Engine {
     commands: Mutex<Option<Sender<Command>>>,
     rt: Arc<Realtime>,
     join: Mutex<Option<JoinHandle<()>>>,
-    cached: Mutex<MixSnapshot>,
 }
 
 impl Engine {
@@ -315,7 +366,6 @@ impl Engine {
             commands: Mutex::new(Some(tx)),
             rt,
             join: Mutex::new(Some(join)),
-            cached: Mutex::new(MixSnapshot::silent()),
         }
     }
 
@@ -379,8 +429,7 @@ impl Engine {
     }
 
     pub fn render_block(&self, out: &mut [f32]) {
-        let mut cached = self.cached.lock().expect("mix cache");
-        process_callback(&self.rt, out, &mut cached);
+        process_callback(&self.rt, out);
     }
 
     pub fn shutdown(&self) {
@@ -499,8 +548,8 @@ impl Control {
             return Err("Playback supports up to 64 stems.".into());
         }
         self.playing = false;
-        self.rt.consume.store(false, Ordering::Release);
-        self.rt.audible.store(false, Ordering::Release);
+        self.rt.consume.store(false, Ordering::SeqCst);
+        self.rt.audible.store(false, Ordering::SeqCst);
         self.stream.take();
         self.pause_workers();
         let load_id = self.rt.load_id.fetch_add(1, Ordering::AcqRel) + 1;
@@ -510,8 +559,9 @@ impl Control {
                 .iter()
                 .map(|track| Mutex::new(TrackState::from_loaded(track)))
                 .collect();
-            self.rt.consumers.lock().expect("consumers").clear();
-            *self.rt.device.lock().expect("device ring") = None;
+            self.rt.wait_audio_idle();
+            self.rt.rings.tracks().clear();
+            *self.rt.rings.device() = None;
         }
         self.rt.track_count.store(0, Ordering::Release);
         self.rt.proxy_ready.store(0, Ordering::Release);
@@ -669,7 +719,7 @@ impl Control {
         self.rt
             .seek_prime_ms
             .store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
-        self.rt.consume.store(true, Ordering::Release);
+        self.rt.consume.store(true, Ordering::SeqCst);
         if self.rt.offline {
             self.rt.audible.store(true, Ordering::Release);
             self.set_state(STATE_PLAYING);
@@ -680,15 +730,7 @@ impl Control {
         if self.rt.indirect.load(Ordering::Acquire) {
             let wait = Instant::now();
             while wait.elapsed() < Duration::from_millis(500) {
-                let filled = self
-                    .rt
-                    .device
-                    .lock()
-                    .expect("device")
-                    .as_ref()
-                    .map(|consumer| consumer.slots())
-                    .unwrap_or(0);
-                if filled >= PLAYBACK_RATE as usize {
+                if self.rt.rings.device_slots() >= PLAYBACK_RATE as usize {
                     break;
                 }
                 thread::sleep(Duration::from_millis(5));
@@ -708,8 +750,8 @@ impl Control {
 
     fn pause(&mut self) {
         self.playing = false;
-        self.rt.audible.store(false, Ordering::Release);
-        self.rt.consume.store(false, Ordering::Release);
+        self.rt.audible.store(false, Ordering::SeqCst);
+        self.rt.consume.store(false, Ordering::SeqCst);
         if let Some(output) = &self.stream {
             let _ = output.stream.pause();
         }
@@ -724,22 +766,18 @@ impl Control {
     }
 
     fn reposition(&mut self, seconds: f64) -> Result<(), String> {
-        self.rt.consume.store(false, Ordering::Release);
-        self.rt.audible.store(false, Ordering::Release);
+        self.rt.consume.store(false, Ordering::SeqCst);
+        self.rt.audible.store(false, Ordering::SeqCst);
         if let Some(output) = &self.stream {
             let _ = output.stream.pause();
         }
         self.pause_workers();
-        while self.rt.mixer_busy.load(Ordering::Acquire)
-            || self.rt.in_callback.load(Ordering::Acquire)
-        {
-            thread::sleep(Duration::from_millis(1));
-        }
+        self.rt.wait_audio_idle();
         let frame = seconds_to_frame(seconds);
         self.apply_loop_atomics();
         {
             let tracks = self.tracks.read().expect("tracks");
-            let mut consumers = self.rt.consumers.lock().expect("consumers");
+            let consumers = self.rt.rings.tracks();
             if consumers.len() != tracks.len() {
                 consumers.clear();
                 for slot in tracks.iter() {
@@ -772,7 +810,7 @@ impl Control {
                 };
                 self.rt.gains[index].store(target.to_bits(), Ordering::Relaxed);
             }
-            if let Some(device) = self.rt.device.lock().expect("device").as_mut() {
+            if let Some(device) = self.rt.rings.device().as_mut() {
                 while device.pop().is_ok() {}
             }
         }
@@ -868,9 +906,7 @@ impl Control {
                 active: track.ready,
             };
         }
-        let next = 1 - self.rt.mix_index.load(Ordering::Acquire);
-        *self.rt.mix_slots[next].lock().expect("mix") = snap;
-        self.rt.mix_index.store(next, Ordering::Release);
+        self.rt.published.publish(&snap);
     }
 
     fn apply_loop_atomics(&self) {
@@ -1065,6 +1101,9 @@ fn read_block(rt: &Realtime, index: usize, generation: u64, track: &mut TrackSta
     }
     track.cursor = start_cursor + count as u64;
     rt.produced[index].fetch_add(count as u64, Ordering::Relaxed);
+    if loop_end == NO_LOOP && track.cursor >= track.frames {
+        set_eof(rt, index, true);
+    }
     true
 }
 
@@ -1121,19 +1160,23 @@ fn pull_frame(consumer: &mut Consumer<f32>, channels: usize, dst: &mut [f32]) ->
     true
 }
 
-fn process_callback(rt: &Realtime, out: &mut [f32], cached: &mut MixSnapshot) {
-    rt.in_callback.store(true, Ordering::Release);
-    if !rt.audible.load(Ordering::Acquire) || !rt.consume.load(Ordering::Acquire) {
+/// Device callback. Reads ring consumers, atomics, and the published mix.
+/// It does not allocate, free, lock, read files, resample, log, or call out of process.
+/// `Instant::now` records callback duration for the diagnostics panel.
+fn process_callback(rt: &Realtime, out: &mut [f32]) {
+    rt.in_callback.store(true, Ordering::SeqCst);
+    if !rt.audible.load(Ordering::SeqCst) || !rt.consume.load(Ordering::SeqCst) {
         out.fill(0.0);
-        rt.in_callback.store(false, Ordering::Release);
+        rt.in_callback.store(false, Ordering::SeqCst);
         return;
     }
     let started = Instant::now();
     if rt.indirect.load(Ordering::Acquire) {
         copy_device(rt, out);
-    } else if let Ok(mut consumers) = rt.consumers.try_lock() {
+    } else {
         let frames = out.len() / 2;
-        let (underruns, track) = mix_consumers(rt, &mut consumers, cached, out);
+        let mix = rt.published.load();
+        let (underruns, track) = mix_consumers(rt, rt.rings.tracks(), &mix, out);
         if underruns > 0 {
             rt.underruns.fetch_add(underruns, Ordering::Relaxed);
             if let Some(track) = track {
@@ -1141,22 +1184,16 @@ fn process_callback(rt: &Realtime, out: &mut [f32], cached: &mut MixSnapshot) {
             }
         }
         rt.presented.fetch_add(frames as u64, Ordering::Relaxed);
-    } else {
-        out.fill(0.0);
     }
     rt.callback_nanos
         .store(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
     rt.callback_frames
         .store((out.len() / 2) as u32, Ordering::Relaxed);
-    rt.in_callback.store(false, Ordering::Release);
+    rt.in_callback.store(false, Ordering::SeqCst);
 }
 
 fn copy_device(rt: &Realtime, out: &mut [f32]) {
-    let Ok(mut guard) = rt.device.try_lock() else {
-        out.fill(0.0);
-        return;
-    };
-    let Some(consumer) = guard.as_mut() else {
+    let Some(consumer) = rt.rings.device().as_mut() else {
         out.fill(0.0);
         return;
     };
@@ -1187,17 +1224,14 @@ fn copy_device(rt: &Realtime, out: &mut [f32]) {
 fn mix_consumers(
     rt: &Realtime,
     consumers: &mut [Consumer<f32>],
-    cached: &mut MixSnapshot,
+    mix: &MixSnapshot,
     out: &mut [f32],
 ) -> (u64, Option<usize>) {
-    let index = rt.mix_index.load(Ordering::Acquire);
-    if let Ok(slot) = rt.mix_slots[index].try_lock() {
-        *cached = *slot;
-    }
-    let mix = *cached;
     let mut gains = [0.0_f32; MAX_TRACKS];
+    let mut pan = [(0.0_f32, 0.0_f32); MAX_TRACKS];
     for index in 0..mix.count.min(MAX_TRACKS) {
         gains[index] = f32::from_bits(rt.gains[index].load(Ordering::Relaxed));
+        pan[index] = equal_power_pan(mix.tracks[index].pan);
     }
     let eof_bits = rt.eof_bits.load(Ordering::Relaxed);
     let step = 1.0 / (0.01 * PLAYBACK_RATE as f32);
@@ -1222,7 +1256,7 @@ fn mix_consumers(
             let mut sample = [0.0_f32; 2];
             if pull_frame(&mut consumers[track_index], channels, &mut sample) {
                 pulled[track_index] += 1;
-                let (pan_left, pan_right) = equal_power_pan(track.pan);
+                let (pan_left, pan_right) = pan[track_index];
                 let gain = gains[track_index];
                 if channels == 1 {
                     left += sample[0] * gain * pan_left;
@@ -1340,16 +1374,17 @@ fn build_f32_stream(
     config.channels = 2;
     rt.output_rate
         .store(config.sample_rate.0, Ordering::Relaxed);
+    rt.device_format.store(FORMAT_F32, Ordering::Relaxed);
     rt.indirect.store(resample, Ordering::Release);
     let (mixer_stop, mixer) = start_mixer_if_needed(&rt, resample, config.sample_rate.0);
-    let mut cached = MixSnapshot::silent();
     let callback_rt = Arc::clone(&rt);
     let stream = device
         .build_output_stream(
             &config,
-            move |data: &mut [f32], _| process_callback(&callback_rt, data, &mut cached),
+            move |data: &mut [f32], _| process_callback(&callback_rt, data),
             move |error| {
-                *rt.device_error.lock().expect("device error") = error.to_string();
+                let _ = error;
+                rt.device_fault.store(1, Ordering::Relaxed);
             },
             None,
         )
@@ -1371,6 +1406,7 @@ fn build_i16_stream(
     config.channels = 2;
     rt.output_rate
         .store(config.sample_rate.0, Ordering::Relaxed);
+    rt.device_format.store(FORMAT_I16, Ordering::Relaxed);
     rt.indirect.store(true, Ordering::Release);
     let (mixer_stop, mixer) = start_mixer_if_needed(&rt, true, config.sample_rate.0);
     let callback_rt = Arc::clone(&rt);
@@ -1379,6 +1415,15 @@ fn build_i16_stream(
         .build_output_stream(
             &config,
             move |data: &mut [i16], _| {
+                callback_rt.in_callback.store(true, Ordering::SeqCst);
+                let started = Instant::now();
+                if !callback_rt.audible.load(Ordering::SeqCst)
+                    || !callback_rt.consume.load(Ordering::SeqCst)
+                {
+                    data.fill(0);
+                    callback_rt.in_callback.store(false, Ordering::SeqCst);
+                    return;
+                }
                 let mut offset = 0;
                 while offset < data.len() {
                     let count = (data.len() - offset).min(scratch.len()) & !1;
@@ -1392,9 +1437,17 @@ fn build_i16_stream(
                     }
                     offset += count;
                 }
+                callback_rt
+                    .callback_nanos
+                    .store(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                callback_rt
+                    .callback_frames
+                    .store((data.len() / 2) as u32, Ordering::Relaxed);
+                callback_rt.in_callback.store(false, Ordering::SeqCst);
             },
             move |error| {
-                *rt.device_error.lock().expect("device error") = error.to_string();
+                let _ = error;
+                rt.device_fault.store(1, Ordering::Relaxed);
             },
             None,
         )
@@ -1418,7 +1471,7 @@ fn start_mixer_if_needed(
     }
     let capacity = (device_rate as usize * 2 * 2).max(4096);
     let (mut producer, consumer) = RingBuffer::<f32>::new(capacity);
-    *rt.device.lock().expect("device ring") = Some(consumer);
+    *rt.rings.device() = Some(consumer);
     let rt = Arc::clone(rt);
     let stop_flag = Arc::clone(&stop);
     let mixer = thread::Builder::new()
@@ -1429,7 +1482,6 @@ fn start_mixer_if_needed(
 }
 
 fn mixer_loop(rt: &Realtime, stop: &AtomicBool, producer: &mut Producer<f32>, device_rate: u32) {
-    let mut cached = MixSnapshot::silent();
     let mut mixed = vec![0.0_f32; 2048];
     let mut resampler = if device_rate == PLAYBACK_RATE {
         None
@@ -1449,50 +1501,56 @@ fn mixer_loop(rt: &Realtime, stop: &AtomicBool, producer: &mut Producer<f32>, de
         )
         .ok()
     };
-    let mut planar = [Vec::new(), Vec::new()];
+    let mut planar = [Vec::with_capacity(1024), Vec::with_capacity(1024)];
     let mut output = resampler
         .as_ref()
         .map(|resampler| resampler.output_buffer_allocate(true));
+    let max_out = output
+        .as_ref()
+        .map(|channels| {
+            channels
+                .iter()
+                .map(|channel| channel.capacity())
+                .max()
+                .unwrap_or(1024)
+        })
+        .unwrap_or(1024);
+    let mut interleaved = Vec::with_capacity(max_out.saturating_mul(2).max(mixed.len()));
     while !stop.load(Ordering::Acquire) && !rt.shutdown.load(Ordering::Acquire) {
-        if rt.hold.load(Ordering::Acquire) || !rt.consume.load(Ordering::Acquire) {
+        rt.mixer_busy.store(true, Ordering::SeqCst);
+        if rt.hold.load(Ordering::Acquire) || !rt.consume.load(Ordering::SeqCst) {
+            rt.mixer_busy.store(false, Ordering::SeqCst);
             thread::sleep(Duration::from_millis(2));
             continue;
         }
-        rt.mixer_busy.store(true, Ordering::Release);
-        if rt.hold.load(Ordering::Acquire) || !rt.consume.load(Ordering::Acquire) {
-            rt.mixer_busy.store(false, Ordering::Release);
-            continue;
-        }
-        {
-            let Ok(mut consumers) = rt.consumers.lock() else {
-                rt.mixer_busy.store(false, Ordering::Release);
-                continue;
-            };
-            let (underruns, track) = mix_consumers(rt, &mut consumers, &mut cached, &mut mixed);
-            if underruns > 0 {
-                rt.underruns.fetch_add(underruns, Ordering::Relaxed);
-                if let Some(track) = track {
-                    rt.last_underrun.store(track, Ordering::Relaxed);
-                }
+        let mix = rt.published.load();
+        let (underruns, track) = mix_consumers(rt, rt.rings.tracks(), &mix, &mut mixed);
+        if underruns > 0 {
+            rt.underruns.fetch_add(underruns, Ordering::Relaxed);
+            if let Some(track) = track {
+                rt.last_underrun.store(track, Ordering::Relaxed);
             }
-            rt.presented
-                .fetch_add((mixed.len() / 2) as u64, Ordering::Relaxed);
         }
+        rt.presented
+            .fetch_add((mixed.len() / 2) as u64, Ordering::Relaxed);
         if let Some(resampler) = resampler.as_mut() {
             let frames = mixed.len() / 2;
             planar[0].clear();
             planar[1].clear();
+            planar[0].resize(frames, 0.0);
+            planar[1].resize(frames, 0.0);
             for frame in 0..frames {
-                planar[0].push(mixed[frame * 2]);
-                planar[1].push(mixed[frame * 2 + 1]);
+                planar[0][frame] = mixed[frame * 2];
+                planar[1][frame] = mixed[frame * 2 + 1];
             }
             if let Some(output) = output.as_mut() {
                 if let Ok((_used, produced)) = resampler.process_into_buffer(&planar, output, None)
                 {
-                    let mut interleaved = Vec::with_capacity(produced * 2);
+                    interleaved.clear();
+                    interleaved.resize(produced * 2, 0.0);
                     for frame in 0..produced {
-                        interleaved.push(output[0].get(frame).copied().unwrap_or(0.0));
-                        interleaved.push(output[1].get(frame).copied().unwrap_or(0.0));
+                        interleaved[frame * 2] = output[0].get(frame).copied().unwrap_or(0.0);
+                        interleaved[frame * 2 + 1] = output[1].get(frame).copied().unwrap_or(0.0);
                     }
                     copy_device_space(producer, &interleaved);
                 }
@@ -1500,7 +1558,7 @@ fn mixer_loop(rt: &Realtime, stop: &AtomicBool, producer: &mut Producer<f32>, de
         } else {
             copy_device_space(producer, &mixed);
         }
-        rt.mixer_busy.store(false, Ordering::Release);
+        rt.mixer_busy.store(false, Ordering::SeqCst);
     }
 }
 
@@ -1575,21 +1633,20 @@ fn status_from(rt: &Realtime) -> EngineStatus {
         .ok()
         .and_then(|ids| ids.get(underrun_index).cloned())
         .unwrap_or_default();
-    let device_error = rt
-        .device_error
-        .lock()
-        .ok()
-        .map(|error| error.clone())
-        .unwrap_or_default();
     let mut message = rt
         .message
         .lock()
         .ok()
         .map(|message| message.clone())
         .unwrap_or_default();
-    if message.is_empty() && !device_error.is_empty() {
-        message = device_error;
+    if message.is_empty() && rt.device_fault.load(Ordering::Relaxed) != 0 {
+        message = "The audio device stopped.".into();
     }
+    let device_format = match rt.device_format.load(Ordering::Relaxed) {
+        FORMAT_I16 => "i16",
+        FORMAT_F32 => "f32",
+        _ => "",
+    };
     EngineStatus {
         state: match rt.state.load(Ordering::Relaxed) {
             STATE_PRIMING => "priming",
@@ -1622,6 +1679,8 @@ fn status_from(rt: &Realtime) -> EngineStatus {
         } else {
             f64::from(callback_frames) / f64::from(rate) * 1000.0
         },
+        device_format: device_format.into(),
+        proxy_percent: rt.proxy_percent.load(Ordering::Relaxed) as f32 / 10.0,
         message,
     }
 }
@@ -1759,7 +1818,7 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         {
-            let mut consumers = engine.rt.consumers.lock().expect("consumers");
+            let consumers = engine.rt.rings.tracks();
             if let Some(consumer) = consumers.get_mut(0) {
                 while consumer.pop().is_ok() {}
             }
@@ -1775,5 +1834,446 @@ mod tests {
         assert!(engine.status().underruns >= 1);
         assert!(block.iter().all(|sample| *sample == 0.0));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stems_stay_on_one_frame_and_a_shorter_stem_ends_quietly() {
+        let dir = env::temp_dir().join(format!("audiosous-align-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut short = track(&dir, "short", 4_800, |_| 1.0);
+        short.pan = -1.0;
+        let mut long = track(&dir, "long", 48_000, |_| 0.4);
+        long.pan = 1.0;
+        let engine = Engine::offline();
+        engine.load(vec![short, long]).unwrap();
+        engine.play(0.0).unwrap();
+        let mut early = vec![0.0_f32; 2_400];
+        engine.render_block(&mut early);
+        assert!(early[0].abs() > 0.5, "short stem missing");
+        assert!(early[1].abs() > 0.2, "long stem missing");
+        assert_eq!(
+            engine.rt.consumed[0].load(Ordering::Relaxed),
+            engine.rt.consumed[1].load(Ordering::Relaxed)
+        );
+        let mut later = vec![0.0_f32; 9_600];
+        engine.render_block(&mut later);
+        let tail = &later[later.len() - 400..];
+        let left = tail
+            .iter()
+            .step_by(2)
+            .map(|sample| sample.abs())
+            .fold(0.0_f32, f32::max);
+        let right = tail
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .map(|sample| sample.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(left < 0.05, "short stem kept playing, peak {left}");
+        assert!(right > 0.2, "long stem stopped, peak {right}");
+        assert_eq!(engine.status().underruns, 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_starved_reader_silences_only_that_stem_then_recovers() {
+        let dir = env::temp_dir().join(format!("audiosous-starve-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut left = track(&dir, "left", 48_000 * 8, |_| 0.8);
+        left.pan = -1.0;
+        let mut right = track(&dir, "right", 48_000 * 8, |_| 0.8);
+        right.pan = 1.0;
+        let engine = Engine::offline();
+        engine.load(vec![left, right]).unwrap();
+        engine.play(0.0).unwrap();
+        engine.rt.hold.store(true, Ordering::Release);
+        while engine.rt.busy.load(Ordering::Acquire) > 0 {
+            thread::sleep(Duration::from_millis(1));
+        }
+        {
+            let consumers = engine.rt.rings.tracks();
+            while consumers[0].pop().is_ok() {}
+        }
+        engine.rt.produced[0].store(0, Ordering::Relaxed);
+        engine.rt.consumed[0].store(0, Ordering::Relaxed);
+        engine.rt.eof_bits.store(
+            engine.rt.eof_bits.load(Ordering::Relaxed) & !1,
+            Ordering::Relaxed,
+        );
+        engine.rt.underruns.store(0, Ordering::Relaxed);
+        engine.rt.last_underrun.store(usize::MAX, Ordering::Relaxed);
+        let mut block = vec![0.0_f32; 512];
+        let started = Instant::now();
+        engine.render_block(&mut block);
+        assert!(started.elapsed() < Duration::from_millis(50));
+        assert!(engine.status().underruns >= 1);
+        assert_eq!(engine.status().last_underrun_track, "left");
+        let right = block
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .map(|sample| sample.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(right > 0.4, "the other stem was silenced, peak {right}");
+        assert!(block.iter().step_by(2).all(|sample| sample.abs() < 0.05));
+        engine.rt.hold.store(false, Ordering::Release);
+        let recovered = Instant::now();
+        let mut heard = false;
+        while recovered.elapsed() < Duration::from_secs(2) {
+            thread::sleep(Duration::from_millis(20));
+            engine.render_block(&mut block);
+            if block.iter().step_by(2).any(|sample| sample.abs() > 0.2) {
+                heard = true;
+                break;
+            }
+        }
+        assert!(heard, "starved stem did not recover");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn callback_keeps_rendering_while_status_locks_are_held() {
+        let dir = env::temp_dir().join(format!("audiosous-ui-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let stem = track(&dir, "tone", 48_000, |_| 0.5);
+        let engine = Engine::offline();
+        engine.load(vec![stem]).unwrap();
+        engine.play(0.0).unwrap();
+        let mut block = vec![0.0_f32; 960];
+        engine.render_block(&mut block);
+        let before = engine.status().underruns;
+        let (ready_tx, ready_rx) = mpsc::channel();
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                let _commands = engine.commands.lock().expect("commands");
+                let _ids = engine.rt.ids.lock().expect("ids");
+                let _message = engine.rt.message.lock().expect("message");
+                let _ = ready_tx.send(());
+                thread::sleep(Duration::from_millis(800));
+            });
+            ready_rx.recv().expect("lock thread");
+            let started = Instant::now();
+            engine.render_block(&mut block);
+            assert!(
+                started.elapsed() < Duration::from_millis(100),
+                "callback waited on a lock"
+            );
+        });
+        let peak = block
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(peak > 0.2, "audio stopped while other threads held locks");
+        assert_eq!(engine.status().underruns, before);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rapid_seeks_discard_the_previous_buffer() {
+        let dir = env::temp_dir().join(format!("audiosous-seek-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let stem = track(
+            &dir,
+            "tone",
+            48_000,
+            |frame| if frame < 4_800 { 1.0 } else { 0.05 },
+        );
+        let engine = Engine::offline();
+        engine.load(vec![stem]).unwrap();
+        engine.play(0.0).unwrap();
+        for seconds in [0.0, 0.8, 0.05, 0.6, 0.02, 0.3] {
+            engine.seek(seconds);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = engine.status();
+            if status.state == "playing"
+                && status.position_seconds > 0.25
+                && status.position_seconds < 0.45
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "seek did not settle, position {}",
+                status.position_seconds
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let mut block = vec![0.0_f32; 960];
+        engine.render_block(&mut block);
+        let peak = block
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            peak > 0.01 && peak < 0.4,
+            "stale opening survived the seek, peak {peak}"
+        );
+        let position = engine.status().position_seconds;
+        assert!(position > 0.2 && position < 0.55, "position {position}");
+        engine.set_loop(Some((0.25, 0.4)));
+        thread::sleep(Duration::from_millis(80));
+        let mut lap = vec![0.0_f32; 24_000];
+        engine.render_block(&mut lap);
+        let wrapped = engine.status().position_seconds;
+        assert!(wrapped < 0.45, "loop drifted, position {wrapped}");
+        let skew = engine.rt.consumed[0].load(Ordering::Relaxed) as i64
+            - engine.rt.presented.load(Ordering::Relaxed) as i64;
+        assert!(
+            skew.abs() < 4_096,
+            "reader and transport diverged by {skew} frames"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "synthetic playback stress"]
+    fn stress_mix_throughput() {
+        let dir = env::temp_dir().join(format!("audiosous-stress-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let cases = [
+            (32, 48_000 * 2, 48_000_u32),
+            (32, 96_000 * 2, 96_000),
+            (11, 192_000 * 2, 192_000),
+            (64, 48_000 * 2, 48_000),
+        ];
+        for (tracks, frames, rate) in cases {
+            let loaded: Vec<_> = (0..tracks)
+                .map(|index| {
+                    let name = format!("t{index}");
+                    let source = dir.join(format!("{name}-{rate}.wav"));
+                    write_wav_rate(&source, rate, frames, |_| 0.1);
+                    let proxy = dir.join(format!("{name}-{rate}.proxy"));
+                    let size = fs::metadata(&source).unwrap().len();
+                    ensure_proxy(
+                        &source,
+                        &proxy,
+                        size,
+                        1,
+                        &AtomicBool::new(false),
+                        &mut |_| {},
+                    )
+                    .unwrap();
+                    LoadedTrack {
+                        id: name.clone(),
+                        label: name,
+                        source_path: source,
+                        proxy_path: proxy,
+                        source_size: size,
+                        source_modified_ns: 1,
+                        gain_db: 0.0,
+                        pan: 0.0,
+                        muted: false,
+                        solo: false,
+                    }
+                })
+                .collect();
+            let engine = Engine::offline();
+            let started = Instant::now();
+            engine.load(loaded).unwrap();
+            engine.play(0.0).unwrap();
+            let mut block = vec![0.0_f32; 512];
+            let callbacks = 48_000 / 512 / 4;
+            let mut callback_ns = 0_u128;
+            for _ in 0..callbacks {
+                let tick = Instant::now();
+                engine.render_block(&mut block);
+                callback_ns += tick.elapsed().as_nanos();
+            }
+            let status = engine.status();
+            let ring_bytes = tracks * RING_SECONDS * PLAYBACK_RATE as usize * 4;
+            eprintln!(
+                "stress tracks={tracks} source={rate} build+play={:?} underruns={} min_buffer={:.3}s callback={:.3}ms budget={:.3}ms ring≈{}MB",
+                started.elapsed(),
+                status.underruns,
+                status.buffered_ahead_min,
+                callback_ns as f64 / callbacks as f64 / 1_000_000.0,
+                status.callback_budget_ms,
+                ring_bytes / (1024 * 1024)
+            );
+            assert_eq!(status.underruns, 0, "{tracks} tracks at {rate} underran");
+            assert!(
+                status.buffered_ahead_min > 0.2,
+                "{tracks} tracks at {rate} were not primed, buffer {}",
+                status.buffered_ahead_min
+            );
+            assert!(status.buffered_ahead_min < RING_SECONDS as f64 + 0.5);
+            engine.shutdown();
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "project playback soak"]
+    fn sustained_generated_projects() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for name in ["Generated 5", "Generated2"] {
+            let project = root.join("test-assets").join(name).join("project.amix");
+            if !project.is_file() {
+                eprintln!("skip {name}: project file is not on disk");
+                continue;
+            }
+            let doc: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&project).unwrap()).unwrap();
+            let duration_frames = (doc["project"]["durationSeconds"].as_f64().unwrap_or(0.0)
+                * f64::from(PLAYBACK_RATE)) as usize;
+            let tracks = doc["tracks"].as_array().cloned().unwrap_or_default();
+            let bundle = project.parent().unwrap();
+            let loaded: Vec<LoadedTrack> = tracks
+                .iter()
+                .map(|track| {
+                    let id = track["id"].as_str().unwrap().to_string();
+                    let relative = track["file"]["relativePath"].as_str().unwrap();
+                    let source = bundle.join(relative);
+                    let meta = fs::metadata(&source).unwrap();
+                    let modified_ns = meta
+                        .modified()
+                        .ok()
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|duration| u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX))
+                        .unwrap_or(0);
+                    LoadedTrack {
+                        id: id.clone(),
+                        label: track["file"]["filename"]
+                            .as_str()
+                            .unwrap_or(&id)
+                            .to_string(),
+                        source_path: source,
+                        proxy_path: bundle.join("cache/playback").join(format!("{id}.proxy")),
+                        source_size: meta.len(),
+                        source_modified_ns: modified_ns,
+                        gain_db: track["gainDb"].as_f64().unwrap_or(0.0) as f32,
+                        pan: track["pan"].as_f64().unwrap_or(0.0) as f32,
+                        muted: track["muted"].as_bool().unwrap_or(false),
+                        solo: track["solo"].as_bool().unwrap_or(false),
+                    }
+                })
+                .collect();
+            let engine = Engine::offline();
+            let prepared = Instant::now();
+            engine.load(loaded).unwrap();
+            engine.play(0.0).unwrap();
+            let mut block = vec![0.0_f32; 4_096];
+            let target = duration_frames.min(5 * 60 * PLAYBACK_RATE as usize).max(1);
+            let block_frames = block.len() / 2;
+            let block_duration =
+                Duration::from_secs_f64(block_frames as f64 / f64::from(PLAYBACK_RATE));
+            let mut heard = 0_usize;
+            let mut callback_ns = 0_u128;
+            let mut callbacks = 0_u64;
+            let mut min_buffer = f64::MAX;
+            let mut buffer_sum = 0.0;
+            let mut buffer_samples = 0_u64;
+            let playback = Instant::now();
+            let prepare_time = playback.saturating_duration_since(prepared);
+            while heard < target {
+                let tick = Instant::now();
+                engine.render_block(&mut block);
+                callback_ns += tick.elapsed().as_nanos();
+                callbacks += 1;
+                heard += block_frames;
+                if callbacks % 100 == 0 && heard < duration_frames {
+                    let status = engine.status();
+                    min_buffer = min_buffer.min(status.buffered_ahead_min);
+                    buffer_sum += status.buffered_ahead_min;
+                    buffer_samples += 1;
+                    if status.underruns != 0 {
+                        panic!(
+                            "{name} underran at {:.1}s: {}",
+                            heard as f64 / f64::from(PLAYBACK_RATE),
+                            status.underruns
+                        );
+                    }
+                }
+                let due = playback + block_duration.saturating_mul((heard / block_frames) as u32);
+                if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                    thread::sleep(wait);
+                }
+            }
+            let mut status = engine.status();
+            eprintln!(
+                "soak {name} prepare={:?} play={:?} underruns={} min_buffer={:.3}s avg_buffer={:.3}s callback={:.3}ms max_seen_budget={:.3}ms backlog={} seek_prime={}ms",
+                prepare_time,
+                playback.elapsed(),
+                status.underruns,
+                if min_buffer.is_finite() { min_buffer } else { status.buffered_ahead_min },
+                if buffer_samples == 0 { status.buffered_ahead_avg } else { buffer_sum / buffer_samples as f64 },
+                callback_ns as f64 / callbacks as f64 / 1_000_000.0,
+                status.callback_budget_ms,
+                status.reader_backlog,
+                status.seek_prime_ms
+            );
+            assert_eq!(status.underruns, 0, "{name} underruns");
+            for seconds in [70.0, 90.0, 20.0, 180.0, 5.0] {
+                engine.seek(seconds);
+            }
+            let settle = Instant::now() + Duration::from_secs(30);
+            loop {
+                status = engine.status();
+                if status.state == "playing"
+                    && status.position_seconds > 4.0
+                    && status.position_seconds < 8.0
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < settle,
+                    "{name} seek did not settle at {}",
+                    status.position_seconds
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+            engine.render_block(&mut block);
+            engine.set_loop(Some((5.0, 12.0)));
+            thread::sleep(Duration::from_millis(200));
+            engine.render_block(&mut block);
+            if let Some(first) = doc["tracks"].as_array().and_then(|tracks| tracks.first()) {
+                let id = first["id"].as_str().unwrap();
+                engine.set_track(id, Some(-6.0), Some(-0.5), Some(true), Some(false));
+                engine.set_track(id, Some(-6.0), Some(-0.5), Some(false), Some(true));
+            }
+            thread::sleep(Duration::from_millis(100));
+            engine.render_block(&mut block);
+            status = engine.status();
+            eprintln!(
+                "soak {name} after seek/loop/gain underruns={} position={:.3}",
+                status.underruns, status.position_seconds
+            );
+            assert_eq!(status.underruns, 0, "{name} underruns after seek");
+            engine.shutdown();
+        }
+    }
+
+    fn write_wav_rate(
+        path: &std::path::Path,
+        rate: u32,
+        frames: usize,
+        sample: impl Fn(usize) -> f32,
+    ) {
+        let mut body = Vec::with_capacity(44 + frames * 4);
+        let data_bytes = (frames * 4) as u32;
+        body.extend_from_slice(b"RIFF");
+        body.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        body.extend_from_slice(b"WAVE");
+        body.extend_from_slice(b"fmt ");
+        body.extend_from_slice(&16_u32.to_le_bytes());
+        body.extend_from_slice(&3_u16.to_le_bytes());
+        body.extend_from_slice(&1_u16.to_le_bytes());
+        body.extend_from_slice(&rate.to_le_bytes());
+        body.extend_from_slice(&(rate * 4).to_le_bytes());
+        body.extend_from_slice(&4_u16.to_le_bytes());
+        body.extend_from_slice(&32_u16.to_le_bytes());
+        body.extend_from_slice(b"data");
+        body.extend_from_slice(&data_bytes.to_le_bytes());
+        for frame in 0..frames {
+            body.extend_from_slice(&sample(frame).to_le_bytes());
+        }
+        fs::write(path, body).unwrap();
     }
 }
