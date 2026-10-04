@@ -13,7 +13,15 @@ export function createWebAudioOutput(): AudioOutput {
     now: () => audio().currentTime,
     async resume() {
       const active = audio();
-      if (active.state !== "running") await active.resume();
+      if (active.state === "running") return;
+      try {
+        await active.resume();
+      } catch (error) {
+        const detail = error instanceof Error && error.message ? error.message : "Audio output did not open.";
+        throw new Error(`Playback could not start. ${detail}`);
+      }
+      const outputState = active.state as AudioContextState;
+      if (outputState !== "running") throw new Error("Playback could not start. Audio output did not open.");
     },
     prepareTrack(trackId) {
       if (nodes.has(trackId)) return;

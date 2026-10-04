@@ -11,7 +11,7 @@ Night Drive/
     └── project.amix
 ```
 
-`media/` holds copies of imported stems. `cache/waveforms/<trackId>.peaks` holds derived waveform peaks (not part of the schema, and safe to delete). `recovery/project.amix` is the last successful save, written beside the primary file so a crash during a later save still leaves a readable copy.
+`media/` holds copies of imported stems. `cache/waveforms/<trackId>.peaks` holds derived waveform peaks (not part of the schema, and safe to delete). `recovery/project.amix` keeps the previous successful save. A new project starts with the same bytes in both files. The next save leaves that version in `recovery/` and writes the new document to `project.amix`. Opening `recovery/project.amix` reads that previous copy even when the primary file is still there. The next save writes the primary file and keeps the replaced primary as the new recovery copy.
 
 Source files chosen at import are never modified.
 
@@ -116,6 +116,6 @@ Selections are independent. A project may have a track and a section and a time 
 
 ## Writes
 
-Saves are atomic: the shell writes a temporary file in the project folder, fsyncs it, then renames it onto `project.amix`. The same bytes are copied to `recovery/project.amix` after the primary write succeeds.
+Saves are atomic: the shell writes a temporary file in the project folder, fsyncs it, then renames it onto `project.amix`. Before that rename, the current primary bytes are kept. After the new primary is in place, those previous bytes are written to `recovery/project.amix`. A save opened from the recovery file still updates the primary `project.amix`.
 
 Stem copies stream from the source in read-only mode. If bundle creation fails, the new project folder is removed.

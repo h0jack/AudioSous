@@ -2,23 +2,26 @@
 
 Audiosous is a local desktop application for musicians who can make a track and want help shaping the mix. Milestone 1 covers the project file, stem import, a shared playback clock, waveforms, sections, intent, undo, and autosave. Nothing here uploads audio.
 
-## Run
+## Run the desktop app
+
+Analysis, stem copies, and project folders run in the desktop window.
 
 ```sh
 npm install
-npm test
+cd services/analysis
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+cd ../..
 npm run dev
 ```
 
-`npm run dev` opens the Tauri window. On Linux that needs WebKitGTK, which this machine already uses for Tauri.
+`npm run dev` opens the Audiosous window. On Linux that needs WebKitGTK and the GStreamer good plugins (`gst-plugins-good`), which provide the audio output Play uses. The first analysis of a stem also needs the Python environment above.
 
-The browser preview, without the desktop shell:
+There is a browser preview for layout work. It does not start the analysis engine:
 
 ```sh
 npm run dev --workspace @audiosous/desktop
 ```
-
-The preview can inspect dropped WAV or AIFF files, guess roles, and save `project.amix`. Copying stems into a project folder happens in the desktop app, because the browser cannot keep those files beside the project.
 
 ## Project folder
 

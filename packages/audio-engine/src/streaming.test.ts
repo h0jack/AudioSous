@@ -180,6 +180,95 @@ describe("streaming engine", () => {
     engine.dispose();
   });
 
+  it("plays 32 stereo stems for several seconds without reading a 10 minute song", async () => {
+    const sampleRate = 48_000;
+    const windowSeconds = 0.5;
+    let maxFrames = 0;
+    let totalFrames = 0;
+    const starts: Array<{ trackId: string; contextTime: number; fileOffsetSeconds: number; frames: number; channels: number; sample: number }> = [];
+    const output: AudioOutput & { time: number } = {
+      time: 0,
+      now() {
+        return this.time;
+      },
+      async resume() {},
+      prepareTrack() {},
+      setGain() {},
+      setPan() {},
+      start(slice) {
+        const frames = slice.channels[0]?.length ?? 0;
+        starts.push({
+          trackId: slice.trackId,
+          contextTime: slice.contextTime,
+          fileOffsetSeconds: slice.fileOffsetSeconds,
+          frames,
+          channels: slice.channels.length,
+          sample: slice.channels[0]?.[0] ?? 0,
+        });
+        return { stop() {} };
+      },
+      close() {},
+    };
+    const wide = createProject({
+      id: "project-stress",
+      name: "Stress",
+      tracks: Array.from({ length: 32 }, (_, index) => ({
+        ...track(`stem-${index}`, index % 2 === 0 ? "kick" : "bass"),
+        metadata: {
+          format: "wav" as const,
+          sampleRate,
+          channelCount: 2,
+          bitDepth: 24,
+          durationSeconds: 600,
+          fileSizeBytes: sampleRate * 600 * 2 * 3,
+        },
+      })),
+    });
+    wide.project.durationSeconds = 600;
+    const engine = createStreamingEngine(output, { windowSeconds, lookaheadSeconds: 1.5 });
+    const startedAt = Date.now();
+    await engine.loadProject(wide, {
+      resolve: (path) => path,
+      open: async () => ({
+        sampleRate,
+        channelCount: 2,
+        async readFrames(offset, frameCount) {
+          maxFrames = Math.max(maxFrames, frameCount);
+          totalFrames += frameCount;
+          const left = new Float32Array(frameCount);
+          const right = new Float32Array(frameCount);
+          for (let index = 0; index < frameCount; index += 8) {
+            const sample = (((offset + index) % 200) - 100) / 500;
+            left[index] = sample;
+            right[index] = -sample;
+          }
+          return [left, right];
+        },
+      }),
+    });
+    await engine.play(30);
+    output.time = 3;
+    await engine.pump();
+    output.time = 6;
+    await engine.pump();
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(starts.length).toBeGreaterThan(32);
+    expect(maxFrames).toBeLessThanOrEqual(sampleRate * windowSeconds);
+    expect(totalFrames).toBeLessThan(32 * sampleRate * 10);
+    expect(starts.every((slice) => slice.channels === 2 && slice.frames > 0)).toBe(true);
+    expect(starts.some((slice) => slice.sample !== 0)).toBe(true);
+    expect(Math.min(...starts.map((slice) => slice.fileOffsetSeconds))).toBeGreaterThanOrEqual(30);
+    const byTime = new Map<number, Set<string>>();
+    for (const slice of starts) {
+      const key = Number(slice.contextTime.toFixed(3));
+      const tracks = byTime.get(key) ?? new Set<string>();
+      tracks.add(slice.trackId);
+      byTime.set(key, tracks);
+    }
+    expect([...byTime.values()].every((tracks) => tracks.size === 32)).toBe(true);
+    engine.dispose();
+  });
+
   it("mutes a track and solos without changing the clock", async () => {
     const output = fakeOutput();
     const engine = createStreamingEngine(output, { windowSeconds: 0.5, lookaheadSeconds: 0.5 });

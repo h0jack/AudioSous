@@ -9,6 +9,7 @@ export type LogEvent =
   | "track.import"
   | "track.decode.failure"
   | "audio.play"
+  | "audio.output.failure"
   | "audio.seek"
   | "section.create"
   | "section.update"

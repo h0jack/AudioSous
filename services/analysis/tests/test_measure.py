@@ -13,7 +13,7 @@ import soundfile as sf
 
 from audiosous_analysis.bands import FREQUENCY_BANDS
 from audiosous_analysis.errors import AnalysisError
-from audiosous_analysis.measure import measure_file
+from audiosous_analysis.measure import measure_file, measure_mix
 
 SAMPLE_RATE = 48_000
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,8 +42,8 @@ def _share(measurement: dict, band_id: str) -> float:
 def _assert_finite_measurement(measurement: dict) -> None:
     encoded = json.dumps(measurement, allow_nan=False)
     parsed = json.loads(encoded)
-    assert parsed["schemaVersion"] == 1
-    assert parsed["analysisVersion"] == "0.2.0"
+    assert parsed["schemaVersion"] == 2
+    assert parsed["analysisVersion"] == "0.3.0"
     assert [band["id"] for band in parsed["bandEnergy"]] == [band[0] for band in FREQUENCY_BANDS]
     shares = [band["normalizedEnergy"] for band in parsed["bandEnergy"]]
     assert all(math.isfinite(share) and 0.0 <= share <= 1.0 for share in shares)
@@ -198,6 +198,74 @@ def test_sidecar_returns_json_for_one_wav(tmp_path: Path):
     assert payload["ok"] is True
     assert payload["contractVersion"] == 1
     assert payload["measurement"]["bandEnergy"][1]["normalizedEnergy"] > 0.8
+
+
+def test_one_kilohertz_is_louder_in_the_spectrum_than_a_low_bin(tmp_path: Path):
+    path = tmp_path / "mid.wav"
+    _write(path, _tone(1_000.0))
+    spectrum = measure_file(path)["spectrum"]
+    assert len(spectrum) > 8
+    loudest = max(spectrum, key=lambda point: point["magnitudeDb"])
+    low = min(spectrum, key=lambda point: abs(point["hz"] - 100.0))
+    assert 400 < loudest["hz"] < 2_500
+    assert loudest["magnitudeDb"] > low["magnitudeDb"] + 10
+
+
+def test_section_window_keeps_the_tone_and_draws_time(tmp_path: Path):
+    path = tmp_path / "gated.wav"
+    audio = np.zeros(SAMPLE_RATE * 4, dtype=np.float32)
+    audio[SAMPLE_RATE : SAMPLE_RATE * 3] = _tone(1_000.0)
+    _write(path, audio)
+    measurement = measure_file(path, {"type": "section", "startSeconds": 1.0, "endSeconds": 3.0})
+    _assert_finite_measurement(measurement)
+    assert measurement["scope"]["type"] == "section"
+    assert measurement["scope"]["startSeconds"] == pytest_approx(1.0, abs=0.01)
+    assert _share(measurement, "upper-mid") > 0.5
+    assert len(measurement["loudnessTimeline"]) > 1
+    assert measurement["spectrogram"]["columns"]
+    assert measurement["spectrogram"]["bandCount"] == len(measurement["spectrogram"]["columns"][0]["magnitudesDb"])
+
+
+def test_range_past_the_file_is_empty(tmp_path: Path):
+    path = tmp_path / "short.wav"
+    _write(path, _tone(100.0, seconds=0.5))
+    try:
+        measure_file(path, {"type": "time-range", "startSeconds": 4.0, "endSeconds": 5.0})
+    except AnalysisError as error:
+        assert error.code == "empty-audio"
+    else:
+        raise AssertionError("expected an analysis error")
+
+
+def test_mix_of_bass_and_mid_keeps_both_bands(tmp_path: Path):
+    bass = tmp_path / "bass.wav"
+    mid = tmp_path / "mid.wav"
+    _write(bass, _tone(100.0))
+    _write(mid, _tone(1_000.0))
+    measurement = measure_mix([bass, mid])
+    _assert_finite_measurement(measurement)
+    assert measurement["scope"] == {"type": "mix"}
+    assert _share(measurement, "bass") > 0.2
+    assert _share(measurement, "upper-mid") > 0.2
+
+
+def test_sidecar_measures_a_mix(tmp_path: Path):
+    bass = tmp_path / "bass.wav"
+    mid = tmp_path / "mid.wav"
+    _write(bass, _tone(100.0))
+    _write(mid, _tone(1_000.0))
+    completed = subprocess.run(
+        [sys.executable, "-m", "audiosous_analysis"],
+        input=json.dumps({"contractVersion": 1, "operation": "analyze_mix", "audioPaths": [str(bass), str(mid)]}),
+        text=True,
+        capture_output=True,
+        cwd=ROOT,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["ok"] is True
+    assert payload["measurement"]["scope"]["type"] == "mix"
 
 
 def test_sidecar_explains_a_bad_request():

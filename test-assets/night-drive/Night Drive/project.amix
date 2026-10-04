@@ -1,0 +1,243 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "f6088b80-e801-402e-a001-26e8f89e666a",
+    "name": "Night Drive",
+    "createdAt": "2026-10-04T01:10:02.664Z",
+    "updatedAt": "2026-10-04T01:56:00.173Z",
+    "sampleRate": 48000,
+    "durationSeconds": 80
+  },
+  "tracks": [
+    {
+      "id": "0f92edfd-e651-4c83-aaf5-87e3b8c40382",
+      "name": "Fx",
+      "role": "fx",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/0f92edfd-e651-4c83-aaf5-87e3b8c40382__fx.wav",
+        "filename": "fx.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 48000,
+        "channelCount": 1,
+        "bitDepth": 16,
+        "durationSeconds": 80,
+        "fileSizeBytes": 7680044
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "5debd0c8-f6e6-491b-b9af-f0abe7b82ef4",
+      "name": "Lead",
+      "role": "lead",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/5debd0c8-f6e6-491b-b9af-f0abe7b82ef4__lead.wav",
+        "filename": "lead.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 48000,
+        "channelCount": 1,
+        "bitDepth": 16,
+        "durationSeconds": 80,
+        "fileSizeBytes": 7680044
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "e0437b18-c908-4798-9c92-3278884cb142",
+      "name": "Pad",
+      "role": "pad",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/e0437b18-c908-4798-9c92-3278884cb142__pad.wav",
+        "filename": "pad.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 48000,
+        "channelCount": 1,
+        "bitDepth": 16,
+        "durationSeconds": 80,
+        "fileSizeBytes": 7680044
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "12338760-637e-4ae4-8dd7-497c27869790",
+      "name": "Percussion",
+      "role": "percussion",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/12338760-637e-4ae4-8dd7-497c27869790__percussion.wav",
+        "filename": "percussion.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 48000,
+        "channelCount": 1,
+        "bitDepth": 16,
+        "durationSeconds": 80,
+        "fileSizeBytes": 7680044
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "837836ea-b20f-46ce-b860-9387d8c43be6",
+      "name": "Bass",
+      "role": "bass",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/837836ea-b20f-46ce-b860-9387d8c43be6__bass.wav",
+        "filename": "bass.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 48000,
+        "channelCount": 1,
+        "bitDepth": 16,
+        "durationSeconds": 80,
+        "fileSizeBytes": 7680044
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    },
+    {
+      "id": "cfeb1aa1-abbd-4320-97de-432b4b1f2fda",
+      "name": "Kick",
+      "role": "kick",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/cfeb1aa1-abbd-4320-97de-432b4b1f2fda__kick.wav",
+        "filename": "kick.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 48000,
+        "channelCount": 1,
+        "bitDepth": 16,
+        "durationSeconds": 80,
+        "fileSizeBytes": 7680044
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "muted": false,
+      "solo": false
+    }
+  ],
+  "sections": [
+    {
+      "id": "6130ea3b-36ce-4ae9-afa4-a0a7622da50f",
+      "name": "Intro",
+      "type": "intro",
+      "startTime": 0,
+      "endTime": 14.985,
+      "userIntent": null,
+      "source": "automatic-edited",
+      "confidence": 0.594,
+      "structuralGroupId": "group-1"
+    },
+    {
+      "id": "c4c57894-40ee-484c-99ad-526fa2f36825",
+      "name": "Breakdown",
+      "type": "breakdown",
+      "startTime": 14.985,
+      "endTime": 30.04,
+      "userIntent": null,
+      "source": "automatic-edited",
+      "confidence": 0.603,
+      "structuralGroupId": "group-1"
+    },
+    {
+      "id": "303f9e20-8a2a-4ae0-8a21-2ff26e377d1a",
+      "name": "Verse",
+      "type": "verse",
+      "startTime": 30.04,
+      "endTime": 50.078,
+      "userIntent": null,
+      "source": "automatic-edited",
+      "confidence": 0.66,
+      "structuralGroupId": "group-2"
+    },
+    {
+      "id": "70b9388a-2549-4b2d-a6d3-985f7074ba98",
+      "name": "Breakdown 2",
+      "type": "breakdown",
+      "startTime": 50.078,
+      "endTime": 64.968,
+      "userIntent": null,
+      "source": "automatic-edited",
+      "confidence": 0.84,
+      "structuralGroupId": "group-1"
+    },
+    {
+      "id": "6af67254-eb10-4316-b628-871cb3202aa6",
+      "name": "Verse 3",
+      "type": "verse",
+      "startTime": 64.968,
+      "endTime": 80,
+      "userIntent": null,
+      "source": "automatic-edited",
+      "confidence": 0.627,
+      "structuralGroupId": "group-2"
+    }
+  ],
+  "sectionTrackSettings": [],
+  "mixVariants": [
+    {
+      "id": "variant-original",
+      "name": "Original",
+      "description": "The imported stems, without Audiosous processing.",
+      "createdAt": "2026-10-04T01:10:02.664Z",
+      "kind": "original"
+    },
+    {
+      "id": "variant-working",
+      "name": "Working Mix",
+      "description": "The mix you are auditioning.",
+      "createdAt": "2026-10-04T01:10:02.664Z",
+      "kind": "working"
+    }
+  ],
+  "activeMixVariantId": "variant-working",
+  "comparison": {
+    "scope": "entire-mix",
+    "aVariantId": "variant-original",
+    "bVariantId": "variant-working",
+    "trackId": null
+  },
+  "uiState": {
+    "selectedTrackId": "e0437b18-c908-4798-9c92-3278884cb142",
+    "selectedSectionId": "303f9e20-8a2a-4ae0-8a21-2ff26e377d1a",
+    "timeRange": {
+      "start": 22.930980676656652,
+      "end": 26.71914929755289
+    },
+    "loop": {
+      "enabled": true,
+      "start": 30.04,
+      "end": 50.078,
+      "sectionId": "303f9e20-8a2a-4ae0-8a21-2ff26e377d1a"
+    },
+    "playheadSeconds": 0,
+    "timelineZoom": 1,
+    "timelineScroll": 0
+  }
+}

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { CopyProgress, DesktopPlatform, ListedFile, MediaStatus, TrackAnalysisBridgeResult } from "./types";
+import type { AnalyzeAudioRequest, CopyProgress, DesktopPlatform, ListedFile, MediaStatus, TrackAnalysisBridgeResult } from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -86,8 +86,8 @@ export const tauriPlatform: DesktopPlatform = {
       unlisten();
     }
   },
-  async writeProject(projectFile, projectJson) {
-    await invoke("write_project_file", { projectFile, projectJson });
+  writeProject(projectFile, projectJson) {
+    return invoke<string>("write_project_file", { projectFile, projectJson });
   },
   readProject(projectFile) {
     return invoke<{ projectFile: string; json: string }>("read_project_file", { projectFile });
@@ -108,6 +108,17 @@ export const tauriPlatform: DesktopPlatform = {
   },
   analyzeTrackFile(projectFile, relativePath) {
     return invoke<TrackAnalysisBridgeResult>("analyze_track_file", { projectFile, relativePath });
+  },
+  analyzeAudio(projectFile, request: AnalyzeAudioRequest) {
+    return invoke<TrackAnalysisBridgeResult>("analyze_audio", {
+      request: {
+        projectFile,
+        relativePaths: request.relativePaths,
+        scopeType: request.scopeType,
+        startSeconds: request.startSeconds ?? null,
+        endSeconds: request.endSeconds ?? null,
+      },
+    });
   },
   hasPreview() {
     return false;

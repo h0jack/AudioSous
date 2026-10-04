@@ -6,11 +6,11 @@ import {
 } from "@audiosous/analysis-contract";
 import { describe, expect, it } from "vitest";
 import type { DesktopPlatform, TrackAnalysisBridgeResult } from "../platform/types";
-import { loadTrackAnalysis, TrackAnalysisError } from "./track-analysis";
+import { loadAnalysis, loadTrackAnalysis, TrackAnalysisError } from "./track-analysis";
 
 function measurement(): TrackFileMeasurement {
   return trackFileMeasurementSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     analysisVersion: ANALYSIS_ENGINE_VERSION,
     scope: { type: "track" },
     source: { sampleRate: 48_000, channelCount: 1, durationSeconds: 2, frameCount: 96_000 },
@@ -22,6 +22,9 @@ function measurement(): TrackFileMeasurement {
       integratedLufsStatus: "measured",
     },
     bandEnergy: FREQUENCY_BANDS.map((band, index) => ({ ...band, normalizedEnergy: index === 1 ? 1 : 0 })),
+    spectrum: [{ hz: 100, magnitudeDb: -12 }],
+    loudnessTimeline: [{ timeSeconds: 0, rmsDbfs: -9 }],
+    spectrogram: { hopSeconds: 0.5, lowHz: 20, highHz: 20000, bandCount: 1, columns: [{ timeSeconds: 0, magnitudesDb: [-40] }] },
   });
 }
 
@@ -42,23 +45,28 @@ function platform(options: {
   cache?: Uint8Array | null;
   identity?: { fileSizeBytes: number; modifiedAtNs: string };
   analyze?: () => Promise<TrackAnalysisBridgeResult>;
-}): { platform: DesktopPlatform; writes: Uint8Array[]; analyzed: number } {
-  const writes: Uint8Array[] = [];
+}): { platform: DesktopPlatform; writes: Array<{ path: string; bytes: Uint8Array }>; analyzed: number; requests: unknown[] } {
+  const writes: Array<{ path: string; bytes: Uint8Array }> = [];
+  const requests: unknown[] = [];
   let analyzed = 0;
   const identity = options.identity ?? { fileSizeBytes: 40, modifiedAtNs: "10" };
   const host = {
     kind: options.kind ?? "tauri",
-    async projectMediaStatus() {
-      return [{ relativePath: "media/track-bass__bass.wav", exists: true, ...identity }];
+    async projectMediaStatus(_projectFile: string, relativePaths: string[]) {
+      return relativePaths.map((relativePath) => ({ relativePath, exists: true, ...identity }));
     },
     async readProjectCache() {
       return options.cache ?? null;
     },
-    async writeProjectCache(_projectFile: string, _relativePath: string, bytes: Uint8Array) {
-      writes.push(bytes);
+    async writeProjectCache(_projectFile: string, relativePath: string, bytes: Uint8Array) {
+      writes.push({ path: relativePath, bytes });
     },
     async analyzeTrackFile() {
+      throw new Error("loadAnalysis uses analyzeAudio");
+    },
+    async analyzeAudio(_projectFile: string, request: unknown) {
       analyzed += 1;
+      requests.push(request);
       if (!options.analyze) return bridge(measurement(), identity);
       return options.analyze();
     },
@@ -72,6 +80,9 @@ function platform(options: {
     get analyzed() {
       return analyzed;
     },
+    get requests() {
+      return requests;
+    },
   };
 }
 
@@ -82,9 +93,10 @@ describe("selected stem analysis", () => {
     const cached = measurement();
     const entry = new TextEncoder().encode(
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         analysisVersion: ANALYSIS_ENGINE_VERSION,
         identity: { relativePath: track.relativePath, fileSizeBytes: 40, modifiedAtNs: "10" },
+        scope: { type: "track" },
         measuredAt: "2026-10-03T12:00:00.000Z",
         measurement: cached,
       }),
@@ -100,9 +112,10 @@ describe("selected stem analysis", () => {
   it("measures again when the stem timestamp changes and stores the new cache", async () => {
     const stale = new TextEncoder().encode(
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         analysisVersion: ANALYSIS_ENGINE_VERSION,
         identity: { relativePath: track.relativePath, fileSizeBytes: 40, modifiedAtNs: "9" },
+        scope: { type: "track" },
         measuredAt: "2026-10-03T12:00:00.000Z",
         measurement: measurement(),
       }),
@@ -139,5 +152,32 @@ describe("selected stem analysis", () => {
     const host = platform({ kind: "browser" });
     await expect(loadTrackAnalysis(host.platform, "preview://project.amix", track)).rejects.toThrow(/desktop app/);
     expect(host.analyzed).toBe(0);
+  });
+
+  it("measures a section window and ignores a cache from a different window", async () => {
+    const entry = new TextEncoder().encode(
+      JSON.stringify({
+        schemaVersion: 2,
+        analysisVersion: ANALYSIS_ENGINE_VERSION,
+        identity: { relativePath: track.relativePath, fileSizeBytes: 40, modifiedAtNs: "10" },
+        scope: { type: "section", startSeconds: 0, endSeconds: 4 },
+        measuredAt: "2026-10-03T12:00:00.000Z",
+        measurement: measurement(),
+      }),
+    );
+    const host = platform({ cache: entry });
+    const loaded = await loadAnalysis(host.platform, "/tmp/Song/project.amix", {
+      cacheName: "track-bass__section-verse",
+      label: "bass.wav",
+      logId: "track-bass",
+      files: [{ relativePath: track.relativePath, filename: "bass.wav" }],
+      scope: { type: "section", startSeconds: 8, endSeconds: 16 },
+    });
+    expect(loaded.fromCache).toBe(false);
+    expect(host.analyzed).toBe(1);
+    expect(host.requests[0]).toMatchObject({ scopeType: "section", startSeconds: 8, endSeconds: 16 });
+    expect(host.writes[0]?.path).toBe("cache/analysis/track-bass__section-verse.json");
+    const stored = JSON.parse(new TextDecoder().decode(host.writes[0]?.bytes ?? new Uint8Array())) as { scope: { endSeconds: number } };
+    expect(stored.scope.endSeconds).toBe(16);
   });
 });

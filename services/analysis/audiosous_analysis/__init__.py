@@ -5,4 +5,4 @@ Section suggestions in the app still use cached peak energy and do not start thi
 """
 
 CONTRACT_VERSION = 1
-ANALYSIS_ENGINE_VERSION = "0.2.0"
+ANALYSIS_ENGINE_VERSION = "0.3.0"

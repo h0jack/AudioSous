@@ -61,7 +61,7 @@ export function WelcomeScreen() {
       </div>
       {!desktop ? (
         <p className="mt-8 max-w-md text-sm leading-relaxed text-faint">
-          This window is a browser preview. It can inspect stems you drop and save the project file. Copying audio into a project folder happens in the desktop app.
+          This window is a browser preview. Stem analysis and project folders run in the desktop app, started with npm run dev.
         </p>
       ) : null}
       {error ? <p className="mt-6 text-sm text-danger">{error}</p> : null}

@@ -95,7 +95,8 @@ export async function saveOpenProject(platform: DesktopPlatform, options?: { dow
   const snapshot = document;
   const next = withUpdatedAt(snapshot);
   const projectJson = serializeProject(next);
-  await platform.writeProject(projectFilePath, projectJson, { download: options?.download ?? false });
+  const savedPath = await platform.writeProject(projectFilePath, projectJson, { download: options?.download ?? false });
+  if (savedPath !== projectFilePath) useAppStore.getState().setProjectFilePath(savedPath);
   if (useAppStore.getState().document !== snapshot) return;
   useAppStore.getState().replaceDocument(next, false, { mode: "skip" });
   await logEvent(platform, "info", "project.save", "Saved the project.", {

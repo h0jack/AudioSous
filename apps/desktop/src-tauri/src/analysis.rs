@@ -32,23 +32,57 @@ struct FileStamp {
 }
 
 pub fn analyze_project_track(project_file: &Path, relative: &str) -> Result<AnalyzeTrackResponse, String> {
-    let path = bundle::resolve_project_media_file(project_file, relative)?;
-    analyze_audio_file(&path)
+    analyze_project_audio(project_file, &[relative.to_string()], "track", None, None)
 }
 
-pub fn analyze_audio_file(audio_path: &Path) -> Result<AnalyzeTrackResponse, String> {
-    if !audio_path.is_file() {
-        return Err("That stem is missing from the project.".into());
+pub fn analyze_project_audio(
+    project_file: &Path,
+    relatives: &[String],
+    scope_type: &str,
+    start_seconds: Option<f64>,
+    end_seconds: Option<f64>,
+) -> Result<AnalyzeTrackResponse, String> {
+    if relatives.is_empty() {
+        return Err("The analysis request did not include a stem.".into());
     }
-    let before = stamp(audio_path)?;
+    if scope_type != "mix" && relatives.len() != 1 {
+        return Err("That analysis needs one stem.".into());
+    }
+    let mut paths = Vec::with_capacity(relatives.len());
+    for relative in relatives {
+        paths.push(bundle::resolve_project_media_file(project_file, relative)?);
+    }
+    for path in &paths {
+        if !path.is_file() {
+            return Err("That stem is missing from the project.".into());
+        }
+    }
+    let before = paths
+        .iter()
+        .map(|path| stamp(path))
+        .collect::<Result<Vec<_>, _>>()?;
     let started = Instant::now();
     let python = python_interpreter()?;
     let root = analysis_root();
-    let request = serde_json::json!({
-        "contractVersion": 1,
-        "operation": "analyze_track",
-        "audioPath": audio_path,
-    });
+    let request = if scope_type == "mix" {
+        serde_json::json!({
+            "contractVersion": 1,
+            "operation": "analyze_mix",
+            "audioPaths": paths,
+        })
+    } else {
+        let mut scope = serde_json::json!({ "type": scope_type });
+        if let (Some(start), Some(end)) = (start_seconds, end_seconds) {
+            scope["startSeconds"] = serde_json::json!(start);
+            scope["endSeconds"] = serde_json::json!(end);
+        }
+        serde_json::json!({
+            "contractVersion": 1,
+            "operation": "analyze_track",
+            "audioPath": paths[0],
+            "scope": scope,
+        })
+    };
     let mut child = Command::new(&python)
         .arg("-m")
         .arg("audiosous_analysis")
@@ -81,11 +115,12 @@ pub fn analyze_audio_file(audio_path: &Path) -> Result<AnalyzeTrackResponse, Str
         .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
         .unwrap_or_default();
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let after = stamp(audio_path)?;
-    if before != after {
-        return Err("The stem changed while it was being analyzed.".into());
+    for (path, stamp_before) in paths.iter().zip(before.iter()) {
+        if stamp(path)? != *stamp_before {
+            return Err("The stem changed while it was being analyzed.".into());
+        }
     }
-    parse_response(&stdout_bytes, &stderr_text, status.success(), &before, duration_ms)
+    parse_response(&stdout_bytes, &stderr_text, status.success(), &before[0], duration_ms)
 }
 
 fn parse_response(

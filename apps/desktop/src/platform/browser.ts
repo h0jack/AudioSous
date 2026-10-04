@@ -69,6 +69,7 @@ export const browserPlatform: DesktopPlatform = {
     localStorage.setItem(PREVIEW_KEY, projectJson);
     texts.set(projectFile, projectJson);
     if (options?.download) downloadText("project.amix", projectJson);
+    return projectFile;
   },
   async readProject(projectFile) {
     const json = texts.get(projectFile);
@@ -108,6 +109,9 @@ export const browserPlatform: DesktopPlatform = {
     waveformCache.set(relativePath, bytes.slice());
   },
   async analyzeTrackFile() {
+    throw new Error("Stem analysis runs in the desktop app.");
+  },
+  async analyzeAudio() {
     throw new Error("Stem analysis runs in the desktop app.");
   },
   hasPreview() {

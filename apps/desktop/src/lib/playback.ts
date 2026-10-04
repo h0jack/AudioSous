@@ -84,6 +84,7 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
   const engineRef = useRef<StreamingEngine | null>(null);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(document.uiState.playheadSeconds);
+  const [error, setError] = useState<string | null>(null);
   const playingRef = useRef(false);
   playingRef.current = playing;
   const duration = document.project.durationSeconds;
@@ -173,6 +174,7 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
   async function toggle() {
     const engine = engineRef.current;
     if (!engine) return;
+    setError(null);
     if (playingRef.current) {
       engine.pause();
       const time = engine.getCurrentTime();
@@ -185,8 +187,10 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
       await engine.play();
       setPlaying(true);
       void logEvent(getPlatform(), "info", "audio.play", "Started playback.", { time: engine.getCurrentTime() });
-    } catch (error) {
-      console.error(error);
+    } catch (caught) {
+      const message = caught instanceof Error && caught.message ? caught.message : "Playback could not start.";
+      setError(message);
+      void logEvent(getPlatform(), "error", "audio.output.failure", message);
     }
   }
 
@@ -262,6 +266,7 @@ export function usePlayback(document: ProjectDocument, projectFile: string | nul
   return {
     playhead,
     playing,
+    error,
     looping: Boolean(document.uiState.loop?.enabled),
     toggle,
     stop,

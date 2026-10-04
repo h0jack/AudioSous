@@ -28,6 +28,7 @@ interface AppState {
   undo: () => void;
   redo: () => void;
   setNotice: (notice: string | null) => void;
+  setProjectFilePath: (projectFilePath: string) => void;
   setWarnings: (warnings: ImportWarning[]) => void;
   setHoldAutosave: (held: boolean) => void;
 }
@@ -85,6 +86,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ document: step.document, history: step.history, dirty: true });
   },
   setNotice: (notice) => set({ notice }),
+  setProjectFilePath: (projectFilePath) => set({ projectFilePath }),
   setWarnings: (warnings) => set({ warnings }),
   setHoldAutosave: (holdAutosave) => set({ holdAutosave }),
 }));

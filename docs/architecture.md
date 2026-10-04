@@ -118,29 +118,31 @@ Machine-specific absolute paths exist only in memory during the import that the 
 
 ## Analysis sidecar
 
-Measurements run in `services/analysis`. The React app never imports that package. It validates JSON with `@audiosous/analysis-contract` (`contractVersion` 1, `analysisVersion` `0.2.0`). Suggest sections still uses cached peak energy and does not start Python.
+Measurements run in `services/analysis`. The React app never imports that package. It validates JSON with `@audiosous/analysis-contract` (`contractVersion` 1, `analysisVersion` `0.3.0`). Suggest sections still uses cached peak energy and does not start Python.
 
 ```text
 media/<track>.wav
     │
     ▼
-Tauri analyze_track_file
-    │  path must stay inside the project media folder
+Tauri analyze_audio
+    │  paths must stay inside the project media folder
     ▼
 python -m audiosous_analysis
     │  one JSON object on stdin, one on stdout
     ▼
-track measurement DTO
+measurement DTO
     │
     ▼
-cache/analysis/<trackId>.json
+cache/analysis/<name>.json
 ```
 
-The first measurement is a whole stem: peak dBFS, RMS dBFS, integrated LUFS, crest factor, and energy share across Sub, Bass, Low Mid, Mid, Upper Mid, Presence, Brilliance, and Air. Scope types for a section, a time range, the mix, and several tracks are reserved. Only `track` is measured.
+A measurement includes peak dBFS, RMS dBFS, integrated LUFS, crest factor, energy share across Sub, Bass, Low Mid, Mid, Upper Mid, Presence, Brilliance, and Air, plus a 48-bin spectrum, a loudness timeline, and a spectrogram. The scope is the whole stem, a section, a time range, or the mix. The mix sums the raw stem files. Faders, mute, and pan are not part of it. Stems in one mix measurement must share a sample rate.
 
-A cache entry is current when the analysis version, media path, file size, and modification time in nanoseconds all match. Changing a fader does not invalidate it. Changing the stem file or the analysis version does. FFT frames and later time series stay out of `project.amix`.
+Comparison, overlap, and the activity map are derived in the UI from those measurements. They do not start a separate analysis operation.
 
-`analyze_track_file` runs off the UI thread, so playback keeps the existing clock. The desktop app looks for `services/analysis/.venv/bin/python`, or `AUDIOSOUS_PYTHON`. A late result for a stem the user already left is ignored. Stopping the Python process itself waits for the job queue. The dev build is not yet a packaged sidecar.
+A cache entry is current when the analysis version, file identity, and requested scope all match. Whole-stem cache is `cache/analysis/<trackId>.json`. A section uses `<trackId>__section-<sectionId>`. A time range uses `<trackId>__range`. The mix uses `cache/analysis/mix.json`. Changing a fader does not invalidate a measurement. Changing the stem file, the selected window, or the analysis version does. Drawings stay out of `project.amix`.
+
+`analyze_audio` runs off the UI thread, so playback keeps the existing clock. The desktop app looks for `services/analysis/.venv/bin/python`, or `AUDIOSOUS_PYTHON`. A late result for a stem the user already left is ignored. The dev build is not yet a packaged sidecar.
 
 ## Tauri and Web Audio
 

@@ -374,6 +374,7 @@ export function Timeline({
           {range ? ` · Range ${formatClock(range.start)}–${formatClock(range.end)}` : ""}
           {document.uiState.loop?.enabled ? ` · Loop ${formatClock(document.uiState.loop.start)}–${formatClock(document.uiState.loop.end)}` : ""}
         </p>
+        {playback.error ? <p className="text-xs text-danger">{playback.error}</p> : null}
         {sectionError ? <p className="text-xs text-muted">{sectionError}</p> : null}
         <p className="ml-auto text-xs text-faint">
           {status ??
@@ -605,7 +606,7 @@ function SectionEditor({
           const type = event.target.value ? (event.target.value as SectionType) : null;
           onError(editSection(selected.id, { type }));
         }}
-        className="rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+        className="rounded-md border border-line bg-canvas py-1 pr-7 pl-2 text-xs text-ink"
       >
         <option value="">No type</option>
         {SECTION_TYPES.map((type) => (
@@ -728,7 +729,7 @@ function SectionStemTreatments({
                 const prominence = event.target.value ? (event.target.value as "primary" | "focal" | "supporting") : null;
                 onError(editTrackSection(track.id, sectionId, { prominence }));
               }}
-              className="rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+              className="rounded-md border border-line bg-canvas py-1 pr-7 pl-2 text-xs text-ink"
             >
               <option value="">No prominence</option>
               <option value="primary">Primary</option>
@@ -761,7 +762,7 @@ function SectionStemTreatments({
             if (!trackId) return;
             setPending((current) => (current.includes(trackId) ? current : [...current, trackId]));
           }}
-          className="w-fit rounded-md border border-line bg-canvas px-2 py-1 text-xs"
+          className="w-fit rounded-md border border-line bg-canvas py-1 pr-7 pl-2 text-xs text-ink"
         >
           <option value="">Add a stem</option>
           {available.map((track) => (

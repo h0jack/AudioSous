@@ -33,9 +33,9 @@ Milestone 2 measures and draws analysis. It does not change the mix.
 | Slice | Status |
 | --- | --- |
 | 1. Track measurement sidecar | Done. Peak, RMS, LUFS, crest factor, and band energy for the selected stem, cached in `cache/analysis/` |
-| 2. Spectrum, loudness timeline, and spectrogram | Not started |
-| 3. Section, time-range, and mix scopes | Not started |
-| 4. Comparison, overlap, and the activity map | Not started |
+| 2. Spectrum, loudness timeline, and spectrogram | Done. Drawn from the same measurement as the levels |
+| 3. Section, time-range, and mix scopes | Done. A section or range measures that window. Mix sums the stem files and ignores faders, mute, and pan |
+| 4. Comparison, overlap, and the activity map | Done. Comparison and overlap use two measurements. The activity map is each stem's loudness timeline |
 
 ## Explicitly later
 

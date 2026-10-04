@@ -89,8 +89,9 @@ async fn create_project_bundle(
 }
 
 #[tauri::command]
-fn write_project_file(project_file: String, project_json: String) -> Result<(), String> {
-    bundle::write_project_file(PathBuf::from(project_file).as_path(), &project_json)
+fn write_project_file(project_file: String, project_json: String) -> Result<String, String> {
+    let saved = bundle::write_project_file(PathBuf::from(project_file).as_path(), &project_json)?;
+    Ok(saved.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -125,10 +126,35 @@ fn write_project_cache(
     )
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalyzeAudioRequest {
+    project_file: String,
+    relative_paths: Vec<String>,
+    scope_type: String,
+    start_seconds: Option<f64>,
+    end_seconds: Option<f64>,
+}
+
 #[tauri::command]
 async fn analyze_track_file(project_file: String, relative_path: String) -> Result<analysis::AnalyzeTrackResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         analysis::analyze_project_track(PathBuf::from(project_file).as_path(), &relative_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn analyze_audio(request: AnalyzeAudioRequest) -> Result<analysis::AnalyzeTrackResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        analysis::analyze_project_audio(
+            PathBuf::from(request.project_file).as_path(),
+            &request.relative_paths,
+            &request.scope_type,
+            request.start_seconds,
+            request.end_seconds,
+        )
     })
     .await
     .map_err(|error| error.to_string())?
@@ -158,6 +184,7 @@ pub fn run() {
             read_project_cache,
             write_project_cache,
             analyze_track_file,
+            analyze_audio,
             append_log
         ])
         .run(tauri::generate_context!())

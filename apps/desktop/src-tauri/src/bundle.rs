@@ -353,16 +353,19 @@ pub fn canonical_project_file(project_file: &Path) -> Result<PathBuf, String> {
     if !project_file.is_file() {
         return Err("That project file does not exist.".into());
     }
-    if project_file.file_name().and_then(|name| name.to_str()) == Some("project.amix") {
-        if let Some(parent) = project_file.parent() {
-            if parent.file_name().and_then(|name| name.to_str()) == Some("recovery") {
-                if let Some(bundle) = parent.parent() {
-                    let primary = bundle.join("project.amix");
-                    if primary.is_file() {
-                        return Ok(primary);
-                    }
-                }
-            }
+    Ok(project_file.to_path_buf())
+}
+
+fn primary_project_file(project_file: &Path) -> Result<PathBuf, String> {
+    if project_file.file_name().and_then(|name| name.to_str()) != Some("project.amix") {
+        return Err("Audiosous saves to project.amix inside the project folder.".into());
+    }
+    if let Some(parent) = project_file.parent() {
+        if parent.file_name().and_then(|name| name.to_str()) == Some("recovery") {
+            let bundle = parent
+                .parent()
+                .ok_or("Recovery file is not inside a project.")?;
+            return Ok(bundle.join("project.amix"));
         }
     }
     Ok(project_file.to_path_buf())
@@ -512,19 +515,33 @@ pub fn create_bundle(
     result
 }
 
-pub fn write_project_file(project_file: &Path, project_json: &str) -> Result<(), String> {
-    if project_file.file_name().and_then(|name| name.to_str()) != Some("project.amix") {
-        return Err("Audiosous saves to project.amix inside the project folder.".into());
-    }
-    if !project_file.is_file() {
+pub fn write_project_file(project_file: &Path, project_json: &str) -> Result<PathBuf, String> {
+    let primary = primary_project_file(project_file)?;
+    if !primary.is_file() && !project_file.is_file() {
         return Err("The project file is missing.".into());
     }
     validate_project_json(project_json)?;
-    write_atomic(project_file, project_json)?;
-    let recovery_dir = bundle_dir_for(project_file)?.join("recovery");
-    fs::create_dir_all(&recovery_dir).map_err(|error| error.to_string())?;
-    write_atomic(&recovery_dir.join("project.amix"), project_json)?;
-    Ok(())
+    let previous = if primary.is_file() {
+        Some(fs::read(&primary).map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+    write_atomic(&primary, project_json)?;
+    let recovery = bundle_dir_for(&primary)?.join("recovery").join("project.amix");
+    if let Some(previous) = previous {
+        if previous.as_slice() != project_json.as_bytes() {
+            if let Some(parent) = recovery.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            write_atomic_bytes(&recovery, &previous)?;
+        }
+    } else if !recovery.is_file() {
+        if let Some(parent) = recovery.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        write_atomic(&recovery, project_json)?;
+    }
+    Ok(primary)
 }
 
 pub fn read_project_text(project_file: &Path) -> Result<(PathBuf, String), String> {
@@ -554,11 +571,14 @@ fn validate_project_json(project_json: &str) -> Result<(), String> {
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    write_atomic_bytes(path, contents.as_bytes())
+}
+
+fn write_atomic_bytes(path: &Path, contents: &[u8]) -> Result<(), String> {
     let temporary = path.with_extension("tmp");
     {
         let mut file = File::create(&temporary).map_err(|error| error.to_string())?;
-        file.write_all(contents.as_bytes())
-            .map_err(|error| error.to_string())?;
+        file.write_all(contents).map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
     fs::rename(&temporary, path).map_err(|error| error.to_string())?;
@@ -710,6 +730,46 @@ mod tests {
         assert!(create_bundle(&parent, "Escape", json, &[escape], |_| {}).is_err());
         assert!(!parent.join("Escape").exists());
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn recovery_keeps_the_previous_save_and_opens_beside_the_primary() {
+        let root = temp_root("recovery");
+        let source = root.join("kick.wav");
+        fs::write(&source, b"RIFF-demo").unwrap();
+        let parent = root.join("projects");
+        fs::create_dir_all(&parent).unwrap();
+        let first = r#"{"schemaVersion":1,"label":"first"}"#;
+        let second = r#"{"schemaVersion":1,"label":"second"}"#;
+        let third = r#"{"schemaVersion":1,"label":"third"}"#;
+        let (bundle, project_file) = create_bundle(
+            &parent,
+            "Night Drive",
+            first,
+            &[CopyItem {
+                source_path: source.to_string_lossy().into_owned(),
+                relative_path: "media/track-kick__kick.wav".into(),
+            }],
+            |_| {},
+        )
+        .unwrap();
+        let recovery = bundle.join("recovery/project.amix");
+        assert_eq!(fs::read_to_string(&recovery).unwrap(), first);
+
+        let saved = write_project_file(&project_file, second).unwrap();
+        assert_eq!(saved, project_file);
+        assert_eq!(fs::read_to_string(&project_file).unwrap(), second);
+        assert_eq!(fs::read_to_string(&recovery).unwrap(), first);
+
+        let (opened, json) = read_project_text(&recovery).unwrap();
+        assert_eq!(opened, recovery);
+        assert_eq!(json, first);
+
+        let promoted = write_project_file(&recovery, third).unwrap();
+        assert_eq!(promoted, project_file);
+        assert_eq!(fs::read_to_string(&project_file).unwrap(), third);
+        assert_eq!(fs::read_to_string(&recovery).unwrap(), second);
         let _ = fs::remove_dir_all(&root);
     }
 }

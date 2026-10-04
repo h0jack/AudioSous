@@ -27,6 +27,13 @@ export interface TrackAnalysisBridgeResult {
   durationMs: number;
 }
 
+export interface AnalyzeAudioRequest {
+  relativePaths: string[];
+  scopeType: "track" | "section" | "time-range" | "mix";
+  startSeconds?: number;
+  endSeconds?: number;
+}
+
 export interface DesktopPlatform {
   kind: "tauri" | "browser";
   pickAudioFiles(): Promise<ListedFile[] | null>;
@@ -42,7 +49,7 @@ export interface DesktopPlatform {
     copies: Array<{ sourcePath: string; relativePath: string }>;
     onProgress: (progress: CopyProgress) => void;
   }): Promise<{ bundleDir: string; projectFile: string }>;
-  writeProject(projectFile: string, projectJson: string, options?: { download?: boolean }): Promise<void>;
+  writeProject(projectFile: string, projectJson: string, options?: { download?: boolean }): Promise<string>;
   readProject(projectFile: string): Promise<{ projectFile: string; json: string }>;
   readProjectMediaRange(projectFile: string, relativePath: string, offset: number, length: number): Promise<Uint8Array>;
   projectMediaStatus(projectFile: string, relativePaths: string[]): Promise<MediaStatus[]>;
@@ -50,6 +57,7 @@ export interface DesktopPlatform {
   readProjectCache(projectFile: string, relativePath: string): Promise<Uint8Array | null>;
   writeProjectCache(projectFile: string, relativePath: string, bytes: Uint8Array): Promise<void>;
   analyzeTrackFile(projectFile: string, relativePath: string): Promise<TrackAnalysisBridgeResult>;
+  analyzeAudio(projectFile: string, request: AnalyzeAudioRequest): Promise<TrackAnalysisBridgeResult>;
   hasPreview(): boolean;
   readPreview(): string | null;
   appendLog(line: string): Promise<void>;

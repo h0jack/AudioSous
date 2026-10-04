@@ -136,7 +136,7 @@ export function RoleSelect({
       {...props}
       value={value}
       onChange={(event) => onChange(event.target.value as TrackRole)}
-      className={`w-full rounded-md border border-line bg-canvas px-2 text-sm ${className.includes("py-") ? "" : "py-2"} ${className}`}
+      className={`w-full rounded-md border border-line bg-canvas pr-7 pl-2 text-sm text-ink ${className.includes("py-") ? "" : "py-2"} ${className}`}
     >
       {TRACK_ROLE_IDS.map((role) => (
         <option key={role} value={role}>
