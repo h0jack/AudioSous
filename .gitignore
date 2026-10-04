@@ -5,6 +5,7 @@ coverage/
 *.log
 .vite/
 test-assets/**/*.wav
+test-assets/**/cache/
 
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
