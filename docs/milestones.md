@@ -49,7 +49,9 @@ Milestone 2.5 moves the playback clock into Rust. The desktop app plays 48 kHz f
 | 4. Diagnostics | Done. The Audio engine panel reports fill, underruns, seek prime, callback time, and a budget warning |
 | 5. Real-time callback | Done. The device callback does not lock, allocate, or read disk |
 
-`npm run stress:audio` is the release check. It mixes synthetic 32- and 64-stem loads and plays five minutes of Generated 5 and Generated2 offline. Those soaks had 0 underruns. A sound-card listen is still a manual check; CI does not open a device.
+`npm run stress:audio` is the release check. It mixes synthetic 32- and 64-stem loads and plays five minutes of Generated 5 and Generated2 offline. Those soaks had 0 underruns. A release build also played Generated 5 through the laptop speaker for the whole 141.4 seconds, including seeks, a loop, mute, solo, gain, Balance, and the timeline and Analysis views. That run had 0 underruns. Blocking the React thread for one second did not stop the audio. CI does not open a device.
+
+Milestone 2.5 is complete.
 
 ## Explicitly later
 
