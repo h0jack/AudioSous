@@ -1,6 +1,39 @@
+import type { AutoBalanceSettings, MixPlan, SourceFingerprint } from "@audiosous/balance-planner";
 import type { ImportWarning, ProjectDocument } from "@audiosous/project-model";
 import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
+
+export interface BalanceSession {
+  open: boolean;
+  generation: number;
+  phase: "idle" | "analyzing" | "planning" | "ready" | "failed";
+  progress: string | null;
+  plan: MixPlan | null;
+  settings: AutoBalanceSettings;
+  preview: boolean;
+  auditionId: string | null;
+  auditionSide: "original" | "recommended";
+  error: string | null;
+  focusToken: number;
+  fingerprints: SourceFingerprint[];
+}
+
+export function idleBalance(): BalanceSession {
+  return {
+    open: false,
+    generation: 0,
+    phase: "idle",
+    progress: null,
+    plan: null,
+    settings: { style: "balanced", strength: "normal" },
+    preview: false,
+    auditionId: null,
+    auditionSide: "recommended",
+    error: null,
+    focusToken: 0,
+    fingerprints: [],
+  };
+}
 
 export type Screen = "welcome" | "import" | "project";
 export type Workspace = "mix" | "analysis";
@@ -21,6 +54,7 @@ interface AppState {
   holdAutosave: boolean;
   preparing: boolean;
   workspace: Workspace;
+  balance: BalanceSession;
   goWelcome: () => void;
   setWorkspace: (workspace: Workspace) => void;
   startImport: () => void;
@@ -33,6 +67,7 @@ interface AppState {
   setWarnings: (warnings: ImportWarning[]) => void;
   setHoldAutosave: (held: boolean) => void;
   setPreparing: (preparing: boolean) => void;
+  setBalance: (patch: Partial<BalanceSession>) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -46,7 +81,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdAutosave: false,
   preparing: false,
   workspace: "mix",
-  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false }),
+  balance: idleBalance(),
+  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance() }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
@@ -61,6 +97,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdAutosave: false,
       preparing: document.tracks.length > 0,
       workspace: "mix",
+      balance: idleBalance(),
     }),
   replaceDocument: (document, dirty, edit) => {
     const current = get().document;
@@ -94,4 +131,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWarnings: (warnings) => set({ warnings }),
   setHoldAutosave: (holdAutosave) => set({ holdAutosave }),
   setPreparing: (preparing) => set({ preparing }),
+  setBalance: (patch) => set({ balance: { ...get().balance, ...patch } }),
 }));

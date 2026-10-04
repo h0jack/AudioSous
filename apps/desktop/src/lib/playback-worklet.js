@@ -15,7 +15,7 @@ class MixProcessor extends AudioWorkletProcessor {
   track(id) {
     let row = this.tracks.get(id);
     if (!row) {
-      row = { gain: 1, pan: 0, slices: [] };
+      row = { gain: 1, targetGain: 1, pan: 0, slices: [] };
       this.tracks.set(id, row);
     }
     return row;
@@ -33,7 +33,7 @@ class MixProcessor extends AudioWorkletProcessor {
 
   setMix(message) {
     const row = this.track(message.trackId);
-    if (typeof message.gain === "number") row.gain = message.gain;
+    if (typeof message.gain === "number") row.targetGain = message.gain;
     if (typeof message.pan === "number") row.pan = Math.max(-1, Math.min(1, message.pan));
   }
 
@@ -54,11 +54,14 @@ class MixProcessor extends AudioWorkletProcessor {
     const blockStart = currentTime;
     for (const row of this.tracks.values()) {
       const pan = row.pan;
-      const gainLeft = row.gain * (pan < 0 ? 1 : 1 - pan);
-      const gainRight = row.gain * (pan > 0 ? 1 : 1 + pan);
-      const crossLeft = row.gain * Math.max(0, -pan);
-      const crossRight = row.gain * Math.max(0, pan);
+      const step = 1 / (0.02 * sampleRate);
       for (let frame = 0; frame < left.length; frame += 1) {
+        const delta = row.targetGain - row.gain;
+        row.gain += Math.max(-step, Math.min(step, delta));
+        const gainLeft = row.gain * (pan < 0 ? 1 : 1 - pan);
+        const gainRight = row.gain * (pan > 0 ? 1 : 1 + pan);
+        const crossLeft = row.gain * Math.max(0, -pan);
+        const crossRight = row.gain * Math.max(0, pan);
         const time = blockStart + frame * frameSeconds;
         for (const slice of row.slices) {
           const sample = sampleAt(slice, time);

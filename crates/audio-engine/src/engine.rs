@@ -13,7 +13,10 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 
-use crate::mix::{equal_power_pan, linear_gain, MixSnapshot, PublishedMix, TrackMix};
+use crate::mix::{
+    equal_power_pan, linear_gain, scheduled_linear_gain, GainRegion, MixSnapshot, PublishedGainSchedule, PublishedMix,
+    TrackMix, MAX_GAIN_REGIONS,
+};
 use crate::proxy::{ensure_proxy, ProxyReader, PLAYBACK_RATE};
 
 const MAX_TRACKS: usize = 64;
@@ -27,6 +30,14 @@ const STATE_STOPPED: u8 = 0;
 const STATE_PRIMING: u8 = 1;
 const STATE_PLAYING: u8 = 3;
 const STATE_PAUSED: u8 = 4;
+
+#[derive(Clone)]
+pub struct TrackGainRegion {
+    pub track_id: String,
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub gain_db: f32,
+}
 
 #[derive(Clone)]
 pub struct LoadedTrack {
@@ -163,6 +174,7 @@ struct Realtime {
     offline: bool,
     rings: SharedRings,
     published: PublishedMix,
+    gain_schedule: PublishedGainSchedule,
     gains: [AtomicU32; MAX_TRACKS],
     produced: [AtomicU64; MAX_TRACKS],
     consumed: [AtomicU64; MAX_TRACKS],
@@ -205,6 +217,7 @@ impl Realtime {
             offline,
             rings: SharedRings::new(),
             published: PublishedMix::silent(),
+            gain_schedule: PublishedGainSchedule::empty(),
             gains: std::array::from_fn(|_| AtomicU32::new(1.0_f32.to_bits())),
             produced: std::array::from_fn(|_| AtomicU64::new(0)),
             consumed: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -269,6 +282,7 @@ enum Command {
         solo: Option<bool>,
     },
     SetLoop(Option<(f64, f64)>),
+    SetGainRegions(Vec<TrackGainRegion>),
     ProxyReady {
         load_id: u64,
         index: usize,
@@ -424,6 +438,10 @@ impl Engine {
         let _ = self.send(Command::SetLoop(region));
     }
 
+    pub fn set_gain_regions(&self, regions: Vec<TrackGainRegion>) {
+        let _ = self.send(Command::SetGainRegions(regions));
+    }
+
     pub fn status(&self) -> EngineStatus {
         status_from(&self.rt)
     }
@@ -532,6 +550,10 @@ impl Control {
                 }
                 false
             }
+            Command::SetGainRegions(regions) => {
+                self.publish_gain_regions(regions);
+                false
+            }
             Command::ProxyReady {
                 load_id,
                 index,
@@ -570,6 +592,7 @@ impl Control {
         self.rt.eof_bits.store(0, Ordering::Release);
         self.rt.underruns.store(0, Ordering::Release);
         self.rt.presented.store(0, Ordering::Release);
+        self.rt.gain_schedule.publish(&[]);
         for index in 0..MAX_TRACKS {
             self.rt.produced[index].store(0, Ordering::Relaxed);
             self.rt.consumed[index].store(0, Ordering::Relaxed);
@@ -887,6 +910,32 @@ impl Control {
         self.publish_from_tracks();
     }
 
+    fn publish_gain_regions(&self, regions: Vec<TrackGainRegion>) {
+        let ids = self.rt.ids.lock().expect("ids");
+        let mut scheduled = Vec::new();
+        for region in regions {
+            let Some(index) = ids.iter().position(|id| id == &region.track_id) else {
+                continue;
+            };
+            if index >= MAX_TRACKS || scheduled.len() >= MAX_GAIN_REGIONS {
+                continue;
+            }
+            let start = seconds_to_frame(region.start_seconds);
+            let end = seconds_to_frame(region.end_seconds);
+            if end <= start {
+                continue;
+            }
+            scheduled.push(GainRegion {
+                track_index: index as u8,
+                start_frame: start,
+                end_frame: end,
+                gain: linear_gain(region.gain_db),
+            });
+        }
+        drop(ids);
+        self.rt.gain_schedule.publish(&scheduled);
+    }
+
     fn publish_from_tracks(&self) {
         let tracks = self.tracks.read().expect("tracks");
         let mut snap = MixSnapshot::silent();
@@ -938,6 +987,10 @@ impl Control {
             Ok(Command::SetLoop(region)) => {
                 self.loop_region = frame_region(region);
                 self.apply_loop_atomics();
+                Ok(Poll::Continue)
+            }
+            Ok(Command::SetGainRegions(regions)) => {
+                self.publish_gain_regions(regions);
                 Ok(Poll::Continue)
             }
             Ok(Command::ProxyReady {
@@ -1233,6 +1286,13 @@ fn mix_consumers(
         gains[index] = f32::from_bits(rt.gains[index].load(Ordering::Relaxed));
         pan[index] = equal_power_pan(mix.tracks[index].pan);
     }
+    let schedule = rt.gain_schedule.load();
+    let origin = rt
+        .prime_frame
+        .load(Ordering::Relaxed)
+        .saturating_add(rt.presented.load(Ordering::Relaxed));
+    let loop_start = rt.loop_start.load(Ordering::Relaxed);
+    let loop_end = rt.loop_end.load(Ordering::Relaxed);
     let eof_bits = rt.eof_bits.load(Ordering::Relaxed);
     let step = 1.0 / (0.01 * PLAYBACK_RATE as f32);
     let frames = out.len() / 2;
@@ -1249,7 +1309,13 @@ fn mix_consumers(
                 continue;
             }
             let audible = !track.mute && (!mix.any_solo || track.solo);
-            let target = if audible { track.gain } else { 0.0 };
+            let file_frame = playback_frame(origin, frame as u64, loop_start, loop_end);
+            let mut target = if audible { track.gain } else { 0.0 };
+            if audible {
+                if let Some(gain) = scheduled_linear_gain(&schedule, track_index, file_frame) {
+                    target = gain;
+                }
+            }
             let delta = target - gains[track_index];
             gains[track_index] += delta.clamp(-step, step);
             let channels = (track.channels as usize).clamp(1, 2);
@@ -1587,6 +1653,17 @@ fn seconds_to_frame(seconds: f64) -> u64 {
     } else {
         (seconds * f64::from(PLAYBACK_RATE)).round() as u64
     }
+}
+
+fn playback_frame(origin: u64, offset: u64, loop_start: u64, loop_end: u64) -> u64 {
+    let mut frame = origin.saturating_add(offset);
+    if loop_end != NO_LOOP && loop_end > loop_start && frame >= loop_end {
+        let length = loop_end - loop_start;
+        if length > 0 {
+            frame = loop_start + (frame - loop_start) % length;
+        }
+    }
+    frame
 }
 
 fn position_seconds(rt: &Realtime) -> f64 {

@@ -37,6 +37,8 @@ export interface AudioEngine {
   setMute(trackId: string, muted: boolean): void;
   setSolo(trackId: string, solo: boolean): void;
   setLoop(region: LoopRegion | null): void;
+  /** Section gain windows. Empty clears them. The native engine follows the playhead; other engines may ignore this. */
+  setGainRegions?(regions: Array<{ trackId: string; startSeconds: number; endSeconds: number; gainDb: number }>): void;
   getCurrentTime(): number;
   getDuration(): number;
   dispose(): void;

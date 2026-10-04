@@ -252,6 +252,110 @@ pub fn mix_frames(
     (underruns, underrun_track)
 }
 
+pub const MAX_GAIN_REGIONS: usize = 96;
+
+/// Absolute linear gain for one track while playback is inside `[start_frame, end_frame)`.
+#[derive(Clone, Copy, Debug)]
+pub struct GainRegion {
+    pub track_index: u8,
+    pub start_frame: u64,
+    pub end_frame: u64,
+    pub gain: f32,
+}
+
+#[derive(Clone, Copy)]
+pub struct GainSchedule {
+    pub count: usize,
+    pub regions: [GainRegion; MAX_GAIN_REGIONS],
+}
+
+impl GainSchedule {
+    pub fn empty() -> Self {
+        Self {
+            count: 0,
+            regions: [GainRegion {
+                track_index: 0,
+                start_frame: 0,
+                end_frame: 0,
+                gain: 1.0,
+            }; MAX_GAIN_REGIONS],
+        }
+    }
+}
+
+/// Lock-free section-gain schedule. The control thread publishes; the callback copies atomics.
+pub struct PublishedGainSchedule {
+    sequence: AtomicU64,
+    count: AtomicU64,
+    tracks: [AtomicU64; MAX_GAIN_REGIONS],
+    starts: [AtomicU64; MAX_GAIN_REGIONS],
+    ends: [AtomicU64; MAX_GAIN_REGIONS],
+    gains: [AtomicU64; MAX_GAIN_REGIONS],
+}
+
+impl PublishedGainSchedule {
+    pub fn empty() -> Self {
+        Self {
+            sequence: AtomicU64::new(0),
+            count: AtomicU64::new(0),
+            tracks: std::array::from_fn(|_| AtomicU64::new(0)),
+            starts: std::array::from_fn(|_| AtomicU64::new(0)),
+            ends: std::array::from_fn(|_| AtomicU64::new(0)),
+            gains: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    pub fn publish(&self, regions: &[GainRegion]) {
+        let count = regions.len().min(MAX_GAIN_REGIONS);
+        let start = self.sequence.fetch_add(1, Ordering::AcqRel);
+        self.count.store(count as u64, Ordering::Relaxed);
+        for (index, region) in regions.iter().take(count).enumerate() {
+            self.tracks[index].store(u64::from(region.track_index), Ordering::Relaxed);
+            self.starts[index].store(region.start_frame, Ordering::Relaxed);
+            self.ends[index].store(region.end_frame, Ordering::Relaxed);
+            self.gains[index].store(u64::from(region.gain.to_bits()), Ordering::Relaxed);
+        }
+        self.sequence.store(start.wrapping_add(2), Ordering::Release);
+    }
+
+    pub fn load(&self) -> GainSchedule {
+        loop {
+            let start = self.sequence.load(Ordering::Acquire);
+            if start & 1 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let schedule = self.read();
+            if self.sequence.load(Ordering::Acquire) == start {
+                return schedule;
+            }
+        }
+    }
+
+    fn read(&self) -> GainSchedule {
+        let mut schedule = GainSchedule::empty();
+        let count = self.count.load(Ordering::Relaxed) as usize;
+        schedule.count = count.min(MAX_GAIN_REGIONS);
+        for index in 0..schedule.count {
+            schedule.regions[index] = GainRegion {
+                track_index: self.tracks[index].load(Ordering::Relaxed) as u8,
+                start_frame: self.starts[index].load(Ordering::Relaxed),
+                end_frame: self.ends[index].load(Ordering::Relaxed),
+                gain: f32::from_bits(self.gains[index].load(Ordering::Relaxed) as u32),
+            };
+        }
+        schedule
+    }
+}
+
+pub fn scheduled_linear_gain(schedule: &GainSchedule, track: usize, frame: u64) -> Option<f32> {
+    let track = track as u8;
+    schedule.regions[..schedule.count]
+        .iter()
+        .find(|region| region.track_index == track && frame >= region.start_frame && frame < region.end_frame)
+        .map(|region| region.gain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,6 +500,34 @@ mod tests {
         assert_eq!(loaded.tracks[1].channels, 1);
         assert!((loaded.tracks[1].gain - 0.5).abs() < 0.0001);
         assert!((loaded.tracks[1].pan + 0.25).abs() < 0.0001);
+    }
+
+    #[test]
+    fn section_gain_replaces_the_base_gain_inside_its_window() {
+        let schedule = GainSchedule {
+            count: 1,
+            regions: {
+                let mut regions = GainSchedule::empty().regions;
+                regions[0] = GainRegion {
+                    track_index: 1,
+                    start_frame: 100,
+                    end_frame: 200,
+                    gain: 0.25,
+                };
+                regions
+            },
+        };
+        assert!(scheduled_linear_gain(&schedule, 1, 99).is_none());
+        assert_eq!(scheduled_linear_gain(&schedule, 1, 100), Some(0.25));
+        assert!(scheduled_linear_gain(&schedule, 1, 200).is_none());
+        assert!(scheduled_linear_gain(&schedule, 0, 150).is_none());
+        let published = PublishedGainSchedule::empty();
+        published.publish(&schedule.regions[..schedule.count]);
+        let loaded = published.load();
+        assert_eq!(loaded.count, 1);
+        assert_eq!(scheduled_linear_gain(&loaded, 1, 150), Some(0.25));
+        published.publish(&[]);
+        assert_eq!(published.load().count, 0);
     }
 
     #[test]

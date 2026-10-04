@@ -253,6 +253,30 @@ fn audio_set_track(host: tauri::State<'_, audio_host::AudioHost>, track: AudioTr
         .set_track(&track.id, track.gain_db, track.pan, track.muted, track.solo);
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioGainRegion {
+    track_id: String,
+    start_seconds: f64,
+    end_seconds: f64,
+    gain_db: f32,
+}
+
+#[tauri::command]
+fn audio_set_gain_regions(host: tauri::State<'_, audio_host::AudioHost>, regions: Vec<AudioGainRegion>) {
+    host.engine.set_gain_regions(
+        regions
+            .into_iter()
+            .map(|region| audiosous_audio::TrackGainRegion {
+                track_id: region.track_id,
+                start_seconds: region.start_seconds,
+                end_seconds: region.end_seconds,
+                gain_db: region.gain_db,
+            })
+            .collect(),
+    );
+}
+
 #[tauri::command]
 fn audio_set_loop(
     host: tauri::State<'_, audio_host::AudioHost>,
@@ -306,6 +330,7 @@ pub fn run() {
             audio_stop,
             audio_seek,
             audio_set_track,
+            audio_set_gain_regions,
             audio_set_loop,
             audio_status,
             append_log

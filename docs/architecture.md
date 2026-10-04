@@ -12,7 +12,8 @@ Audiosous/
 │   ├── project-model/     Versioned .amix schema, migrations, roles, import checks
 │   ├── audio-files/       WAV and AIFF header inspection (no full decode)
 │   ├── audio-engine/      Playback interface. Desktop uses the Rust engine; the browser preview uses Web Audio.
-│   └── analysis-contract/ Versioned JSON DTOs for the analysis sidecar
+│   ├── analysis-contract/ Versioned JSON DTOs for the analysis sidecar
+│   └── balance-planner/   Deterministic gain-only AutoBalance. No DSP and no network.
 ├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
 └── test-assets/           Reserved for generated stems in a later slice
@@ -28,7 +29,9 @@ apps/desktop
   → audio-files
   → audio-engine
   → analysis-contract
+  → balance-planner
 
+balance-planner → project-model, analysis-contract
 audio-engine → project-model
 services/analysis  has no dependency on the UI
 ```
@@ -183,6 +186,30 @@ A cache entry is current when the analysis version, file identity, and requested
 
 `analyze_audio` runs off the UI thread, so playback keeps the existing clock. The desktop app looks for `services/analysis/.venv/bin/python`, or `AUDIOSOUS_PYTHON`. A late result for a stem the user already left is ignored. The dev build is not yet a packaged sidecar.
 
+## AutoBalance
+
+Milestone 3 is gain-only automatic mixing. It is not a mix agent, and it does not add EQ, compression, limiting, or a loudness target.
+
+```text
+analysis cache
+    → measured facts
+    → balance planner
+    → mix plan
+    → candidate overlay
+    → native playback
+    → apply into project gain
+```
+
+The analysis sidecar still only reports measurements. `@audiosous/balance-planner` decides what those measurements imply. The plan is a versioned JSON document: anchor, per-track confidence, reasons, global gain, and section gain offsets. It is deterministic for the same project, analysis, roles, intent, gains, and strength. It does not call a model.
+
+Derived levels such as active RMS come from the cached loudness timeline and the existing activity figures. Sparse stems are not turned up to match a full-song integrated loudness number.
+
+The plan is ephemeral. Applying it writes `track.gainDb` and, where a section offset remains, `sectionTrackSettings.overrides.gainDb`. That is one undo step. Source files and playback proxies are not rewritten. A headroom trim, when the estimated sum would get hotter than the current mix or −1 dBFS, is a separate gain added to every stem. It is not a limiter and not a mastering target.
+
+Preview is a candidate overlay on the saved mix. The native engine keeps the base fader and a lock-free list of section gain windows. The existing 10 ms gain ramp crosses those boundaries. The browser preview follows the playhead in the UI and ramps gain over about 20 ms. Cancel discards the overlay.
+
+A plan is marked out of date when gain, role, mute, sections, track × section intent, or source identity change. Strength is Conservative (±2 dB), Normal (±4 dB), or Strong (±6 dB). Moves past ±6 dB before the cap are marked for review and are not part of Apply all until accepted.
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
@@ -196,7 +223,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events for this slice: `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, and `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, and `autobalance.stale`. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 

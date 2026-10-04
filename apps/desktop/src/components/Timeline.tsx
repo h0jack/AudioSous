@@ -1,4 +1,5 @@
 import { suggestSections } from "@audiosous/analysis-contract";
+import { formatSignedDb, type GainRecommendation } from "@audiosous/balance-planner";
 import {
   chooseWaveformLevel,
   clampScroll,
@@ -54,6 +55,8 @@ export function Timeline({
   playback: Playback;
 }) {
   const projectId = document.project.id;
+  const balancePlan = useAppStore((state) => (state.balance.phase === "ready" ? state.balance.plan : null));
+  const focusToken = useAppStore((state) => state.balance.focusToken);
   const duration = Math.max(document.project.durationSeconds, 0.001);
   const { playhead, playing, seek } = playback;
   const [zoom, setZoom] = useState(() => clampTimelineZoom(document.uiState.timelineZoom));
@@ -83,6 +86,16 @@ export function Timeline({
     setScrollSeconds(ui.timelineScroll);
     setRange(ui.timeRange);
   }, [projectId]);
+
+  useEffect(() => {
+    if (focusToken === 0) return;
+    const current = useAppStore.getState().document;
+    if (current?.uiState.timeRange) setRange(current.uiState.timeRange);
+    const section = current?.sections.find((item) => item.id === current.uiState.selectedSectionId);
+    if (!section) return;
+    const frame = view.current;
+    setScrollSeconds(clampScroll(Math.max(0, section.startTime - 0.5), frame.duration, frame.laneWidth, frame.pps));
+  }, [focusToken]);
 
   useEffect(() => {
     const node = viewportRef.current;
@@ -455,6 +468,9 @@ export function Timeline({
             const selected = track.id === selectedId;
             const rowHeight = track.role === "other" ? OTHER_ROW_HEIGHT : ROW_HEIGHT;
             const gain = Math.min(12, Math.max(-96, track.gainDb));
+            const proposed = balancePlan?.trackChanges.find(
+              (change) => change.trackId === track.id && change.scope.type === "global" && change.status !== "rejected",
+            );
             const pan = Math.round(track.pan * 100);
             return (
               <div key={track.id} className="flex border-b border-line" style={{ width: NAME_WIDTH + contentWidth, height: rowHeight }}>
@@ -495,6 +511,7 @@ export function Timeline({
                     >
                       S
                     </TipButton>
+                    {proposed ? <span className="font-mono text-[10px] text-accent">{formatSignedDb(proposed.deltaDb)}</span> : null}
                     <HoverTip className="block min-w-0 flex-1" label={`Gain ${formatDb(gain)}`}>
                       <input
                         type="range"
@@ -556,6 +573,17 @@ export function Timeline({
                     <BoundaryHandle key={time} time={time} pixelsPerSecond={pps} scrollSeconds={scrollSeconds} onDrag={beginBoundaryDrag} />
                   ))}
                   <div className="pointer-events-none absolute inset-y-0 w-px bg-ink" style={{ left: timeToX(playhead, pps, scrollSeconds) }} />
+                  {balancePlan?.trackChanges.map((change) => {
+                    const bounds = sectionBounds(document, change, track.id);
+                    if (!bounds) return null;
+                    const left = timeToX(bounds.start, pps, scrollSeconds);
+                    const width = Math.max(40, (bounds.end - bounds.start) * pps);
+                    return (
+                      <div key={change.id} className="pointer-events-none absolute top-1 h-5 overflow-hidden" style={{ left, width }}>
+                        <span className="rounded bg-ink/85 px-1 font-mono text-[10px] text-canvas">{formatSignedDb(bounds.offsetDb)} dB</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -972,6 +1000,18 @@ function BoundaryHandle({
       />
     </HoverTip>
   );
+}
+
+function sectionBounds(
+  document: ProjectDocument,
+  change: GainRecommendation,
+  trackId: string,
+): { start: number; end: number; offsetDb: number } | null {
+  if (change.trackId !== trackId || change.scope.type !== "section" || change.status === "rejected") return null;
+  const sectionId = change.scope.sectionId;
+  const section = document.sections.find((item) => item.id === sectionId);
+  if (!section) return null;
+  return { start: section.startTime, end: section.endTime, offsetDb: change.offsetFromGlobalDb };
 }
 
 function sectionBoundaries(sections: SongSection[]): number[] {

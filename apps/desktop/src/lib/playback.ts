@@ -4,6 +4,7 @@ import type { ProjectDocument } from "@audiosous/project-model";
 import { useEffect, useRef, useState } from "react";
 import { getPlatform } from "../platform";
 import type { DesktopPlatform } from "../platform/types";
+import { publishMonitorMix, refreshLegacyMonitor } from "./autobalance";
 import { logEvent } from "./log";
 import { audioEngineKind, createNativeAudioEngine, type NativeEngineStatus } from "./native-playback";
 import { useAppStore } from "../state/app-store";
@@ -200,16 +201,25 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     engineRef.current?.setLoop(loop?.enabled ? { startSeconds: loop.start, endSeconds: loop.end } : null);
   }, [document?.uiState.loop]);
 
+  const balanceKey = useAppStore((state) =>
+    [
+      state.balance.preview,
+      state.balance.auditionId,
+      state.balance.auditionSide,
+      state.balance.phase,
+      state.balance.generation,
+      state.balance.settings.strength,
+      state.balance.plan?.stateIdentity ?? "",
+      state.balance.plan?.candidateTrim.gainDb ?? 0,
+      state.balance.plan?.trackChanges.map((change) => `${change.id}:${change.status}:${change.recommendedGainDb}`).join("|") ?? "",
+    ].join("~"),
+  );
+
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !document) return;
-    for (const track of document.tracks) {
-      engine.setTrackGain(track.id, track.gainDb);
-      engine.setTrackPan(track.id, track.pan);
-      engine.setMute(track.id, track.muted);
-      engine.setSolo(track.id, track.solo);
-    }
-  }, [document?.tracks]);
+    publishMonitorMix(engine, document, nativeRef.current);
+  }, [document?.tracks, document, balanceKey]);
 
   useEffect(() => {
     if (!playing || nativeRef.current) return;
@@ -219,6 +229,8 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
       if (!engine) return;
       void engine.pump?.();
       const time = engine.getCurrentTime();
+      const song = useAppStore.getState().document;
+      if (song) refreshLegacyMonitor(engine, song);
       setPlayhead(time);
       const loop = useAppStore.getState().document?.uiState.loop;
       if (!loop?.enabled && time >= duration - 0.05) {

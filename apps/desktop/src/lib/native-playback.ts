@@ -92,6 +92,16 @@ export function createNativeAudioEngine(projectFile: string): NativeAudioEngine 
         end: region?.endSeconds ?? null,
       });
     },
+    setGainRegions(regions) {
+      void invoke("audio_set_gain_regions", {
+        regions: regions.map((region) => ({
+          trackId: region.trackId,
+          startSeconds: region.startSeconds,
+          endSeconds: region.endSeconds,
+          gainDb: region.gainDb,
+        })),
+      });
+    },
     getCurrentTime() {
       return position;
     },

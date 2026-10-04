@@ -88,7 +88,7 @@ Sections are first-class. Times are seconds. A section must have `endTime > star
 
 `sectionTrackSettings` holds intent for one stem inside one section. `prominence` may be `primary`, `focal`, `supporting`, or null. The section editor writes both when a lane and a section are selected.
 
-`overrides.gainDb` and `overrides.pan` are optional monitoring overrides for that section. `processing` is `{ "schemaVersion": 1, "nodes": [] }` until DSP exists.
+`overrides.gainDb` and `overrides.pan` are optional monitoring overrides for that section. AutoBalance may set `overrides.gainDb` to a section gain. It does not add processing nodes. `processing` is `{ "schemaVersion": 1, "nodes": [] }` until DSP exists.
 
 ### Mix variants and comparison
 

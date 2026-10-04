@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnalysisView } from "../components/AnalysisView";
+import { AutoBalancePanel } from "../components/AutoBalancePanel";
 import { Timeline } from "../components/Timeline";
 import { usePlayback } from "../lib/playback";
 import { loadProjectWaveforms, waveformLoadRatio, type LoadedWaveform, type WaveformLoadProgress } from "../lib/waveforms";
@@ -80,8 +81,11 @@ export function ProjectScreen() {
             ))}
           </ul>
         ) : null}
-        <div className={workspace === "mix" ? "min-h-0 flex-1" : "hidden"}>
-          <Timeline document={document} waveforms={waveforms} status={status} playback={playback} />
+        <div className={workspace === "mix" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+          <div className="min-h-0 flex-1">
+            <Timeline document={document} waveforms={waveforms} status={status} playback={playback} />
+          </div>
+          <AutoBalancePanel document={document} playback={playback} />
         </div>
         {workspace === "analysis" ? (
           <div className="min-h-0 flex-1">

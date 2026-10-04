@@ -53,6 +53,19 @@ Milestone 2.5 moves the playback clock into Rust. The desktop app plays 48 kHz f
 
 Milestone 2.5 is complete.
 
+## Milestone 3
+
+Milestone 3 is gain-only AutoBalance. It proposes track gain and section gain offsets, previews them on the existing clock, and applies the accepted rows as one undo step. It does not EQ, compress, limit, or master.
+
+| Slice | Status |
+| --- | --- |
+| 1. Mix plan contract | Done. Versioned plan, confidence, reasons, and stale identity |
+| 2. Deterministic balance planner | Done. Roles, anchors, active level, deadband, caps |
+| 3. Section-aware planning | Done. Global changes are preferred unless a section disagrees |
+| 4. Candidate preview | Done. Overlay audition, whole-plan A/B, and single-track A/B |
+| 5. Evaluation | Done. One correction pass and a separate headroom trim |
+| 6. Mix view, undo, and stale plans | Done |
+
 ## Explicitly later
 
-Automatic EQ, compression, saturation, reverb, delay, mastering, VST hosting, generated mixes, LLM agents, accounts, collaboration, and source separation.
+Automatic EQ, compression, saturation, reverb, delay, mastering, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.

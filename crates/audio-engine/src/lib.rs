@@ -9,6 +9,6 @@ mod peaks;
 mod proxy;
 mod source;
 
-pub use engine::{Engine, EngineStatus, LoadedTrack};
+pub use engine::{Engine, EngineStatus, LoadedTrack, TrackGainRegion};
 pub use peaks::{measure_peaks, MEASURE_CANCELLED};
 pub use proxy::{proxy_file_name, PLAYBACK_RATE, PROXY_VERSION, RESAMPLER_ID};

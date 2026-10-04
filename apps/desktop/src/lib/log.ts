@@ -23,7 +23,12 @@ export type LogEvent =
   | "analysis.track.failed"
   | "analysis.cache.hit"
   | "analysis.cache.miss"
-  | "analysis.cache.invalidated";
+  | "analysis.cache.invalidated"
+  | "autobalance.start"
+  | "autobalance.complete"
+  | "autobalance.apply"
+  | "autobalance.cancel"
+  | "autobalance.stale";
 
 export async function logEvent(
   platform: DesktopPlatform,

@@ -4,7 +4,7 @@
     "id": "5bf8e22e-c501-4266-a067-da0154c77017",
     "name": "Generated 5",
     "createdAt": "2026-10-04T04:55:48.775Z",
-    "updatedAt": "2026-10-04T05:11:30.928Z",
+    "updatedAt": "2026-10-04T17:28:22.042Z",
     "sampleRate": 192000,
     "durationSeconds": 141.428421875
   },
@@ -279,7 +279,7 @@
       "id": "b0a2bbfc-4059-47e6-a685-e98fc9118398",
       "name": "Section 3",
       "type": null,
-      "startTime": 33.385,
+      "startTime": 35.107,
       "endTime": 35.357,
       "userIntent": null,
       "source": "manual",
@@ -312,15 +312,20 @@
     "trackId": null
   },
   "uiState": {
-    "selectedTrackId": "92576768-4448-4da7-be83-db050cfe5e74",
+    "selectedTrackId": "4a0baab5-be3a-4459-bef6-03e9e53d25e8",
     "selectedSectionId": "02916169-f310-4ce2-b334-55b92c7d0068",
     "timeRange": {
-      "start": 0,
-      "end": 18.208
+      "start": 34.5180638746123,
+      "end": 75.50522333697023
     },
-    "loop": null,
-    "playheadSeconds": 35.283,
-    "timelineZoom": 5.350250105473707,
-    "timelineScroll": 54.28081740702079
+    "loop": {
+      "enabled": true,
+      "start": 34.5180638746123,
+      "end": 75.50522333697023,
+      "sectionId": null
+    },
+    "playheadSeconds": 36.701723455911534,
+    "timelineZoom": 1,
+    "timelineScroll": 0
   }
 }
