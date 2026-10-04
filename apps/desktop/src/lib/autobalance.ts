@@ -86,6 +86,7 @@ export async function runAutoBalance(): Promise<void> {
     if (platform.kind !== "tauri") {
       throw new Error("AutoBalance reads the desktop analysis cache. Open this project in the desktop app.");
     }
+    const analysisStarted = performance.now();
     const measurements: Record<string, TrackMeasurements> = {};
     const fingerprints: BalanceSession["fingerprints"] = [];
     for (const [index, track] of document.tracks.entries()) {
@@ -112,6 +113,7 @@ export async function runAutoBalance(): Promise<void> {
       if (status) fingerprints.push({ trackId: track.id, fileSizeBytes: status.fileSizeBytes, modifiedAtNs: status.modifiedAtNs });
     }
     if (!current()) return;
+    const analysisMs = Math.round(performance.now() - analysisStarted);
     useAppStore.getState().setBalance({ phase: "planning", progress: "Planning…" });
     const latest = useAppStore.getState().document;
     if (!latest || latest.project.id !== projectId) return;
@@ -135,6 +137,7 @@ export async function runAutoBalance(): Promise<void> {
       projectId,
       changes: plan.trackChanges.length,
       confidence: plan.summary.confidence,
+      analysisMs,
       durationMs,
     });
   } catch (caught) {

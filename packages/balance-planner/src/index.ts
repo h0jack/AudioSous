@@ -46,3 +46,6 @@ export type { BalanceMetrics } from "./metrics";
 
 export { planBalance } from "./planner";
 export type { PlanBalanceInput, TrackMeasurements } from "./planner";
+
+export { indexSectionIntent, tierFromText, trackIntentTier } from "./intent";
+export type { AmbiguousReference, IntentClause, IntentTier, SectionIntentIndex, SectionIntentTarget } from "./intent";

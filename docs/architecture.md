@@ -188,7 +188,7 @@ A cache entry is current when the analysis version, file identity, and requested
 
 ## AutoBalance
 
-Milestone 3 is gain-only automatic mixing. It is not a mix agent, and it does not add EQ, compression, limiting, or a loudness target.
+Milestone 3 is gain-only automatic mixing. It is not a mix agent, and it does not add EQ, compression, limiting, panning, or a loudness target.
 
 ```text
 analysis cache
@@ -200,15 +200,91 @@ analysis cache
     → apply into project gain
 ```
 
-The analysis sidecar still only reports measurements. `@audiosous/balance-planner` decides what those measurements imply. The plan is a versioned JSON document: anchor, per-track confidence, reasons, global gain, and section gain offsets. It is deterministic for the same project, analysis, roles, intent, gains, and strength. It does not call a model.
+The analysis sidecar still only reports measurements. `@audiosous/balance-planner` decides what those measurements imply. The plan is a versioned JSON document (`planVersion` 1, `plannerVersion` 3.1.0): anchor, per-row confidence, reasons, global gain, and section gain offsets. It is deterministic for the same project, analysis, roles, intent, gains, and strength. It does not call a model.
 
-Derived levels such as active RMS come from the cached loudness timeline and the existing activity figures. Sparse stems are not turned up to match a full-song integrated loudness number.
+### Levels
 
-The plan is ephemeral. Applying it writes `track.gainDb` and, where a section offset remains, `sectionTrackSettings.overrides.gainDb`. That is one undo step. Source files and playback proxies are not rewritten. A headroom trim, when the estimated sum would get hotter than the current mix or −1 dBFS, is a separate gain added to every stem. It is not a limiter and not a mastering target.
+The planner compares the active part of each stem, taken from the cached loudness timeline: points within 18 dB of the stem's own loudest point and above −55 dBFS. Sparse stems are not turned up to match a full-song number.
 
-Preview is a candidate overlay on the saved mix. The native engine keeps the base fader and a lock-free list of section gain windows. The existing 10 ms gain ramp crosses those boundaries. The browser preview follows the playhead in the UI and ramps gain over about 20 ms. Cancel discards the overlay.
+That timeline is unweighted RMS. Unweighted RMS ranks a sub-heavy bass far above a bright lead that sounds as loud. On the Sub Operator stems the gap between K-weighted loudness and active RMS ranged from −5.1 dB to +7.5 dB per stem. So each stem's active level is shifted by its own offset, integrated LUFS minus whole-file active RMS, clamped to ±8 dB. The section shape still comes from the timeline. Without a measured LUFS the raw active RMS is used.
 
-A plan is marked out of date when gain, role, mute, sections, track × section intent, or source identity change. Strength is Conservative (±2 dB), Normal (±4 dB), or Strong (±6 dB). Moves past ±6 dB before the cap are marked for review and are not part of Apply all until accepted.
+### References and hierarchy
+
+- The anchor is the first active Primary in the order kick, vocal, lead, bass, drums. It is not moved.
+- A Primary element is compared with the anchor in the same section. Primaries are not compared with each other. Otherwise two of them would chase each other and swap places. Where the anchor is not playing, Primaries get no section opinion.
+- Supporting, Background, and Focal elements are compared with the loudest Primary or Focal element in that section.
+- A peer only counts as a section's reference when it is established there: at least 35% active and no more than 6 dB under its own song level. A lead fading in under an intro pad is not the intro's reference. Without one, the anchor's song level is used.
+- A Primary element playing more than 6 dB under its own song level in a section (a fade-in, a quiet passage) is treated as an arrangement choice, not a balance error.
+- Two Primaries within the Primary tolerance (2 dB on Normal) are left alone. The correction ramps to full at twice the tolerance.
+- A Primary that reads louder than a kick anchor gets a wider window (6 dB on Normal). Integrated loudness reads a sustained bass or synth several LU hotter than a transient kick that sounds as loud.
+- Supporting elements are kept about 2.5 dB under the reference, and Background elements about 9 dB under it. These are ceilings, not targets. A quiet supporting stem is not raised to the ceiling.
+- Focal elements are lifted to about 1 dB over the reference.
+
+One follow-up pass checks supporting and background rows against the same reference and deepens a cut by up to 1 dB if the first pass left the stem too loud. Global changes are preferred. A section row is added when that section's tier differs from the track's default, or when one section disagrees with the others by more than the section residual.
+
+### Intent
+
+Intent is read by a fixed phrase table in `packages/balance-planner/src/intent.ts`. It is not language understanding. Only level and prominence are read. Tone words such as big, punchy, warm, airy, wide, aggressive, tight, crunchy, and smooth never change gain on their own.
+
+A note is split into clauses at `.`, `!`, `?`, `;`, and line breaks. Each clause is read on its own, so in "Big and punchy. Trumpets should dominate." only the second clause counts.
+
+| Reading | Phrases |
+| --- | --- |
+| Focal | dominate, dominant, more dominant, prominent, more prominent, stand out, more present, louder, focal, feature, featured, foreground, up front, take the lead, solo, and bring / push / pull / turn / move … forward or up |
+| Background | less prominent (also less dominant / present / loud / forward / featured), quieter, softer, lower in the mix, recede, receding, recessed, underneath, behind, tuck, tucked, subtle, background, sit back, out of the way, and pull / push / sit / set / move / turn / bring / tuck / ease … back, down, or away |
+| Primary | primary, foundation, front and center |
+| Supporting | supporting, support, accompaniment |
+
+A clause with a negation (don't, do not, not, never, no longer, shouldn't, isn't, aren't) is ignored. A clause with two different readings is ignored. A note whose clauses disagree is ignored.
+
+**Track × Section note.** The note on one stem inside one section. A clause that clearly names a different stem is skipped, so "Let the lead dominate" written on the pad row does not lift the pad.
+
+**Section note.** A clause counts only if it carries a level reading and names a stem. Stems are matched by name, custom label, role label, and a few role aliases (brass: trumpet, horn, trombone, sax; strings: violin, viola, cello; vocal: vox, voice, singer; and similar). Words are compared lowercase with a simple plural strip, so "Trumpets" matches "Trumpet". The longest match wins, so "Trumpet 2" names one stem. A name match beats a role match for the same word. The words after than / behind / under / below / over / above / against / relative to / compared to name the reference, not the target, so in "Make the pad quieter than the lead" only the pad moves. "take the lead" is not read as the Lead stem. Section names such as drop, verse, or build never identify a stem on their own.
+
+If a word matches more than one stem, for example "Trumpet" with stems Trumpet 1 and Trumpet 2, the instruction is not applied. The plan summary says which stems it could mean and asks for the stem name or a prominence setting.
+
+**Precedence**, highest first:
+
+1. Track × Section prominence (Primary, Focal, Supporting)
+2. Track × Section note
+3. Section note naming that stem
+4. Track role
+
+**Confidence.** A row starts from the role, activity, and agreement of its level figures. Explicit prominence adds 0.08, a Track × Section note 0.06, and a section note 0.04. A row read from a Track × Section note is capped at 0.90 and one read from a section note at 0.85, so a phrase match never reads as certain as a structured setting. A track that an ambiguous section note might have meant loses 0.08 in that section. Rows read from a note quote the clause in their reasons.
+
+Intent sets a relationship, not a fixed move. "Make the pad quieter" makes the pad a Background element in that section. If the pad already sits 9 dB under the reference, nothing changes. A section row never pushes against its own intent: a quieter section is not held up against a track-wide cut, and a Focal section is not held down.
+
+### Apply, preview, and stale plans
+
+The plan is ephemeral. Applying it writes `track.gainDb` and, where a section offset remains, `sectionTrackSettings.overrides.gainDb`. That is one undo step. Source files and playback proxies are not rewritten. Apply all takes proposed and accepted rows. Apply accepted takes only accepted rows. Rejected and needs-review rows stay out unless accepted.
+
+Preview is a candidate overlay on the saved mix. The native engine keeps the base fader and a lock-free list of up to 96 section gain windows. A window sets the target of the existing per-sample gain slew, so its edges ramp over at most 10 ms instead of stepping. Changing the preview does not reload proxies or restart the device. The browser preview follows the playhead in the UI and ramps gain over about 20 ms. Single-row A/B plays that stem at its saved gain or its recommended gain with everything else at the saved mix and no trim. Cancel discards the overlay.
+
+A plan is marked out of date when gain, role, mute, sections, section intent, track × section intent or prominence, settings, or source identity change. A stale plan cannot be previewed or applied. Selecting a row (track, section, playhead) does not make the plan stale. Strength is Conservative (±2 dB), Normal (±4 dB), or Strong (±6 dB). Moves past ±6 dB before the cap are marked for review and are not part of Apply all until accepted.
+
+### Headroom trim
+
+The candidate trim is a separate gain added to every stem, so the relative balance stays. It is computed from each stem's cached peak and the rows that would actually play: a power sum of the stem peaks plus 1 dB. If that estimate for the candidate is hotter than the current mix's estimate, or than −1 dBFS when the current mix is under that, the trim brings it back, up to −6 dB. Accepting, rejecting, or editing a row recomputes it, and Apply accepted recomputes it for the accepted rows only. It is an estimate, not a rendered true-peak pass. It is not a limiter, not a loudness target, and not mastering.
+
+### Known limitations
+
+- Gain only. No EQ, compression, masking, stereo, pan, or reverb decisions.
+- Levels come from loudness readings. They are not a model of perceived loudness in the mix, and they do not account for masking.
+- The hierarchy rules are ceilings. A supporting or background stem that is too loud but still under its ceiling is not pulled back. In the acceptance run a +5 dB atmosphere error was only caught in the intro.
+- The kick allowance is a fixed window, not a measurement of transient loudness.
+- Intent is a phrase table. Anything outside it is ignored rather than guessed. Notes about tone, space, or dynamics are ignored by Milestone 3.
+- The desktop run loads whole-stem measurements. Section levels come from the stem's loudness timeline, not from dedicated section measurements.
+- The headroom trim is an estimate from per-stem peaks. Stems that already clip together before AutoBalance still clip.
+- The native overlay holds 96 section windows. A larger plan would drop windows past that.
+
+### Acceptance harness
+
+`packages/balance-planner/scripts/plan-project.ts` runs the planner on a project folder and its analysis cache, with roles, gains, sections, and intent edited in memory from a scenario file. It prints the plan and its timing. `render-audition.py` bounces Current and AutoBalance to WAV with the same section windows and a 10 ms ramp, for listening.
+
+```sh
+npx vite-node packages/balance-planner/scripts/plan-project.ts -- scenario.json
+services/analysis/.venv/bin/python packages/balance-planner/scripts/render-audition.py OUT_DIR
+```
 
 ## Tauri and Web Audio
 
@@ -223,7 +299,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, and `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, and `autobalance.stale`. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, and `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, and `autobalance.stale`. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 

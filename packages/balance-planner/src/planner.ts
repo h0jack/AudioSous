@@ -6,6 +6,7 @@ import {
   type Track,
   type TrackRole,
 } from "@audiosous/project-model";
+import { indexSectionIntent, trackIntentTier, type SectionIntentIndex } from "./intent";
 import { balanceMetrics, lowBandOverlap, type BalanceMetrics } from "./metrics";
 import {
   DEFAULT_AUTOBALANCE_SETTINGS,
@@ -65,12 +66,23 @@ const ROLE_TIER: Record<TrackRole, Tier> = {
 
 const ANCHOR_ORDER: TrackRole[] = ["kick", "vocal", "lead", "bass", "drums"];
 
+/**
+ * Where a scope's tier came from, highest precedence first:
+ * explicit Track × Section prominence, Track × Section note, section note naming the track, role.
+ */
+type TierSource = "prominence" | "track-intent" | "section-intent" | "role";
+
 interface ScopeRead {
   section: SongSection | null;
   metrics: BalanceMetrics | null;
   tier: Tier;
   defaultTier: Tier;
   explicit: boolean;
+  source: TierSource;
+  /** The note clause that set the tier, when it came from text. */
+  intentText: string | null;
+  /** A section note had a level instruction that could mean this track or another one. */
+  ambiguous: boolean;
   audible: number | null;
   currentGainDb: number;
 }
@@ -83,6 +95,7 @@ interface ScopeWish {
   reasons: string[];
   confidence: number;
   referenceName: string;
+  referenceLevel: number;
   gapDb: number;
 }
 
@@ -107,18 +120,19 @@ export function planBalance(input: PlanBalanceInput): MixPlan {
   const fingerprints = input.fingerprints ?? [];
   const identity = planStateIdentity(document, settings, fingerprints);
   const anchor = chooseAnchor(document, input.measurements);
+  const intents = indexSectionIntent(document);
   const unknownRoles = document.tracks.filter((track) => track.role === "other" && !track.customLabel).length;
   const unmeasured = document.tracks.filter((track) => !input.measurements[track.id]?.track).length;
   const changes: GainRecommendation[] = [];
   if (anchor.level !== null) {
     for (const track of document.tracks) {
       if (track.muted) continue;
-      changes.push(...planTrack(document, track, input.measurements, anchor, limits));
+      changes.push(...planTrack(document, track, input.measurements, anchor, limits, intents));
     }
   }
   const ordered = orderChanges(document, changes);
   const confidence = overallConfidence(ordered, anchor, unknownRoles, unmeasured);
-  const summary = summarize(ordered, anchor, unknownRoles, unmeasured, confidence);
+  const summary = summarize(ordered, anchor, unknownRoles, unmeasured, confidence, ambiguityNotes(document, intents));
   const draft: MixPlan = {
     planVersion: 1,
     plannerVersion: PLANNER_VERSION,
@@ -149,17 +163,24 @@ function planTrack(
   measurements: Record<string, TrackMeasurements | undefined>,
   anchor: AnchorChoice,
   limits: StrengthLimits,
+  intents: SectionIntentIndex,
 ): GainRecommendation[] {
   const bag = measurements[track.id];
   const defaultTier = defaultTierFor(track, document.tracks);
   const sections = document.sections;
   const reads = sections.length
-    ? sections.map((section) => readScope(document, track, bag, section, defaultTier))
-    : [readScope(document, track, bag, null, defaultTier)];
-  const active = reads.filter((read) => read.audible !== null && (read.metrics?.activeSeconds ?? 0) >= 0.45 && (read.metrics?.activePercent ?? 0) >= 8);
+    ? sections.map((section) => readScope(document, track, bag, section, defaultTier, intents))
+    : [readScope(document, track, bag, null, defaultTier, intents)];
+  const songLevel = balanceMetrics(bag?.track ?? null)?.activeLevelDb ?? null;
+  const active = reads
+    .filter((read) => read.audible !== null && (read.metrics?.activeSeconds ?? 0) >= 0.45 && (read.metrics?.activePercent ?? 0) >= 8)
+    // A primary element playing well under its own song level (a fade-in, a quiet passage) is an arrangement choice, not a balance error.
+    .filter((read) => read.explicit || read.tier !== "primary" || !read.section || songLevel === null || read.audible! >= songLevel + track.gainDb - 6);
   if (active.length === 0) return [];
-  const wishes = active.map((read) => wishFor(document, track, read, measurements, anchor, limits, defaultTier));
-  const corrected = correctOnce(track, wishes, anchor, limits);
+  const wishes = active
+    .map((read) => wishFor(document, track, read, measurements, anchor, limits, defaultTier, intents))
+    .filter((wish): wish is ScopeWish => wish !== null);
+  const corrected = correctOnce(track, wishes, limits);
   return regularize(document, track, corrected, limits);
 }
 
@@ -169,6 +190,7 @@ function readScope(
   bag: TrackMeasurements | undefined,
   section: SongSection | null,
   defaultTier: Tier,
+  intents: SectionIntentIndex,
 ): ScopeRead {
   const setting = section
     ? document.sectionTrackSettings.find((item) => item.trackId === track.id && item.sectionId === section.id)
@@ -176,12 +198,28 @@ function readScope(
   const metrics = section
     ? balanceMetrics(bag?.sections?.[section.id] ?? null) ?? balanceMetrics(bag?.track ?? null, { start: section.startTime, end: section.endTime })
     : balanceMetrics(bag?.track ?? null);
-  const intentTier = tierFromIntent(setting?.userIntent ?? null);
-  const explicit = setting?.prominence != null || intentTier != null;
-  const tier = setting?.prominence ?? intentTier ?? defaultTier;
+  const trackNote = section ? trackIntentTier(document, track, setting?.userIntent) : null;
+  const sectionNote = section ? (intents.targets.get(section.id)?.get(track.id) ?? null) : null;
+  const ambiguous = section ? intents.ambiguous.some((item) => item.sectionId === section.id && item.trackIds.includes(track.id)) : false;
+  let tier: Tier = defaultTier;
+  let source: TierSource = "role";
+  let intentText: string | null = null;
+  if (setting?.prominence) {
+    tier = setting.prominence;
+    source = "prominence";
+  } else if (trackNote) {
+    tier = trackNote.tier;
+    source = "track-intent";
+    intentText = trackNote.text;
+  } else if (sectionNote) {
+    tier = sectionNote.tier;
+    source = "section-intent";
+    intentText = sectionNote.text;
+  }
+  const explicit = source !== "role";
   const currentGainDb = section ? (setting?.overrides.gainDb ?? track.gainDb) : track.gainDb;
-  const audible = metrics?.activeRmsDbfs === null || metrics?.activeRmsDbfs === undefined ? null : metrics.activeRmsDbfs + currentGainDb;
-  return { section, metrics, tier, defaultTier, explicit, audible, currentGainDb };
+  const audible = metrics?.activeLevelDb === null || metrics?.activeLevelDb === undefined ? null : metrics.activeLevelDb + currentGainDb;
+  return { section, metrics, tier, defaultTier, explicit, source, intentText, ambiguous: ambiguous && source === "role", audible, currentGainDb };
 }
 
 function wishFor(
@@ -192,9 +230,11 @@ function wishFor(
   anchor: AnchorChoice,
   limits: StrengthLimits,
   defaultTier: Tier,
-): ScopeWish {
+  intents: SectionIntentIndex,
+): ScopeWish | null {
   const audible = read.audible ?? 0;
-  const reference = referenceLevel(document, track, read, measurements, anchor);
+  const reference = referenceLevel(document, track, read, measurements, anchor, intents);
+  if (!reference) return null;
   const referenceName = reference.name;
   const gapDb = roundDb(reference.level - audible);
   let raw = 0;
@@ -221,9 +261,12 @@ function wishFor(
       target -= 0.4;
       overlapNote = `Reducing ${track.name} slightly may improve the ${referenceName}/${track.name} hierarchy where they share low-frequency energy.`;
     }
-    raw = (target - audible) * limits.primaryMix * 0.7;
+    const error = target - audible;
+    raw = (error < 0 ? softWindow(error, limits.overKickToleranceDb) : error) * limits.primaryMix * 0.7;
   } else {
-    raw = (reference.level - audible) * limits.primaryMix;
+    const gap = reference.level - audible;
+    const tolerance = reference.role === "kick" && gap < 0 ? limits.overKickToleranceDb : limits.primaryToleranceDb;
+    raw = softWindow(gap, tolerance) * limits.primaryMix;
   }
   if ((track.role === "fx" || track.role === "atmosphere" || read.tier === "background") && raw > 0) raw = 0;
   if ((read.metrics?.activePercent ?? 100) < 12 && raw > 0 && read.tier !== "focal") raw = 0;
@@ -239,27 +282,30 @@ function wishFor(
     reasons,
     confidence: confidenceFor(track, read, overCap),
     referenceName,
+    referenceLevel: reference.level,
     gapDb,
   };
 }
 
-function correctOnce(track: Track, wishes: ScopeWish[], anchor: AnchorChoice, limits: StrengthLimits): ScopeWish[] {
+function correctOnce(track: Track, wishes: ScopeWish[], limits: StrengthLimits): ScopeWish[] {
   return wishes.map((wish) => {
     if (wish.read.tier !== "supporting" && wish.read.tier !== "background") return wish;
-    if (wish.read.audible === null || anchor.level === null) return wish;
+    if (wish.read.audible === null) return wish;
     const simulated = wish.read.audible + wish.delta;
-    const limit = anchor.level - 0.8;
+    // Same reference the wish was planned against, so the check cannot disagree with the first pass.
+    const limit = wish.referenceLevel - 0.8;
     if (simulated <= limit) return wish;
     const room = limits.maxDb - Math.abs(wish.delta);
     if (room < 0.4 || wish.delta > 0) return wish;
     const extra = Math.min(room, simulated - limit, 1);
     const delta = roundDb(wish.delta - extra);
     if (Math.abs(delta) < limits.deadbandDb) return wish;
+    const overCap = wish.overCap || Math.abs(wish.raw) > REVIEW_GAIN_DB;
     const reasons = [
-      ...wish.reasons,
+      ...reasonLines(track, wish.read, wish.referenceName, wish.gapDb, delta, overCap, null, wish.read.defaultTier),
       `A follow-up check still had ${track.name} above the primary level, so the reduction was deepened slightly.`,
     ];
-    return { ...wish, delta, reasons: reasons.slice(0, 6), overCap: wish.overCap || Math.abs(wish.raw) > REVIEW_GAIN_DB };
+    return { ...wish, delta, reasons: reasons.slice(0, 6), overCap };
   });
 }
 
@@ -291,6 +337,9 @@ function regularize(
     const special = wish.read.tier !== wish.read.defaultTier;
     if (special) {
       if (Math.abs(offset) < limits.deadbandDb) continue;
+      // Never let a section row push against its own intent: a "quieter" section is not held up against a track-wide cut.
+      const reduces = wish.read.tier === "background" || wish.read.tier === "supporting";
+      if ((reduces && offset > 0) || (wish.read.tier === "focal" && offset < 0)) continue;
     } else if (Math.abs(offset) < limits.sectionResidualDb) {
       continue;
     } else {
@@ -316,6 +365,13 @@ function toRecommendation(
   const status = wish.overCap || wish.confidence < 0.5 ? "needs-review" : "proposed";
   let reasons = wish.reasons.map((reason) => (scope.type === "global" && wish.read.section ? reason.replace(` in ${wish.read.section.name}`, "") : reason));
   if (acrossSections) reasons = reasons.map((reason) => reason.replace(" because ", " across most sections because "));
+  const globalMove = roundDb(recommended - offset - track.gainDb);
+  if (scope.type === "section" && wish.read.section && Math.abs(globalMove) >= 0.05 && reasons.length > 0) {
+    reasons = [
+      ...reasons,
+      `With the ${formatSignedDb(globalMove)} dB track-wide change, ${wish.read.section.name} sits ${formatSignedDb(offset)} dB relative to the rest of ${track.name}.`,
+    ].slice(0, 6);
+  }
   return {
     id: recommendationId(track.id, scope),
     trackId: track.id,
@@ -328,8 +384,14 @@ function toRecommendation(
     confidenceLabel: confidenceLabel(wish.confidence),
     status,
     edited: false,
-    reasons: reasons.length > 0 ? reasons : [`${track.name} stays at its current gain.`],
+    reasons: reasons.length > 0 ? reasons : [holdReason(track, wish, scope, recommendedGainDb - offset)],
   };
+}
+
+function holdReason(track: Track, wish: ScopeWish, scope: RecommendationScope, plannedGlobal: number): string {
+  if (scope.type !== "section" || !wish.read.section) return `${track.name} stays at its current gain.`;
+  const move = roundDb(plannedGlobal - track.gainDb);
+  return `Holds ${track.name} at its current level in ${wish.read.section.name}, so the ${formatSignedDb(move)} dB track-wide change does not apply there. That section already sits where it should.`;
 }
 
 function referenceLevel(
@@ -338,25 +400,49 @@ function referenceLevel(
   read: ScopeRead,
   measurements: Record<string, TrackMeasurements | undefined>,
   anchor: AnchorChoice,
-): { level: number; name: string; role: TrackRole | null; trackId: string | null } {
+  intents: SectionIntentIndex,
+): { level: number; name: string; role: TrackRole | null; trackId: string | null } | null {
+  const anchorTrack = document.tracks.find((item) => item.id === anchor.trackIds[0]);
+  // Primary elements are held to the anchor, not to each other. Two primaries chasing the louder one
+  // would both move and swap places. Where the anchor is not playing there is no primary opinion.
+  if (read.tier === "primary" && anchorTrack && anchorTrack.id !== track.id) {
+    if (!read.section) return { level: anchor.level ?? read.audible ?? 0, name: anchorTrack.name, role: anchorTrack.role, trackId: anchorTrack.id };
+    const anchorRead = readScope(document, anchorTrack, measurements[anchorTrack.id], read.section, defaultTierFor(anchorTrack, document.tracks), intents);
+    if (anchorRead.audible === null || !established(anchorTrack, anchorRead, measurements)) return null;
+    return { level: anchorRead.audible, name: anchorTrack.name, role: anchorTrack.role, trackId: anchorTrack.id };
+  }
   const peers = document.tracks
     .filter((peer) => peer.id !== track.id && !peer.muted)
     .map((peer) => {
-      const peerRead = readScope(document, peer, measurements[peer.id], read.section, defaultTierFor(peer, document.tracks));
+      const peerRead = readScope(document, peer, measurements[peer.id], read.section, defaultTierFor(peer, document.tracks), intents);
       return { peer, peerRead };
     })
-    .filter((item) => item.peerRead.audible !== null && (item.peerRead.tier === "primary" || item.peerRead.tier === "focal"));
+    .filter((item) => item.peerRead.audible !== null && (item.peerRead.tier === "primary" || item.peerRead.tier === "focal"))
+    .filter((item) => established(item.peer, item.peerRead, measurements));
   const loudest = peers.sort((left, right) => (right.peerRead.audible ?? -200) - (left.peerRead.audible ?? -200))[0];
   if (loudest?.peerRead.audible !== null && loudest?.peerRead.audible !== undefined) {
     return { level: loudest.peerRead.audible, name: loudest.peer.name, role: loudest.peer.role, trackId: loudest.peer.id };
   }
-  const anchorTrack = document.tracks.find((item) => item.id === anchor.trackIds[0]);
+  const fallbackName = anchorTrack?.name ?? anchor.label;
   return {
     level: anchor.level ?? read.audible ?? 0,
-    name: anchorTrack?.name ?? anchor.label,
+    name: read.section ? `${fallbackName}'s level in the rest of the song` : fallbackName,
     role: anchorTrack?.role ?? null,
     trackId: anchorTrack?.id ?? null,
   };
+}
+
+/**
+ * A peer only sets a section's reference when it is really playing there: active for a good share of the section
+ * and not far under its own song level. A lead fading in under an intro pad is not the intro's reference.
+ */
+function established(peer: Track, read: ScopeRead, measurements: Record<string, TrackMeasurements | undefined>): boolean {
+  if (!read.section || read.audible === null) return true;
+  if (read.tier === "focal" && read.explicit) return true;
+  const songLevel = balanceMetrics(measurements[peer.id]?.track ?? null)?.activeLevelDb;
+  if (songLevel === null || songLevel === undefined) return true;
+  const songAudible = songLevel + read.currentGainDb;
+  return (read.metrics?.activePercent ?? 0) >= 35 && read.audible >= songAudible - 6;
 }
 
 function chooseAnchor(document: ProjectDocument, measurements: Record<string, TrackMeasurements | undefined>): AnchorChoice {
@@ -367,10 +453,10 @@ function chooseAnchor(document: ProjectDocument, measurements: Record<string, Tr
       const tier = defaultTierFor(track, document.tracks);
       return { track, metrics, tier };
     })
-    .filter((item) => item.tier === "primary" && item.metrics?.activeRmsDbfs !== null && (item.metrics?.activePercent ?? 0) >= 35);
+    .filter((item) => item.tier === "primary" && item.metrics?.activeLevelDb !== null && (item.metrics?.activePercent ?? 0) >= 35);
   const preferred = ANCHOR_ORDER.map((role) => ranked.find((item) => item.track.role === role)).find((item) => item !== undefined);
   const chosen = preferred ?? ranked.sort((left, right) => (right.metrics?.activePercent ?? 0) - (left.metrics?.activePercent ?? 0))[0];
-  if (!chosen || chosen.metrics?.activeRmsDbfs === null || chosen.metrics?.activeRmsDbfs === undefined) {
+  if (!chosen || chosen.metrics?.activeLevelDb === null || chosen.metrics?.activeLevelDb === undefined) {
     return {
       trackIds: [],
       label: "None",
@@ -378,7 +464,7 @@ function chooseAnchor(document: ProjectDocument, measurements: Record<string, Tr
       level: null,
     };
   }
-  const level = chosen.metrics.activeRmsDbfs + chosen.track.gainDb;
+  const level = chosen.metrics.activeLevelDb + chosen.track.gainDb;
   return {
     trackIds: [chosen.track.id],
     label: chosen.track.name,
@@ -390,16 +476,6 @@ function chooseAnchor(document: ProjectDocument, measurements: Record<string, Tr
 function defaultTierFor(track: Track, tracks: Track[]): Tier {
   if (track.role === "drums" && tracks.some((item) => item.role === "kick" && item.id !== track.id)) return "supporting";
   return ROLE_TIER[track.role];
-}
-
-function tierFromIntent(intent: string | null): Tier | null {
-  if (!intent) return null;
-  const value = intent.toLowerCase();
-  if (/\b(focal|feature|featured|up front|foreground|take the lead|solo)\b/.test(value)) return "focal";
-  if (/\b(tuck|tucked|behind|background|sit back|subtle|out of the way)\b/.test(value)) return "background";
-  if (/\b(primary|foundation|front and center)\b/.test(value)) return "primary";
-  if (/\b(supporting|support|accompaniment)\b/.test(value)) return "supporting";
-  return null;
 }
 
 function reasonLines(
@@ -423,20 +499,31 @@ function reasonLines(
       `${direction} ${track.name} by ${amount} dB${where} because it is ${tierName} but its active level is louder than ${referenceName}.`,
     );
   } else if (read.tier === "focal") {
+    const marked = read.source === "prominence" ? "it is marked Focal there" : "its note asks for it to be Focal there";
     lines.push(
-      `${direction} ${track.name} by ${amount} dB${where} because it is marked Focal there and its active level sits ${Math.abs(gapDb).toFixed(1)} dB ${gapDb >= 0 ? "below" : "above"} ${referenceName}.`,
+      `${direction} ${track.name} by ${amount} dB${where} because ${marked} and its active level sits ${Math.abs(gapDb).toFixed(1)} dB ${gapDb >= 0 ? "below" : "above"} ${referenceName}.`,
     );
   } else {
     lines.push(
       `${direction} ${track.name} by ${amount} dB${where} because it is ${tierName} and its active level sits ${Math.abs(gapDb).toFixed(1)} dB ${gapDb >= 0 ? "below" : "above"} ${referenceName}.`,
     );
   }
+  if (read.intentText && read.section) {
+    const note = read.source === "section-intent" ? `the ${read.section.name} section note` : `the ${track.name} note for ${read.section.name}`;
+    lines.push(`Level intent read from ${note}: "${quoteIntent(read.intentText)}".`);
+  }
+  if (read.ambiguous) lines.push("A section note gave a level instruction that could mean this track or another one, so it was not applied here.");
   if (overlapNote && delta < 0) lines.push(overlapNote);
   if (overCap) lines.push("The uncapped correction was larger than 6 dB, so this recommendation needs review before it is applied.");
   if ((read.metrics?.activePercent ?? 100) < 20) {
     lines.push("Only the active part of this stem was compared. A short or sparse stem was not turned up to match a full-song loudness number.");
   }
   return lines.slice(0, 6);
+}
+
+function quoteIntent(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > 120 ? `${trimmed.slice(0, 117)}…` : trimmed;
 }
 
 function tierLabel(tier: Tier, explicit: boolean, defaultTier: Tier): string {
@@ -450,14 +537,20 @@ function tierLabel(tier: Tier, explicit: boolean, defaultTier: Tier): string {
 function confidenceFor(track: Track, read: ScopeRead, overCap: boolean): number {
   let confidence = 0.58;
   if (track.role !== "other") confidence += 0.14;
-  if (read.explicit) confidence += 0.08;
+  // Structured settings are more certain than a phrase match; a phrase match on a section note is the weakest.
+  if (read.source === "prominence") confidence += 0.08;
+  else if (read.source === "track-intent") confidence += 0.06;
+  else if (read.source === "section-intent") confidence += 0.04;
+  if (read.ambiguous) confidence -= 0.08;
   if ((read.metrics?.activeSeconds ?? 0) >= 2) confidence += 0.1;
   else confidence -= 0.12;
   if (read.metrics?.metricsAgree) confidence += 0.08;
   if (read.tier === "unknown") confidence -= 0.3;
   if (overCap) confidence -= 0.1;
   if (read.section) confidence += 0.02;
-  return clamp(Math.round(confidence * 100) / 100, 0.2, 0.95);
+  // A phrase match never reads as certain as a structured setting.
+  const ceiling = read.source === "section-intent" ? 0.85 : read.source === "track-intent" ? 0.9 : 0.95;
+  return clamp(Math.round(confidence * 100) / 100, 0.2, ceiling);
 }
 
 function overallConfidence(changes: GainRecommendation[], anchor: AnchorChoice, unknownRoles: number, unmeasured: number): number {
@@ -474,6 +567,7 @@ function summarize(
   unknownRoles: number,
   unmeasured: number,
   confidence: number,
+  intentNotes: string[],
 ): MixPlan["summary"] {
   const reviewCount = changes.filter((change) => change.status === "needs-review").length;
   const supporting = changes.filter((change) => change.deltaDb < 0 && /supporting|sit back|background/i.test(change.reasons[0] ?? "")).length;
@@ -483,6 +577,7 @@ function summarize(
   if (unknownRoles > 0) notes.push(`Confidence reduced because ${unknownRoles} ${unknownRoles === 1 ? "stem has" : "stems have"} no confirmed role.`);
   if (unmeasured > 0) notes.push(`${unmeasured} ${unmeasured === 1 ? "stem was" : "stems were"} not measured and left unchanged.`);
   if (anchor.level === null) notes.push(anchor.reason);
+  notes.push(...intentNotes.slice(0, Math.max(0, 6 - notes.length)));
   let headline: string;
   if (anchor.level === null) {
     headline = "AutoBalance does not have enough evidence to change this mix.";
@@ -504,6 +599,22 @@ function summarize(
     changeCount: changes.length,
     reviewCount,
   };
+}
+
+function ambiguityNotes(document: ProjectDocument, intents: SectionIntentIndex): string[] {
+  const notes: string[] = [];
+  const seen = new Set<string>();
+  for (const item of intents.ambiguous) {
+    const key = `${item.sectionId}:${item.word}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const section = document.sections.find((entry) => entry.id === item.sectionId);
+    const names = item.trackIds.map((id) => document.tracks.find((track) => track.id === id)?.name ?? id);
+    notes.push(
+      `The ${section?.name ?? "section"} note "${quoteIntent(item.text)}" could mean ${names.join(" or ")}, so it was not applied. Name the stem or set its prominence in that section.`,
+    );
+  }
+  return notes;
 }
 
 function orderChanges(document: ProjectDocument, changes: GainRecommendation[]): GainRecommendation[] {
@@ -534,6 +645,14 @@ function weightedMedian(items: Array<{ value: number; weight: number }>): number
 
 function closest(wishes: ScopeWish[], target: number): ScopeWish {
   return [...wishes].sort((left, right) => Math.abs(left.delta - target) - Math.abs(right.delta - target))[0] ?? wishes[0]!;
+}
+
+/** Zero inside the tolerance, full value at twice the tolerance, linear between. */
+function softWindow(value: number, tolerance: number): number {
+  const size = Math.abs(value);
+  if (tolerance <= 0 || size >= tolerance * 2) return value;
+  if (size <= tolerance) return 0;
+  return value * ((size - tolerance) / tolerance);
 }
 
 function clamp(value: number, min: number, max: number): number {

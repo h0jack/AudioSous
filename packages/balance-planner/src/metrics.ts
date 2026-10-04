@@ -3,6 +3,13 @@ import type { BandEnergy, TrackFileMeasurement } from "@audiosous/analysis-contr
 /** Levels derived from a cached measurement. These are facts for the planner, not targets. */
 export interface BalanceMetrics {
   activeRmsDbfs: number | null;
+  /**
+   * Active RMS shifted by the stem's own K-weighting offset (integrated LUFS minus whole-file active RMS).
+   * Unweighted RMS ranks a sub-heavy bass far above a bright lead that sounds as loud; this is what the planner compares.
+   * Falls back to active RMS when the file has no measured loudness.
+   */
+  activeLevelDb: number | null;
+  loudnessWeighted: boolean;
   medianActiveLevel: number | null;
   p75ActiveLevel: number | null;
   activePercent: number;
@@ -16,6 +23,7 @@ export interface BalanceMetrics {
 
 const ACTIVE_RANGE_DB = 18;
 const ACTIVE_FLOOR_DB = -55;
+const LOUDNESS_OFFSET_LIMIT_DB = 8;
 
 export function balanceMetrics(
   measurement: TrackFileMeasurement | null | undefined,
@@ -55,8 +63,11 @@ export function balanceMetrics(
     p75 !== null &&
     Math.abs(activeRms - medianActive) <= 2.5 &&
     Math.abs(activeRms - p75) <= 4;
+  const offset = loudnessOffsetDb(measurement);
   return {
     activeRmsDbfs: activeRms,
+    activeLevelDb: activeRms === null ? null : activeRms + (offset ?? 0),
+    loudnessWeighted: offset !== null,
     medianActiveLevel: medianActive,
     p75ActiveLevel: p75,
     activePercent,
@@ -86,6 +97,17 @@ export function lowBandShare(bands: BandEnergy[]): number {
   const chosen = bands.filter((band) => ids.has(band.id));
   if (chosen.length === 0) return 0;
   return chosen.reduce((sum, band) => sum + band.normalizedEnergy, 0) / chosen.length;
+}
+
+function loudnessOffsetDb(measurement: TrackFileMeasurement): number | null {
+  const lufs = measurement.levels.integratedLufs;
+  if (lufs === null || measurement.levels.integratedLufsStatus !== "measured") return null;
+  const finite = timelinePoints(measurement).filter((value): value is number => value !== null && Number.isFinite(value));
+  const peak = finite.length > 0 ? Math.max(...finite) : null;
+  const active = finite.filter((value) => value >= ACTIVE_FLOOR_DB && (peak === null || value >= peak - ACTIVE_RANGE_DB));
+  const reference = active.length >= 2 ? powerMeanDb(active) : measurement.levels.rmsDbfs;
+  if (reference === null) return null;
+  return Math.max(-LOUDNESS_OFFSET_LIMIT_DB, Math.min(LOUDNESS_OFFSET_LIMIT_DB, lufs - reference));
 }
 
 function measurementCovers(measurement: TrackFileMeasurement, window: { start: number; end: number }): boolean {

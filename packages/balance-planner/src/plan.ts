@@ -10,7 +10,7 @@ import {
 import { z } from "zod";
 
 export const MIX_PLAN_VERSION = 1;
-export const PLANNER_VERSION = "3.0.0";
+export const PLANNER_VERSION = "3.1.0";
 export const HEADROOM_CEILING_DBFS = -1;
 export const HEADROOM_TRIM_LIMIT_DB = 6;
 export const REVIEW_GAIN_DB = 6;
@@ -38,6 +38,13 @@ export interface StrengthLimits {
   focalLiftDb: number;
   sectionResidualDb: number;
   bassUnderDb: number;
+  /** Gap between two primary elements that is left alone; full correction at twice this. */
+  primaryToleranceDb: number;
+  /**
+   * How far a primary element may read above a kick anchor before any cut; full correction at twice this.
+   * Integrated loudness reads sustained parts several LU hotter than a transient kick that sounds as loud.
+   */
+  overKickToleranceDb: number;
 }
 
 export const STRENGTH_LIMITS: Record<BalanceStrength, StrengthLimits> = {
@@ -51,6 +58,8 @@ export const STRENGTH_LIMITS: Record<BalanceStrength, StrengthLimits> = {
     focalLiftDb: 0.6,
     sectionResidualDb: 1.2,
     bassUnderDb: 0.6,
+    primaryToleranceDb: 2.5,
+    overKickToleranceDb: 7,
   },
   normal: {
     maxDb: 4,
@@ -62,6 +71,8 @@ export const STRENGTH_LIMITS: Record<BalanceStrength, StrengthLimits> = {
     focalLiftDb: 1,
     sectionResidualDb: 1,
     bassUnderDb: 0.5,
+    primaryToleranceDb: 2,
+    overKickToleranceDb: 6,
   },
   strong: {
     maxDb: 6,
@@ -73,6 +84,8 @@ export const STRENGTH_LIMITS: Record<BalanceStrength, StrengthLimits> = {
     focalLiftDb: 1.4,
     sectionResidualDb: 0.8,
     bassUnderDb: 0.4,
+    primaryToleranceDb: 1.5,
+    overKickToleranceDb: 5,
   },
 };
 
