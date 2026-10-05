@@ -510,7 +510,7 @@ function sectionSetting(document: ProjectDocument, trackId: string, sectionId: s
     sectionId,
     userIntent: existing?.userIntent ?? null,
     prominence: existing?.prominence ?? null,
-    overrides: { gainDb, pan: existing?.overrides.pan ?? null },
+    overrides: { gainDb, pan: existing?.overrides.pan ?? null, width: existing?.overrides.width ?? null },
     processing: existing?.processing ?? emptyProcessingGraph(),
   };
 }

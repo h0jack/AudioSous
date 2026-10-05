@@ -35,7 +35,14 @@ export type LogEvent =
   | "eqplan.preview"
   | "eqplan.apply"
   | "eqplan.cancel"
-  | "eqplan.stale";
+  | "eqplan.stale"
+  | "spatialplan.start"
+  | "spatialplan.complete"
+  | "spatialplan.verify"
+  | "spatialplan.preview"
+  | "spatialplan.apply"
+  | "spatialplan.cancel"
+  | "spatialplan.stale";
 
 export async function logEvent(
   platform: DesktopPlatform,

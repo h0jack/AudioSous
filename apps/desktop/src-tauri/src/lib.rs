@@ -2,6 +2,7 @@ mod analysis;
 mod audio_host;
 mod bundle;
 mod eq_check;
+mod space_check;
 mod waveform;
 
 use std::path::PathBuf;
@@ -316,6 +317,68 @@ fn audio_set_eq(host: tauri::State<'_, audio_host::AudioHost>, tracks: Vec<Audio
     );
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioSpatialRegion {
+    start_seconds: f64,
+    end_seconds: f64,
+    pan: f32,
+    width: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioTrackSpatial {
+    track_id: String,
+    pan: f32,
+    width: f32,
+    regions: Vec<AudioSpatialRegion>,
+}
+
+#[tauri::command]
+fn audio_set_spatial(host: tauri::State<'_, audio_host::AudioHost>, tracks: Vec<AudioTrackSpatial>) {
+    host.engine.set_spatial(
+        tracks
+            .into_iter()
+            .map(|track| audiosous_audio::TrackSpatial {
+                track_id: track.track_id,
+                pan: track.pan,
+                width: track.width,
+                regions: track
+                    .regions
+                    .into_iter()
+                    .map(|region| audiosous_audio::TrackSpatialRegion {
+                        start_seconds: region.start_seconds,
+                        end_seconds: region.end_seconds,
+                        pan: region.pan,
+                        width: region.width,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    );
+}
+
+#[tauri::command]
+async fn stereo_frames(
+    project_file: String,
+    tracks: Vec<space_check::StereoFramesRequest>,
+) -> Result<Vec<space_check::StereoFramesResponse>, String> {
+    tauri::async_runtime::spawn_blocking(move || space_check::stereo_frames(&project_file, tracks))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn spatial_check(
+    project_file: String,
+    requests: Vec<space_check::SpatialCheckRequest>,
+) -> Result<Vec<space_check::SpatialCheckResponse>, String> {
+    tauri::async_runtime::spawn_blocking(move || space_check::check(&project_file, requests))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 async fn eq_check(
     project_file: String,
@@ -391,8 +454,11 @@ pub fn run() {
             audio_set_track,
             audio_set_gain_regions,
             audio_set_eq,
+            audio_set_spatial,
             eq_check,
             eq_band_frames,
+            stereo_frames,
+            spatial_check,
             audio_set_loop,
             audio_status,
             append_log

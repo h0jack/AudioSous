@@ -19,6 +19,8 @@ import {
   formatBitDepth,
   formatClock,
   formatSampleRate,
+  hasSavedSpatial,
+  isMonoTrack,
   type ProjectDocument,
   type SectionType,
   type SongSection,
@@ -566,6 +568,7 @@ export function Timeline({
                     </TipButton>
                     {proposed ? <span className="font-mono text-[10px] text-accent">{formatSignedDb(proposed.deltaDb)}</span> : null}
                     <SavedEqBadge document={document} trackId={track.id} />
+                    <SavedSpaceBadge document={document} trackId={track.id} />
                     <HoverTip className="block min-w-0 flex-1" label={`Gain ${formatDb(gain)}`}>
                       <input
                         type="range"
@@ -593,6 +596,22 @@ export function Timeline({
                       className="w-full"
                     />
                   </HoverTip>
+                  {isMonoTrack(track) ? null : (
+                    <HoverTip className="mt-1 block" label={`Width ${Math.round(track.width * 100)}%${track.width === 1 ? " (as recorded)" : ""}`}>
+                      <input
+                        type="range"
+                        min={0}
+                        max={200}
+                        step={1}
+                        value={Math.round(track.width * 100)}
+                        aria-label={`Width for ${track.name}`}
+                        onPointerDown={holdSave}
+                        onDoubleClick={() => editTrack(track.id, { width: 1 })}
+                        onChange={(event) => editTrack(track.id, { width: Number(event.target.value) / 100 })}
+                        className="w-full"
+                      />
+                    </HoverTip>
+                  )}
                 </div>
                 <div
                   className="relative sticky shrink-0 cursor-crosshair touch-none select-none"
@@ -1377,6 +1396,26 @@ function WaveformCanvas({
   }, [peaks, width, height, pixelsPerSecond, scrollSeconds, amplitude, color, range, loop, sections]);
 
   return <canvas ref={ref} className="block h-full w-full" />;
+}
+
+/** Shows that a track has saved width or section pan/width, and lists it on hover. A plain pan is just the lane control. */
+function SavedSpaceBadge({ document, trackId }: { document: ProjectDocument; trackId: string }) {
+  if (!hasSavedSpatial(document, trackId)) return null;
+  const track = document.tracks.find((item) => item.id === trackId)!;
+  const parts = Math.abs(track.width - 1) > 1e-9 ? [`width ${Math.round(track.width * 100)}%`] : [];
+  for (const row of document.sectionTrackSettings.filter((item) => item.trackId === trackId)) {
+    const name = document.sections.find((section) => section.id === row.sectionId)?.name ?? "section";
+    const bits = [
+      row.overrides.pan !== null ? `pan ${Math.round(row.overrides.pan * 100)}` : "",
+      row.overrides.width !== null ? `width ${Math.round(row.overrides.width * 100)}%` : "",
+    ].filter(Boolean);
+    if (bits.length > 0) parts.push(`${name}: ${bits.join(", ")}`);
+  }
+  return (
+    <HoverTip label={`Saved space: ${parts.join(" · ")}`}>
+      <span className="rounded bg-canvas px-1 py-0.5 text-[10px] text-ok">SPACE</span>
+    </HoverTip>
+  );
 }
 
 /** Shows that a track has saved EQ, and lists it on hover. Planned and manual filters alike. */

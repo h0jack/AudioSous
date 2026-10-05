@@ -211,6 +211,80 @@ A sixth fault was in the data: the sidecar spectrogram has 187 Hz bins at 192 kH
 - a GUI walk-through: the EQ tab, the curve editor (drag, wheel, keys), Bypassed / With filter, Current / EQ Candidate, Apply accepted, Ctrl+Z, a stale plan after a fader move, the Frequency interaction view, and the lane EQ badge;
 - GitHub Actions on these changes.
 
+## Milestone 5
+
+Milestone 5 is stereo and spatial interaction planning: where stems sit in the stereo field, which ones collide there in the frequencies they compete for, and conservative, explainable pan, balance, and width moves. It previews on the existing clock and applies as one undo step. It does not compress, use dynamic EQ or sidechain, add reverb, delay, chorus, Haas, or any other way of making stereo, process width per frequency band, limit, master, or host plugins. See [Stereo and spatial planning](architecture.md#stereo-and-spatial-planning).
+
+| Slice | Status |
+| --- | --- |
+| 1. Spatial contract | Done. Schema v3 with a v2 migration: `track.width` and `overrides.width` beside the existing pan fields (one source of truth each), section overrides that replace the track value, spatial stale identity, versioned `spatial-balance` plan |
+| 2. Native DSP | Done. Width on mid/side (100% bit-exact, mono fold-down unchanged at every width), equal-power pan / balance, 30 ms ramps for every change and section edge, snap on seek, lock-free table with 128 section windows, per-block fast path, no allocation in the callback (tested) |
+| 3. Spatial interaction analysis | Done. Proxy stereo frames (Rust: L, R, and correlation per frame and 8 bands), exact second-order statistics for any pan/width, position, spread, correlation, M/S, mono loss, field occupancy, center competition, localizable overlap weighted by M4's frequency competition, time-aware pairs and tiers from M4 |
+| 4. Spatial planner | Done. Who moves (anchors, tiers, peers within 6 dB), level-not-space, bounded search with quadratic costs, global only when the conflict covers half the stem's time, section rows with a reason, mono safety, surround, intent, confidence, review rules |
+| 5. Candidate preview | Done. One monitor path with AutoBalance and EQ: Current vs Spatial Candidate, single-row Bypassed / Recommended, edits heard on the next publish, stereo field editor (drag, Shift-drag, wheel, keys, sliders), accept, reject |
+| 6. Evaluation | Done. Every candidate scored on the stored statistics (conflict addressed and added elsewhere, correlation, mono loss, mix lean and center load, level change), a correction pass, a whole-plan pass, a proxy check through the native spatial stage, per-channel headroom |
+| 7. Hardening | Partly. Undo, stale plans, cancellation, stress, real-music runs, and docs are done. The physical listening pass, the GUI walk-through, and GitHub Actions on these changes are open |
+
+### Tests
+
+- `packages/spatial-planner` (58). Fixtures A–H from the milestone (centered lead and pad, already separated, kick and bass, narrowed background atmosphere, phase-risky pad, two wide synths in both a coherent and a decorrelated version, never simultaneous, "Make the breakdown wider."), mono compatibility (no widening under 0.2 correlation, an edit to 200% caught and sent to review), saved pan and width as the starting point, a saved section override edited rather than stacked and kept against a disagreeing note, saved EQ removing the need for a move, a level problem reported instead of a pan, intent (a side, centered, ambiguous, tone words, negation, a mono stem asked to widen, Track × Section above section), an already-good arrangement, a lopsided arrangement left alone, determinism, strength and range limits, staleness, a 32-stem timing check, the stereo math against closed-form results, occupancy, the plan contract (round trip, edit and reset, inclusion rule, audition, single-row A/B, saved section overrides as regions, Apply all, Apply accepted, section rows as overrides, headroom trim, proxy-check merge), and the phrase table.
+- `packages/project-model` (38, 9 new). v2 → v3 migration that keeps how a file sounds, width bounds, section overrides replacing the track value, no duplicate override, clearing one keeps intent, rounding, mono detection, spatial identity.
+- `apps/desktop` (45, 13 new). The Space review flow with the real functions: the acceptance plan, whole-plan and single-row A/B through the monitor, one comparison at a time across Gain, EQ, and Space, the milestone's demonstration (bypass, edit to +0.12, reject, Apply accepted, one undo step), stale refusal after a fader or EQ change, no staleness on selection, cancel, saved pan/width/section windows reaching the native engine and section pan reaching the legacy one. Render smoke tests of the Space panel, the stereo field, the correlation meter, and the spatial interaction view.
+- `crates/audio-engine` (Rust, 20 new). Pan law, balance without crossfeed, width 0/100/150/200%, mono fold-down at every width, correlation against `(1 − w²)/(1 + w²)`, every legal setting finite and bounded, the 30 ms ramp, section windows and edges, a seek into a section, several windows, table limits, the per-block fast path against frame-by-frame processing, the offline helper, spatial through the real engine, balance and a seek through the real engine, no allocation with EQ and spatial on, stereo frames (centered, decorrelated, anti-phase, left-heavy, mono), and the proxy spatial check against the closed-form prediction.
+- `npm run stress:audio` adds `stress_spatial_callback_cost` and now runs the tests one at a time.
+
+### Acceptance run
+
+Planned from the cached analysis, EQ band frames, and stereo frames with `plan-space-project.ts`; measured from the proxies with `render-space-audition.py`. Generated 5 used the same sections and roles as Milestones 3 and 4: Intro 0–17.7 s, Break –33.6 s, Drop –86.6 s, Drop 2 –123.7 s, Outro –141.4 s; PunchBox Kick, Bass Bus Bass, Bleeps Bus Lead, MasterEQ Pad, Skimming Air Atmosphere, Phase Plant 2 Brass "Trumpets", Stutter Expression and Subway Synth, CZ V FX; all faders at 0 dB. Stereo frames for the 11 stems took 1.3 s from existing proxies; loading the caches took 50–60 ms and planning 120–220 ms.
+
+**Already-good mix (the producer's stems).** Where the stems sit: PunchBox centered as a point, Bass Bus 10% left, Bleeps Bus 23% left and moderately wide, MasterEQ and Stutter Expression centered and moderately wide (correlation 0.52–0.54), Skimming Air centered (0.51), Subway 73% left and fully decorrelated, CZ V centered and decorrelated.
+
+| Case | Rows | Change |
+| --- | --- | --- |
+| Conservative | 0 | |
+| Normal | 1 | Skimming Air (Background) 25% right, away from Phase Plant 2 in Drop 2; confidence 0.83 |
+| Strong | 1 | the same row at 30% |
+
+Kick and bass were never moved. Stutter Expression over Bleeps Bus and MasterEQ over Bleeps Bus were reported as level problems (7–19 dB over the lead where they compete), not spatial ones. The bounce changed almost nothing: stereo peak −2.95 → −2.97 dBFS, correlation 0.658 → 0.657, mono fold-down loss 0.82 dB both.
+
+The first calibration run on this mix proposed 5 rows. Five faults caused that, and all are fixed and covered by tests:
+- a move's benefit summed every pair the stem touched, so many small overlaps justified moves no single conflict would;
+- conflicts below ~250 Hz counted, though position cannot separate them;
+- Supporting peers far apart in level were treated as competing;
+- decorrelated FX at −0.04 correlation read as phase-risky;
+- a Background stem that was already fairly wide qualified for "surround" widening.
+
+**Deliberately problematic mix.** The good mix with Stutter Expression widened to 160%, CZ V widened to 180% (correlation −0.56, 6.6 dB mono fold-down loss), Skimming Air narrowed to 40%, MasterEQ at 130%, Bleeps Bus Focal in every section, and an Outro note "Make the outro wider."
+
+- Top conflicts: Stutter Expression and MasterEQ at 0.6–1.5 kHz in every section (both Supporting; more than 6 dB apart in level, so no automatic mover), MasterEQ and Stutter Expression over Bleeps Bus (level problems), Skimming Air under Bleeps Bus in the Intro (both centered, field overlap 0.91), Bleeps Bus and Subway at 1.5–8.4 kHz (EQ suits it better).
+- Proposed, Normal: Stutter Expression global 160% → 100% and 25% right (mono safety: correlation 0.13 → 0.50, mono loss 2.5 → 1.3 dB); CZ V global 180% → 100% (correlation −0.56 → −0.04, mono loss 6.6 → 3.2 dB); Skimming Air in the Intro 40% → 70% and 25% left (surround; the center holds PunchBox, Bleeps Bus, and Bass Bus); and the Outro note as section rows: Stutter Expression 100% → 120% on top of its whole-song row, Skimming Air 40% → 60%, Phase Plant 2 100% → 120%. Subway was not widened for the note (correlation −0.01). Confidence 0.70–0.80, no review rows, no trim.
+- Review, as in the milestone's demonstration: Stutter Expression's balance edited +0.25 → +0.12, Skimming Air rejected, the rest accepted.
+- Bounces (stereo / mono fold-down): current peak −2.85 dBFS, correlation 0.567, lean 0.070, fold-down loss 1.06 dB; candidate −2.96 dBFS, 0.615, 0.048, 0.93 dB; reviewed −2.93 dBFS, 0.618, 0.061, 0.92 dB. The mono fold-down peak and RMS did not change (−4.25/−4.26 dBFS, −22.86 dBFS), as width never touches the mid.
+
+**Prediction vs audio.** An independent NumPy implementation of the spatial stage on the proxies, over each row's windows:
+
+| Row | Predicted correlation | Measured | Predicted mono loss | Measured |
+| --- | --- | --- | --- | --- |
+| Stutter Expression, global | 0.13 → 0.50 | 0.11 → 0.52 | 2.46 → 1.29 dB | 2.56 → 1.24 dB |
+| Skimming Air, Intro | 0.90 → 0.73 | 0.90 → 0.73 | 0.21 → 0.69 dB | 0.21 → 0.69 dB |
+| Skimming Air, Outro | 0.90 → 0.79 | 0.90 → 0.79 | 0.22 → 0.47 dB | 0.22 → 0.47 dB |
+| Phase Plant 2, Outro | 0.64 → 0.52 | 0.66 → 0.54 | 0.87 → 1.20 dB | 0.84 → 1.16 dB |
+| CZ V, global | −0.56 → −0.04 | −0.56 → −0.04 | 6.56 → 3.20 dB | 6.56 → 3.20 dB |
+
+**Audio engine.** Release build, same machine, tests run one at a time, 512-frame callbacks (10.67 ms budget), stereo noise stems paced in real time. Ranges are two runs with a Godot process using about 60% of one core in the background:
+
+| Stems | No processing | EQ (HPF + 2 bells + section bell) | EQ + pan, width, and two section pan/width windows |
+| --- | --- | --- | --- |
+| 32 | 0.18–0.19 ms (worst 0.38–1.44) | 0.55–0.57 ms (worst 1.4–2.2) | 0.45–0.49 ms (worst 0.80–0.90), 4.2–4.6% |
+| 64 | 0.28–0.33 ms (worst 0.73–1.03) | 1.0–1.5 ms (worst 2.2–3.4) | 0.98–2.13 ms (worst 2.9–4.0), 9.1–20% |
+
+Every run had 0 underruns. Run-to-run variance is larger than the cost of the spatial stage. Against the Milestone 4 engine built from the same commit on the same machine, the plain-mix throughput test (256 frames) measured 32×96 kHz 0.041 → 0.048–0.058 ms, 11×192 kHz 0.015 → 0.016–0.020 ms, and 64×48 kHz 0.115 → 0.132–0.139 ms after the per-block fast path (0.36 ms before it). The Generated 5 and Generated2 soaks played 141 s each with seeks, a loop, gain, mute, and solo, 0 underruns, callback about 0.3 ms.
+
+**Still open before Milestone 5 is complete:**
+- a physical listening pass on Current, Spatial Candidate, and the reviewed plan, in stereo and mono, for both mixes (`render-space-audition.py OUT_DIR --wav` writes the bounces), and ideally on headphones and speakers;
+- a GUI walk-through in the desktop app: Plan space, the conflicts, a row's field and focus, Current / Spatial Candidate, Bypassed / Recommended, editing pan and width (drag, Shift-drag, wheel, sliders), Accept, Reject, Apply accepted, Ctrl+Z, regenerate, a stale plan after an EQ or fader change, Cancel, the lane SPACE badge and width slider, and Analysis → Spatial interaction;
+- GitHub Actions on these changes.
+
 ## Explicitly later
 
-Dynamic EQ, compression, sidechain, multiband, transient shaping, de-essing, automatic stereo width or panning, saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.
+Dynamic EQ, compression, sidechain, multiband, transient shaping, de-essing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.

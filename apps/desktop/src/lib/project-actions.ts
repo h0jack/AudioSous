@@ -114,6 +114,7 @@ export function editTrack(
     customLabel?: string | null;
     gainDb?: number;
     pan?: number;
+    width?: number;
     muted?: boolean;
     solo?: boolean;
   },
@@ -125,7 +126,9 @@ export function editTrack(
       ? `gain:${trackId}`
       : patch.pan !== undefined
         ? `pan:${trackId}`
-        : patch.name !== undefined
+        : patch.width !== undefined
+          ? `width:${trackId}`
+          : patch.name !== undefined
           ? `name:${trackId}`
           : patch.customLabel !== undefined
             ? `label:${trackId}`

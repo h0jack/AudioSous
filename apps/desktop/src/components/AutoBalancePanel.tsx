@@ -47,7 +47,7 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
   const busy = balance.phase === "analyzing" || balance.phase === "planning";
 
   return (
-    <section className="flex max-h-[46%] min-h-0 flex-col border-t border-line bg-panel" aria-label="AutoBalance">
+    <section className="flex min-h-0 flex-1 flex-col border-t border-line bg-panel" aria-label="AutoBalance">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
         <h2 className="text-sm text-ink">AutoBalance</h2>
         <p className="text-xs text-faint">Balanced</p>
@@ -89,6 +89,7 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
             onClick={() => {
               useAppStore.getState().setBalance({ preview: true, auditionId: null });
               useAppStore.getState().setEq({ preview: false, auditionId: null });
+              useAppStore.getState().setSpace({ preview: false, auditionId: null });
             }}
           >
             AutoBalance
@@ -104,7 +105,7 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
           </Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+      <div className="min-h-0 flex-1 overflow-auto group-data-[collapsed=true]:hidden px-4 py-3">
         <p className="mb-2 max-w-3xl text-xs text-faint">{autoBalanceScope(document)}</p>
         {balance.progress ? (
           <p className="text-sm text-muted" role="status">
@@ -283,7 +284,10 @@ function audition(id: string, side: "original" | "recommended"): void {
   const balance = useAppStore.getState().balance;
   const same = balance.auditionId === id && balance.auditionSide === side;
   useAppStore.getState().setBalance(same ? { auditionId: null } : { auditionId: id, auditionSide: side, preview: false });
-  if (!same) useAppStore.getState().setEq({ preview: false, auditionId: null });
+  if (!same) {
+    useAppStore.getState().setEq({ preview: false, auditionId: null });
+    useAppStore.getState().setSpace({ preview: false, auditionId: null });
+  }
 }
 
 function focusRecommendation(document: ProjectDocument, change: GainRecommendation, playback: Playback): void {

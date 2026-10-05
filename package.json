@@ -13,7 +13,7 @@
     "generate-test-project": "npm run generate-test-project --workspace @audiosous/audio-files",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run tauri --workspace @audiosous/desktop -- dev",
-    "stress:audio": "cargo test -p audiosous-audio --release --lib -- --ignored --nocapture",
+    "stress:audio": "cargo test -p audiosous-audio --release --lib -- --ignored --nocapture --test-threads=1",
     "build": "npm run build --workspace @audiosous/desktop"
   },
   "devDependencies": {

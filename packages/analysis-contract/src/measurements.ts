@@ -296,3 +296,49 @@ export type EqBandsCacheEntry = z.infer<typeof eqBandsCacheSchema>;
 export function eqBandsCachePath(trackId: string): string {
   return `cache/analysis/${analysisCacheName(`${trackId}__eqbands`)}.json`;
 }
+
+/**
+ * Time-resolved stereo statistics for spatial planning, measured in Rust from the 48 kHz playback proxy:
+ * left power, right power, and the left/right correlation per frame, in 8 bands (the EQ grid's 24 bands
+ * taken three at a time). Versioned on its own; it does not invalidate the sidecar or EQ band caches.
+ */
+export const STEREO_FRAMES_VERSION = 1;
+export const STEREO_BANDS = 8;
+
+const stereoRowsSchema = z.array(z.array(z.number().finite().min(-200).max(80)).length(STEREO_BANDS)).max(400);
+
+export const stereoFramesSchema = z
+  .object({
+    version: z.literal(STEREO_FRAMES_VERSION),
+    sampleRate: z.number().int().positive(),
+    channels: z.number().int().positive().max(64),
+    durationSeconds: z.number().finite().nonnegative(),
+    hopSeconds: z.number().finite().positive(),
+    edgesHz: z.array(z.number().finite().positive()).length(STEREO_BANDS + 1),
+    leftDb: stereoRowsSchema,
+    rightDb: stereoRowsSchema,
+    correlation: z.array(z.array(z.number().finite().min(-1).max(1)).length(STEREO_BANDS)).max(400),
+  })
+  .refine((frames) => frames.leftDb.length === frames.rightDb.length && frames.leftDb.length === frames.correlation.length, {
+    message: "Stereo frame rows must line up.",
+  });
+
+export type StereoFrames = z.infer<typeof stereoFramesSchema>;
+
+export const stereoFramesCacheSchema = z.object({
+  kind: z.literal("stereo-frames"),
+  identity: z.object({
+    version: z.literal(STEREO_FRAMES_VERSION),
+    sourceSize: z.number().int().nonnegative(),
+    sourceModifiedNs: z.string(),
+    proxyVersion: z.number().int().positive(),
+    resamplerId: z.number().int().positive(),
+  }),
+  stereo: stereoFramesSchema,
+});
+
+export type StereoFramesCacheEntry = z.infer<typeof stereoFramesCacheSchema>;
+
+export function stereoFramesCachePath(trackId: string): string {
+  return `cache/analysis/${analysisCacheName(`${trackId}__stereo`)}.json`;
+}

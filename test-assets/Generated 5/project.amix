@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "project": {
     "id": "5bf8e22e-c501-4266-a067-da0154c77017",
     "name": "Generated 5",
     "createdAt": "2026-10-04T04:55:48.775Z",
-    "updatedAt": "2026-10-05T02:08:28.540Z",
+    "updatedAt": "2026-10-05T04:55:16.402Z",
     "sampleRate": 192000,
     "durationSeconds": 141.428421875
   },
@@ -28,6 +28,7 @@
       },
       "gainDb": 0.5,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -54,6 +55,7 @@
       },
       "gainDb": 0,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -80,6 +82,7 @@
       },
       "gainDb": 0,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -106,6 +109,7 @@
       },
       "gainDb": 0,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -130,8 +134,9 @@
         "durationSeconds": 141.428421875,
         "fileSizeBytes": 217234790
       },
-      "gainDb": 0,
+      "gainDb": 4,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -158,6 +163,7 @@
       },
       "gainDb": 0,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -182,8 +188,9 @@
         "durationSeconds": 141.428421875,
         "fileSizeBytes": 217234790
       },
-      "gainDb": 0,
+      "gainDb": 4,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -210,6 +217,7 @@
       },
       "gainDb": 0.7,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -236,6 +244,7 @@
       },
       "gainDb": -2.3,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -262,6 +271,7 @@
       },
       "gainDb": 0,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -288,6 +298,7 @@
       },
       "gainDb": 0,
       "pan": 0,
+      "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
@@ -356,16 +367,19 @@
     "trackId": null
   },
   "uiState": {
-    "selectedTrackId": null,
+    "selectedTrackId": "4a0baab5-be3a-4459-bef6-03e9e53d25e8",
     "selectedSectionId": null,
-    "timeRange": null,
+    "timeRange": {
+      "start": 101.30777718466277,
+      "end": 116.65145067108716
+    },
     "loop": {
-      "enabled": true,
-      "start": 53.513251100719636,
-      "end": 69.67005001598805,
+      "enabled": false,
+      "start": 101.30777718466277,
+      "end": 116.65145067108716,
       "sectionId": null
     },
-    "playheadSeconds": 0,
+    "playheadSeconds": 141.39733333333334,
     "timelineZoom": 1,
     "timelineScroll": 0
   }

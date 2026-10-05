@@ -15,10 +15,11 @@ use rubato::{
 
 use crate::eq::{EqRuntime, EqTable, FilterSpec, PublishedEq, TrackEqInput};
 use crate::mix::{
-    equal_power_pan, linear_gain, scheduled_linear_gain, GainRegion, MixSnapshot, PublishedGainSchedule, PublishedMix,
+    linear_gain, scheduled_linear_gain, GainRegion, MixSnapshot, PublishedGainSchedule, PublishedMix,
     TrackMix, MAX_GAIN_REGIONS,
 };
 use crate::proxy::{ensure_proxy, ProxyReader, PLAYBACK_RATE};
+use crate::spatial::{spatial_frame, PublishedSpatial, SpatialParams, SpatialRegionInput, SpatialRuntime, SpatialTable};
 
 const MAX_TRACKS: usize = 64;
 const WORKERS: usize = 4;
@@ -55,6 +56,23 @@ pub struct TrackEqRegion {
     pub filters: Vec<FilterSpec>,
 }
 
+/// Spatial state for one track: whole-song pan and width, then section windows that replace them.
+#[derive(Clone, Debug)]
+pub struct TrackSpatial {
+    pub track_id: String,
+    pub pan: f32,
+    pub width: f32,
+    pub regions: Vec<TrackSpatialRegion>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrackSpatialRegion {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub pan: f32,
+    pub width: f32,
+}
+
 #[derive(Clone)]
 pub struct LoadedTrack {
     pub id: String,
@@ -65,6 +83,8 @@ pub struct LoadedTrack {
     pub source_modified_ns: u64,
     pub gain_db: f32,
     pub pan: f32,
+    /// Stereo width, 1.0 = as recorded. Ignored on a mono proxy.
+    pub width: f32,
     pub muted: bool,
     pub solo: bool,
 }
@@ -108,6 +128,8 @@ struct SharedRings {
     device: UnsafeCell<Option<Consumer<f32>>>,
     /// Filter memory and ramps. Same owner rule as the ring consumers.
     eq: UnsafeCell<EqRuntime>,
+    /// Pan and width ramps and section assignment. Same owner rule as the ring consumers.
+    spatial: UnsafeCell<SpatialRuntime>,
 }
 
 impl SharedRings {
@@ -116,7 +138,13 @@ impl SharedRings {
             tracks: UnsafeCell::new(Vec::new()),
             device: UnsafeCell::new(None),
             eq: UnsafeCell::new(EqRuntime::new()),
+            spatial: UnsafeCell::new(SpatialRuntime::new()),
         }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    fn spatial(&self) -> &mut SpatialRuntime {
+        unsafe { &mut *self.spatial.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -158,6 +186,7 @@ struct TrackState {
     source_modified_ns: u64,
     gain_db: f32,
     pan: f32,
+    width: f32,
     muted: bool,
     solo: bool,
     channels: u16,
@@ -180,6 +209,7 @@ impl TrackState {
             source_modified_ns: track.source_modified_ns,
             gain_db: track.gain_db,
             pan: track.pan,
+            width: track.width,
             muted: track.muted,
             solo: track.solo,
             channels: 0,
@@ -200,6 +230,7 @@ struct Realtime {
     published: PublishedMix,
     gain_schedule: PublishedGainSchedule,
     eq: PublishedEq,
+    spatial: PublishedSpatial,
     gains: [AtomicU32; MAX_TRACKS],
     produced: [AtomicU64; MAX_TRACKS],
     consumed: [AtomicU64; MAX_TRACKS],
@@ -244,6 +275,7 @@ impl Realtime {
             published: PublishedMix::silent(),
             gain_schedule: PublishedGainSchedule::empty(),
             eq: PublishedEq::empty(),
+            spatial: PublishedSpatial::empty(),
             gains: std::array::from_fn(|_| AtomicU32::new(1.0_f32.to_bits())),
             produced: std::array::from_fn(|_| AtomicU64::new(0)),
             consumed: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -310,6 +342,7 @@ enum Command {
     SetLoop(Option<(f64, f64)>),
     SetGainRegions(Vec<TrackGainRegion>),
     SetEq(Vec<TrackEq>),
+    SetSpatial(Vec<TrackSpatial>),
     ProxyReady {
         load_id: u64,
         index: usize,
@@ -351,6 +384,8 @@ struct Control {
     stream: Option<Output>,
     loop_region: Option<(u64, u64)>,
     playing: bool,
+    /// Section spatial windows as last sent, re-published whenever a track's own pan or width moves.
+    spatial_regions: Vec<(String, TrackSpatialRegion)>,
 }
 
 pub struct Engine {
@@ -399,6 +434,7 @@ impl Engine {
                     stream: None,
                     loop_region: None,
                     playing: false,
+                    spatial_regions: Vec::new(),
                 };
                 control.run();
             })
@@ -472,6 +508,12 @@ impl Engine {
     /// Replaces every track's EQ. Tracks that are not listed run flat. Changes ramp over about 30 ms.
     pub fn set_eq(&self, tracks: Vec<TrackEq>) {
         let _ = self.send(Command::SetEq(tracks));
+    }
+
+    /// Sets pan and width for the listed tracks and replaces every section spatial window.
+    /// Tracks that are not listed keep their pan and width. Changes ramp over 30 ms.
+    pub fn set_spatial(&self, tracks: Vec<TrackSpatial>) {
+        let _ = self.send(Command::SetSpatial(tracks));
     }
 
     pub fn status(&self) -> EngineStatus {
@@ -590,6 +632,10 @@ impl Control {
                 self.publish_eq(tracks);
                 false
             }
+            Command::SetSpatial(tracks) => {
+                self.set_spatial(tracks);
+                false
+            }
             Command::ProxyReady {
                 load_id,
                 index,
@@ -621,6 +667,7 @@ impl Control {
             self.rt.rings.tracks().clear();
             *self.rt.rings.device() = None;
             self.rt.rings.eq().reset();
+            self.rt.rings.spatial().reset();
         }
         self.rt.track_count.store(0, Ordering::Release);
         self.rt.proxy_ready.store(0, Ordering::Release);
@@ -631,11 +678,13 @@ impl Control {
         self.rt.presented.store(0, Ordering::Release);
         self.rt.gain_schedule.publish(&[]);
         self.rt.eq.publish(&EqTable::empty());
+        self.spatial_regions.clear();
         for index in 0..MAX_TRACKS {
             self.rt.produced[index].store(0, Ordering::Relaxed);
             self.rt.consumed[index].store(0, Ordering::Relaxed);
         }
         *self.rt.ids.lock().expect("ids") = tracks.iter().map(|track| track.id.clone()).collect();
+        self.publish_spatial();
         self.set_state(STATE_STOPPED);
         self.set_message("");
         self.resume_workers();
@@ -834,6 +883,8 @@ impl Control {
         }
         self.pause_workers();
         self.rt.wait_audio_idle();
+        // The output is silent until the rings refill, so pan and width start at their new values.
+        self.rt.rings.spatial().snap();
         let frame = seconds_to_frame(seconds);
         self.apply_loop_atomics();
         {
@@ -946,6 +997,66 @@ impl Control {
         }
         drop(tracks);
         self.publish_from_tracks();
+        if pan.is_some() {
+            self.publish_spatial();
+        }
+    }
+
+    fn set_spatial(&mut self, updates: Vec<TrackSpatial>) {
+        {
+            let tracks = self.tracks.read().expect("tracks");
+            for update in &updates {
+                for slot in tracks.iter() {
+                    let mut track = slot.lock().expect("track");
+                    if track.id == update.track_id {
+                        let params = SpatialParams { pan: update.pan, width: update.width }.sanitized();
+                        track.pan = params.pan;
+                        track.width = params.width;
+                        break;
+                    }
+                }
+            }
+        }
+        self.spatial_regions = updates
+            .into_iter()
+            .flat_map(|update| {
+                let id = update.track_id;
+                update.regions.into_iter().map(move |region| (id.clone(), region))
+            })
+            .collect();
+        self.publish_from_tracks();
+        self.publish_spatial();
+    }
+
+    /// Whole-song pan and width from the track state, plus the section windows, as one table.
+    fn publish_spatial(&self) {
+        let ids = self.rt.ids.lock().expect("ids");
+        let tracks = self.tracks.read().expect("tracks");
+        let base: Vec<(usize, SpatialParams)> = tracks
+            .iter()
+            .enumerate()
+            .take(MAX_TRACKS)
+            .map(|(index, slot)| {
+                let track = slot.lock().expect("track");
+                (index, SpatialParams { pan: track.pan, width: track.width })
+            })
+            .collect();
+        drop(tracks);
+        let regions: Vec<SpatialRegionInput> = self
+            .spatial_regions
+            .iter()
+            .filter_map(|(id, region)| {
+                let index = ids.iter().position(|item| item == id)?;
+                Some(SpatialRegionInput {
+                    track_index: index,
+                    start_frame: seconds_to_frame(region.start_seconds),
+                    end_frame: seconds_to_frame(region.end_seconds),
+                    params: SpatialParams { pan: region.pan, width: region.width },
+                })
+            })
+            .collect();
+        drop(ids);
+        self.rt.spatial.publish(&SpatialTable::build(&base, &regions));
     }
 
     fn publish_gain_regions(&self, regions: Vec<TrackGainRegion>) {
@@ -1079,6 +1190,10 @@ impl Control {
             }
             Ok(Command::SetEq(tracks)) => {
                 self.publish_eq(tracks);
+                Ok(Poll::Continue)
+            }
+            Ok(Command::SetSpatial(tracks)) => {
+                self.set_spatial(tracks);
                 Ok(Poll::Continue)
             }
             Ok(Command::ProxyReady {
@@ -1369,14 +1484,14 @@ fn mix_consumers(
     out: &mut [f32],
 ) -> (u64, Option<usize>) {
     let mut gains = [0.0_f32; MAX_TRACKS];
-    let mut pan = [(0.0_f32, 0.0_f32); MAX_TRACKS];
     for index in 0..mix.count.min(MAX_TRACKS) {
         gains[index] = f32::from_bits(rt.gains[index].load(Ordering::Relaxed));
-        pan[index] = equal_power_pan(mix.tracks[index].pan);
     }
     let schedule = rt.gain_schedule.load();
     let eq = rt.rings.eq();
     eq.refresh(&rt.eq);
+    let spatial = rt.rings.spatial();
+    spatial.refresh(&rt.spatial);
     let origin = rt
         .prime_frame
         .load(Ordering::Relaxed)
@@ -1390,6 +1505,17 @@ fn mix_consumers(
     let mut underrun_track = None;
     let mut counted = [false; MAX_TRACKS];
     let mut pulled = [0_u64; MAX_TRACKS];
+    // Tracks whose width and pan hold for the whole block skip per-frame spatial bookkeeping.
+    let mut constant = [None; MAX_TRACKS];
+    if frames > 0 {
+        let first = playback_frame(origin, 0, loop_start, loop_end);
+        let last = playback_frame(origin, frames as u64 - 1, loop_start, loop_end);
+        if last >= first && last - first == frames as u64 - 1 {
+            for (track_index, slot) in constant.iter_mut().enumerate().take(mix.count.min(consumers.len()).min(MAX_TRACKS)) {
+                *slot = spatial.block_constant(track_index, first, last);
+            }
+        }
+    }
     for frame in 0..frames {
         let mut left = 0.0;
         let mut right = 0.0;
@@ -1412,19 +1538,17 @@ fn mix_consumers(
             let mut sample = [0.0_f32; 2];
             if pull_frame(&mut consumers[track_index], channels, &mut sample) {
                 pulled[track_index] += 1;
-                // Per-track process stage: static EQ before gain and pan.
+                // Per-track process stage: static EQ, then width and pan/balance, then the fader.
                 if eq.track_live(track_index) {
                     eq.process(track_index, file_frame, channels, &mut sample);
                 }
-                let (pan_left, pan_right) = pan[track_index];
+                let (placed_left, placed_right) = match constant[track_index] {
+                    Some((width, coefs)) => spatial_frame(channels, sample, width, coefs),
+                    None => spatial.process(track_index, file_frame, channels, sample),
+                };
                 let gain = gains[track_index];
-                if channels == 1 {
-                    left += sample[0] * gain * pan_left;
-                    right += sample[0] * gain * pan_right;
-                } else {
-                    left += sample[0] * gain * pan_left;
-                    right += sample[1] * gain * pan_right;
-                }
+                left += placed_left * gain;
+                right += placed_right * gain;
             } else if eof_bits & (1 << track_index) == 0 && !counted[track_index] {
                 counted[track_index] = true;
                 underruns += 1;
@@ -1913,6 +2037,7 @@ mod tests {
             source_modified_ns: 1,
             gain_db: 0.0,
             pan: 0.0,
+            width: 1.0,
             muted: false,
             solo: false,
         }
@@ -2430,6 +2555,7 @@ mod tests {
                         source_modified_ns: 1,
                         gain_db: 0.0,
                         pan: 0.0,
+                        width: 1.0,
                         muted: false,
                         solo: false,
                     }
@@ -2516,6 +2642,7 @@ mod tests {
                         source_modified_ns: 1,
                         gain_db: 0.0,
                         pan: 0.0,
+                        width: 1.0,
                         muted: false,
                         solo: false,
                     }
@@ -2623,6 +2750,7 @@ mod tests {
                         source_modified_ns: modified_ns,
                         gain_db: track["gainDb"].as_f64().unwrap_or(0.0) as f32,
                         pan: track["pan"].as_f64().unwrap_or(0.0) as f32,
+                        width: track["width"].as_f64().unwrap_or(1.0) as f32,
                         muted: track["muted"].as_bool().unwrap_or(false),
                         solo: track["solo"].as_bool().unwrap_or(false),
                     }
@@ -2721,6 +2849,300 @@ mod tests {
             assert_eq!(status.underruns, 0, "{name} underruns after seek");
             engine.shutdown();
         }
+    }
+
+    /// 48 kHz float stereo WAV.
+    fn write_wav_stereo(path: &std::path::Path, frames: usize, sample: impl Fn(usize) -> (f32, f32)) {
+        let mut body = Vec::with_capacity(44 + frames * 8);
+        let data_bytes = (frames * 8) as u32;
+        body.extend_from_slice(b"RIFF");
+        body.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        body.extend_from_slice(b"WAVE");
+        body.extend_from_slice(b"fmt ");
+        body.extend_from_slice(&16_u32.to_le_bytes());
+        body.extend_from_slice(&3_u16.to_le_bytes());
+        body.extend_from_slice(&2_u16.to_le_bytes());
+        body.extend_from_slice(&48_000_u32.to_le_bytes());
+        body.extend_from_slice(&(48_000_u32 * 8).to_le_bytes());
+        body.extend_from_slice(&8_u16.to_le_bytes());
+        body.extend_from_slice(&32_u16.to_le_bytes());
+        body.extend_from_slice(b"data");
+        body.extend_from_slice(&data_bytes.to_le_bytes());
+        for frame in 0..frames {
+            let (left, right) = sample(frame);
+            body.extend_from_slice(&left.to_le_bytes());
+            body.extend_from_slice(&right.to_le_bytes());
+        }
+        fs::write(path, body).unwrap();
+    }
+
+    fn stereo_track(dir: &std::path::Path, name: &str, frames: usize, sample: impl Fn(usize) -> (f32, f32)) -> LoadedTrack {
+        let source = dir.join(format!("{name}.wav"));
+        let proxy = dir.join(format!("{name}.proxy"));
+        write_wav_stereo(&source, frames, sample);
+        let size = fs::metadata(&source).unwrap().len();
+        ensure_proxy(&source, &proxy, size, 1, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        LoadedTrack {
+            id: name.into(),
+            label: name.into(),
+            source_path: source,
+            proxy_path: proxy,
+            source_size: size,
+            source_modified_ns: 1,
+            gain_db: 0.0,
+            pan: 0.0,
+            width: 1.0,
+            muted: false,
+            solo: false,
+        }
+    }
+
+    /// Two independent noise channels, deterministic per seed.
+    fn noise_pair(seed: u32) -> impl Fn(usize) -> (f32, f32) {
+        move |frame| {
+            let hash = |value: u32| {
+                let mut x = value.wrapping_mul(0x85eb_ca6b) ^ seed;
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                (x as f32 / u32::MAX as f32 - 0.5) * 0.4
+            };
+            (hash(frame as u32 * 2), hash(frame as u32 * 2 + 1))
+        }
+    }
+
+    fn correlation_of(block: &[f32]) -> (f64, f64, f64) {
+        let (mut ll, mut rr, mut lr) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for frame in block.chunks(2) {
+            let (left, right) = (f64::from(frame[0]), f64::from(frame[1]));
+            ll += left * left;
+            rr += right * right;
+            lr += left * right;
+        }
+        (lr / (ll * rr).sqrt().max(1e-30), ll, rr)
+    }
+
+    fn render(engine: &Engine, seconds: f64) -> Vec<f32> {
+        let mut block = vec![0.0_f32; 2 * 480];
+        let mut out = Vec::new();
+        while (out.len() as f64) < seconds * 2.0 * 48_000.0 {
+            engine.render_block(&mut block);
+            out.extend_from_slice(&block);
+        }
+        out
+    }
+
+    /// Width sits after EQ and before pan and the fader. Width 0 folds a decorrelated stem to mono,
+    /// width 2 pushes its correlation to (1 − 4) / (1 + 4), and a section window applies only inside it.
+    #[test]
+    fn spatial_plays_through_the_mix_and_section_windows_replace_it() {
+        let dir = env::temp_dir().join(format!("audiosous-spatial-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let wide = stereo_track(&dir, "wide", 48_000 * 6, noise_pair(17));
+        let engine = Engine::offline();
+        engine.load(vec![wide]).unwrap();
+        engine.set_spatial(vec![TrackSpatial {
+            track_id: "wide".into(),
+            pan: 0.0,
+            width: 0.0,
+            regions: vec![TrackSpatialRegion { start_seconds: 3.0, end_seconds: 6.0, pan: 0.0, width: 2.0 }],
+        }]);
+        engine.play(0.0).unwrap();
+        let early = render(&engine, 2.0);
+        let (corr, ll, rr) = correlation_of(&early[2 * 4_800..]);
+        assert!(corr > 0.999, "width 0 should be mono, correlation {corr}");
+        assert!((ll / rr - 1.0).abs() < 1e-3);
+        let _ = render(&engine, 1.2);
+        let late = render(&engine, 1.5);
+        let (corr, _, _) = correlation_of(&late);
+        assert!((corr + 0.6).abs() < 0.05, "width 2 in the section, correlation {corr}");
+        assert_eq!(engine.status().underruns, 0);
+        engine.shutdown();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A stereo stem moved with balance scales each channel only; a mono stem pans; a seek into a section
+    /// starts at the section's values instead of ramping from the old ones.
+    #[test]
+    fn balance_pan_and_a_seek_into_a_spatial_section() {
+        let dir = env::temp_dir().join(format!("audiosous-balance-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let stereo = stereo_track(&dir, "stereo", 48_000 * 6, |frame| ((frame as f32 * 0.05).sin() * 0.5, 0.0));
+        let mono = track(&dir, "mono", 48_000 * 6, |frame| (frame as f32 * 0.03).sin() * 0.5);
+        let engine = Engine::offline();
+        engine.load(vec![stereo, mono]).unwrap();
+        engine.set_track("mono", Some(-96.0), None, None, None);
+        engine.set_spatial(vec![
+            TrackSpatial { track_id: "stereo".into(), pan: 1.0, width: 1.0, regions: vec![] },
+            TrackSpatial {
+                track_id: "mono".into(),
+                pan: 0.0,
+                width: 1.0,
+                regions: vec![TrackSpatialRegion { start_seconds: 4.0, end_seconds: 6.0, pan: -1.0, width: 1.0 }],
+            },
+        ]);
+        engine.play(0.0).unwrap();
+        let block = render(&engine, 1.0);
+        let (_, ll, rr) = correlation_of(&block[2 * 4_800..]);
+        // All the content is on the left channel and balance is hard right: nothing crosses over.
+        assert!(ll < 1e-9, "left leaked {ll}");
+        assert!(rr < 1e-9, "the source right channel is silent, so balance has nothing to pass {rr}");
+        engine.set_track("stereo", Some(-96.0), None, None, None);
+        engine.set_track("mono", Some(0.0), None, None, None);
+        engine.seek(4.5);
+        thread::sleep(Duration::from_millis(50));
+        engine.play(4.5).unwrap();
+        let mut first = vec![0.0_f32; 2 * 256];
+        engine.render_block(&mut first);
+        let (_, ll, rr) = correlation_of(&first[2 * 64..]);
+        assert!(rr < ll * 1e-6, "the seek landed hard left, right {rr} left {ll}");
+        engine.shutdown();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The callback with EQ and spatial processing on, through a spatial table change and section edges:
+    /// no allocation or free.
+    #[test]
+    fn callback_with_eq_and_spatial_does_not_allocate() {
+        use crate::eq::{FilterKind, FilterSpec};
+        let dir = env::temp_dir().join(format!("audiosous-spatial-alloc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let tracks: Vec<LoadedTrack> = (0..8).map(|index| stereo_track(&dir, &format!("t{index}"), 48_000 * 3, noise_pair(index + 1))).collect();
+        let engine = Engine::offline();
+        engine.load(tracks).unwrap();
+        engine.set_eq(
+            (0..8)
+                .map(|index| TrackEq {
+                    track_id: format!("t{index}"),
+                    filters: vec![FilterSpec { kind: FilterKind::Bell, frequency_hz: 2_400.0, gain_db: -1.5, q: 1.0 }],
+                    regions: vec![],
+                })
+                .collect(),
+        );
+        let spatial = |width: f32| -> Vec<TrackSpatial> {
+            (0..8)
+                .map(|index| TrackSpatial {
+                    track_id: format!("t{index}"),
+                    pan: index as f32 / 8.0 - 0.5,
+                    width,
+                    regions: vec![TrackSpatialRegion { start_seconds: 0.3, end_seconds: 0.6, pan: 0.2, width: 1.4 }],
+                })
+                .collect()
+        };
+        engine.set_spatial(spatial(1.2));
+        engine.play(0.0).unwrap();
+        let mut block = vec![0.0_f32; 1_024];
+        engine.render_block(&mut block);
+        let ((), first) = counting::watch(|| {
+            for _ in 0..40 {
+                engine.render_block(&mut block);
+            }
+        });
+        engine.set_spatial(spatial(0.8));
+        thread::sleep(Duration::from_millis(30));
+        let ((), second) = counting::watch(|| {
+            for _ in 0..20 {
+                engine.render_block(&mut block);
+            }
+        });
+        let ((), probe) = counting::watch(|| drop(std::hint::black_box(vec![0_u8; 16])));
+        assert!(probe >= 1, "the allocation counter is not counting");
+        assert_eq!(first, 0, "callback allocated {first} times");
+        assert_eq!(second, 0, "callback allocated {second} times after a spatial update");
+        assert!(block.iter().all(|sample| sample.is_finite()));
+        engine.shutdown();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Callback cost with the processing Milestones 4 and 5 add together: 32 and 64 stereo stems,
+    /// none, EQ only (high-pass + 2 bells + a section bell), and EQ plus pan, width, and a section
+    /// pan/width window on every stem. Paced in real time so readers are not starved.
+    #[test]
+    #[ignore = "EQ + spatial callback cost"]
+    fn stress_spatial_callback_cost() {
+        use crate::eq::{FilterKind, FilterSpec};
+        let dir = env::temp_dir().join(format!("audiosous-spatial-stress-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let bell = |frequency_hz: f32, gain_db: f32| FilterSpec { kind: FilterKind::Bell, frequency_hz, gain_db, q: 1.0 };
+        let hpf = FilterSpec { kind: FilterKind::HighPass, frequency_hz: 70.0, gain_db: 0.0, q: 0.707 };
+        for tracks in [32_usize, 64] {
+            let loaded: Vec<LoadedTrack> = (0..tracks)
+                .map(|index| stereo_track(&dir, &format!("s{tracks}-{index}"), 48_000 * 6, noise_pair(0x9e37_79b9_u32.wrapping_mul(index as u32 + 1))))
+                .map(|mut track| {
+                    track.gain_db = -12.0;
+                    track
+                })
+                .collect();
+            for load in ["none", "eq", "eq+spatial"] {
+                let engine = Engine::offline();
+                engine.load(loaded.clone()).unwrap();
+                if load != "none" {
+                    engine.set_eq(
+                        loaded
+                            .iter()
+                            .map(|track| TrackEq {
+                                track_id: track.id.clone(),
+                                filters: vec![hpf, bell(250.0, -1.0), bell(2_400.0, -1.5)],
+                                regions: vec![TrackEqRegion { start_seconds: 1.0, end_seconds: 2.0, filters: vec![bell(1_800.0, -1.0)] }],
+                            })
+                            .collect(),
+                    );
+                }
+                if load == "eq+spatial" {
+                    engine.set_spatial(
+                        loaded
+                            .iter()
+                            .enumerate()
+                            .map(|(index, track)| TrackSpatial {
+                                track_id: track.id.clone(),
+                                pan: (index as f32 / tracks as f32) - 0.5,
+                                width: 0.8 + (index % 5) as f32 * 0.1,
+                                regions: vec![
+                                    TrackSpatialRegion { start_seconds: 1.0, end_seconds: 2.0, pan: 0.25, width: 1.35 },
+                                    TrackSpatialRegion { start_seconds: 3.0, end_seconds: 4.0, pan: -0.25, width: 0.9 },
+                                ],
+                            })
+                            .collect(),
+                    );
+                }
+                engine.play(0.0).unwrap();
+                let mut block = vec![0.0_f32; 1_024];
+                let block_duration = Duration::from_secs_f64(512.0 / f64::from(PLAYBACK_RATE));
+                let callbacks = 420_u32;
+                let mut total = 0_u128;
+                let mut worst = 0_u128;
+                let started = Instant::now();
+                for index in 0..callbacks {
+                    let tick = Instant::now();
+                    engine.render_block(&mut block);
+                    let spent = tick.elapsed().as_nanos();
+                    total += spent;
+                    worst = worst.max(spent);
+                    let due = started + block_duration.saturating_mul(index + 1);
+                    if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                        thread::sleep(wait);
+                    }
+                }
+                let status = engine.status();
+                let average = total as f64 / f64::from(callbacks) / 1_000_000.0;
+                let budget = 512.0 / f64::from(PLAYBACK_RATE) * 1_000.0;
+                eprintln!(
+                    "spatial-stress stereo tracks={tracks} load={load} callback avg={average:.3}ms max={:.3}ms budget={budget:.2}ms ({:.1}% avg) underruns={}",
+                    worst as f64 / 1_000_000.0,
+                    average / budget * 100.0,
+                    status.underruns
+                );
+                assert!(block.iter().all(|sample| sample.is_finite()));
+                assert_eq!(status.underruns, 0, "{tracks} tracks with {load} underran");
+                assert!(average < budget * 0.5, "{tracks} tracks with {load} used {average:.3} ms of {budget:.2} ms");
+                engine.shutdown();
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn write_wav_rate(

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { assertSafeRelativePath } from "./paths";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const GAIN_DB_MIN = -96;
 export const GAIN_DB_MAX = 12;
@@ -107,6 +107,18 @@ export const EQ_LIMITS = {
   maxQ: 10,
 } as const;
 
+/**
+ * Spatial controls. Pan is -1 (left) … +1 (right): equal-power pan on a mono stem, balance on a stereo stem.
+ * Width scales the side signal of a stereo stem: 0 is mono, 1 leaves it as recorded, 2 is the technical cap.
+ * Width does nothing on a mono stem; Audiosous never synthesizes stereo.
+ */
+export const SPATIAL_LIMITS = {
+  minPan: -1,
+  maxPan: 1,
+  minWidth: 0,
+  maxWidth: 2,
+} as const;
+
 /** Track-wide filters per track, and extra filters per Track × Section. The native engine reserves exactly these slots. */
 export const MAX_TRACK_EQ_NODES = 6;
 export const MAX_SECTION_EQ_NODES = 4;
@@ -165,10 +177,12 @@ export const trackSchema = z.object({
     fileSizeBytes: z.number().int().nonnegative(),
   }),
   gainDb: z.number().finite().min(GAIN_DB_MIN).max(GAIN_DB_MAX),
-  pan: z.number().finite().min(-1).max(1),
+  pan: z.number().finite().min(SPATIAL_LIMITS.minPan).max(SPATIAL_LIMITS.maxPan),
+  /** Stereo width, 1 = as recorded. Applied after EQ and before pan/balance. Ignored on a mono stem. */
+  width: z.number().finite().min(SPATIAL_LIMITS.minWidth).max(SPATIAL_LIMITS.maxWidth),
   muted: z.boolean(),
   solo: z.boolean(),
-  /** Track-wide processing, before gain and pan. Applies to the whole song. */
+  /** Track-wide processing, before width, pan, and gain. Applies to the whole song. */
   processing: processingGraphSchema,
 });
 
@@ -195,7 +209,9 @@ export const trackSectionStateSchema = z.object({
   prominence: z.enum(["primary", "focal", "supporting"]).nullable(),
   overrides: z.object({
     gainDb: z.number().finite().min(GAIN_DB_MIN).max(GAIN_DB_MAX).nullable(),
-    pan: z.number().finite().min(-1).max(1).nullable(),
+    pan: z.number().finite().min(SPATIAL_LIMITS.minPan).max(SPATIAL_LIMITS.maxPan).nullable(),
+    /** Replaces the track's width inside this section, like the gain and pan overrides. */
+    width: z.number().finite().min(SPATIAL_LIMITS.minWidth).max(SPATIAL_LIMITS.maxWidth).nullable(),
   }),
   /** Added after the track's own processing while playback is inside this section. It never replaces track nodes. */
   processing: sectionProcessingGraphSchema,

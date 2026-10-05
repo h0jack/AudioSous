@@ -24,11 +24,31 @@ function migrateV1ToV2(document: unknown): unknown {
   return { ...source, schemaVersion: 2, tracks, sectionTrackSettings: settings };
 }
 
+/**
+ * v2 → v3: tracks gain a stereo width (1 = as recorded) and Track × Section overrides gain a width override.
+ * Pan and the section pan override keep their meaning, so nothing a v2 file stored changes how it sounds.
+ */
+function migrateV2ToV3(document: unknown): unknown {
+  const source = document as Record<string, unknown>;
+  const tracks = Array.isArray(source.tracks)
+    ? source.tracks.map((track) => (isRecord(track) ? { ...track, width: 1 } : track))
+    : source.tracks;
+  const settings = Array.isArray(source.sectionTrackSettings)
+    ? source.sectionTrackSettings.map((row) =>
+        isRecord(row) && isRecord(row.overrides) ? { ...row, overrides: { ...row.overrides, width: null } } : row,
+      )
+    : source.sectionTrackSettings;
+  return { ...source, schemaVersion: 3, tracks, sectionTrackSettings: settings };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export const MIGRATIONS: readonly SchemaMigration[] = [{ fromVersion: 1, toVersion: 2, migrate: migrateV1ToV2 }];
+export const MIGRATIONS: readonly SchemaMigration[] = [
+  { fromVersion: 1, toVersion: 2, migrate: migrateV1ToV2 },
+  { fromVersion: 2, toVersion: 3, migrate: migrateV2ToV3 },
+];
 
 export function readSchemaVersion(document: unknown): number {
   if (typeof document !== "object" || document === null || Array.isArray(document)) {

@@ -9,6 +9,7 @@ export {
   GAIN_DB_MAX,
   GAIN_DB_MIN,
   SCHEMA_VERSION,
+  SPATIAL_LIMITS,
   SECTION_TYPE_LABELS,
   SECTION_TYPES,
   TRACK_ROLE_IDS,
@@ -67,6 +68,21 @@ export {
   setTrackEqNodes,
   trackEqNodes,
 } from "./processing";
+export {
+  NEUTRAL_SPATIAL,
+  hasSavedSpatial,
+  isMonoTrack,
+  normalizePan,
+  normalizeWidth,
+  sectionSpatialOverride,
+  setSectionSpatial,
+  setTrackSpatial,
+  spatialAt,
+  spatialForSection,
+  spatialIdentity,
+  trackSpatial,
+} from "./spatial";
+export type { SpatialSetting } from "./spatial";
 export { sectionSettingInUse, addManualSection, applyAutomaticSections, clearSuggestedSections, mergeSectionWithNext, moveSectionBoundary, removeSection, sectionAtTime, setTrackSectionState, splitSection, updateSection } from "./sections";
 export type { NewSectionInput, SectionEditResult, SuggestedSection } from "./sections";
 export type { CreateProjectInput, NewTrackInput } from "./create-project";

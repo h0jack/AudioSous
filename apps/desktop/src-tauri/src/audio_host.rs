@@ -27,8 +27,14 @@ pub struct AudioLoadTrack {
     pub relative_path: String,
     pub gain_db: f32,
     pub pan: f32,
+    #[serde(default = "unity_width")]
+    pub width: f32,
     pub muted: bool,
     pub solo: bool,
+}
+
+fn unity_width() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +81,7 @@ pub fn load_project(host: &AudioHost, request: AudioLoadRequest) -> Result<(), S
             source_modified_ns: modified_ns,
             gain_db: track.gain_db,
             pan: track.pan,
+            width: track.width,
             muted: track.muted,
             solo: track.solo,
         });

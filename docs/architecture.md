@@ -14,7 +14,8 @@ Audiosous/
 │   ├── audio-engine/      Playback interface. Desktop uses the Rust engine; the browser preview uses Web Audio.
 │   ├── analysis-contract/ Versioned JSON DTOs for the analysis sidecar and the EQ band cache
 │   ├── balance-planner/   Deterministic gain-only AutoBalance. No DSP and no network.
-│   └── eq-planner/        Frequency interaction analysis and deterministic static-EQ planning. No network.
+│   ├── eq-planner/        Frequency interaction analysis and deterministic static-EQ planning. No network.
+│   └── spatial-planner/   Stereo-field interaction analysis and deterministic pan/width planning. No network.
 ├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
 └── test-assets/           Reserved for generated stems in a later slice
@@ -32,9 +33,11 @@ apps/desktop
   → analysis-contract
   → balance-planner
   → eq-planner
+  → spatial-planner
 
 balance-planner → project-model, analysis-contract
 eq-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom)
+spatial-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom), eq-planner (spectral model, pairs)
 audio-engine → project-model
 services/analysis  has no dependency on the UI
 ```
@@ -56,13 +59,14 @@ There is no cloud client, account system, or upload step.
 
 ## Project schema
 
-The on-disk document is schema version 2. The shape is **song → sections → tracks → track × section**. Tracks, manual sections, section intent, and track × section intent can be edited.
+The on-disk document is schema version 3. The shape is **song → sections → tracks → track × section**. Tracks, manual sections, section intent, and track × section intent can be edited.
 
 Persisted now:
 
 - sections, including source, confidence, and `structuralGroupId`
 - a per-track processing graph of static EQ nodes (schema v2, see [Frequency interaction and EQ](#frequency-interaction-and-eq))
-- track × section intent, optional prominence (`primary` / `focal` / `supporting`), gain/pan overrides, and a Track × Section EQ graph that adds to the track's own
+- per-track pan and stereo width (schema v3, see [Stereo and spatial planning](#stereo-and-spatial-planning))
+- track × section intent, optional prominence (`primary` / `focal` / `supporting`), gain/pan/width overrides, and a Track × Section EQ graph that adds to the track's own
 - mix variants (`Original`, `Working Mix`) and an A/B comparison record with three scopes: entire mix, soloed track, and one track inside the full mix
 - selection context: track, section, time range, and loop
 
@@ -84,25 +88,25 @@ Output uses `cpal`. The engine asks for 32-bit float stereo at 48 kHz. If the de
 
 Four reader threads fill one `rtrb` ring per stem. Each ring holds about 5 seconds; playback starts after about 1 second is buffered, and readers keep about 3 seconds filled. Proxies are built one stem at a time. One builder keeps the machine responsive: it does not saturate the CPU or the disk, and Play waits until every required proxy is ready before the transport advances. Stems do not fade in one by one.
 
-The device callback reads the ring consumers, an atomic mix snapshot, and the smoothed gain atomics. It ramps gain over about 10 ms, applies pan or balance, honors mute and solo, sums, and copies the block. A dry ring writes silence for that stem only and counts one underrun for the block. The callback does not allocate, free, lock, read disk, resample, log, or call JavaScript, Tauri, or Python. It does read the clock once so the diagnostics panel can show callback time. The cpal error callback stores an atomic flag and does not allocate either.
+The device callback reads the ring consumers, an atomic mix snapshot, and the smoothed gain atomics. It ramps gain over about 10 ms, applies width and pan or balance (ramped over 30 ms since Milestone 5), honors mute and solo, sums, and copies the block. A dry ring writes silence for that stem only and counts one underrun for the block. The callback does not allocate, free, lock, read disk, resample, log, or call JavaScript, Tauri, or Python. It does read the clock once so the diagnostics panel can show callback time. The cpal error callback stores an atomic flag and does not allocate either.
 
 The control thread publishes mixer state by writing atomics between an odd and even sequence, so the callback copies a consistent snapshot or retries. Ring consumers are not behind a mutex. The callback and the device-rate mixer set `in_callback` or `mixer_busy` before touching them and leave immediately when playback is not consuming. The control thread clears that flag, waits until both are idle, and only then replaces or flushes rings. Seek bumps a generation so an in-flight read cannot enter the new rings, then flushes every ring before readers continue.
 
 Loop wrap is the same frame on every stem. The reader reaches the loop end and continues from the loop start in the same fill, so a primed ring has no intentional gap. An empty ring at the wrap is an underrun, not a silent skip of the transport.
 
-A mono stem uses equal-power pan. A stereo stem uses the same coefficients as a balance control: the left sample is scaled by the left coefficient and the right sample by the right coefficient, with no crossfeed. The lane calls that control Balance on stereo stems and Pan on mono stems. A later mixer can add a true stereo panner.
+A mono stem uses equal-power pan. A stereo stem uses the same coefficients as a balance control: the left sample is scaled by the left coefficient and the right sample by the right coefficient, with no crossfeed. The lane calls that control Balance on stereo stems and Pan on mono stems. Milestone 5 adds stereo width before it; see [Stereo and spatial planning](#stereo-and-spatial-planning).
 
 If the device is not 48 kHz float, a mixer thread outside the callback does the rate conversion. Its stereo, planar, and interleaved buffers are allocated once and reused. The callback only copies from that device ring, or converts float to 16-bit from a buffer allocated when the stream opened.
 
 Steady-state playback memory is the rings plus a small scratch buffer per reader. A 5-second stereo float ring is about 1.9 MB, so 11 stems are about 21 MB, 32 stems about 61 MB, and 64 stems about 123 MB. The proxy file stays on disk. The reader never loads it whole.
 
-The mix order is read, then the per-track process stage (static EQ since Milestone 4: track filters, then the filters of the section under the playhead), then gain, pan, sum, then a mix-bus stage that is still identity. EQ sits before the fader so a fader move never changes what the filter sees, and before pan so both channels are filtered the same. Later dynamics and sidechain can sit in the same stage without replacing the clock. Tracks are pulled into the same callback block, so a later sidechain can read another stem.
+The mix order is read, then the per-track process stage (static EQ since Milestone 4: track filters, then the filters of the section under the playhead; then width since Milestone 5), then pan or balance, gain, sum, then a mix-bus stage that is still identity. EQ sits before the fader so a fader move never changes what the filter sees, and before pan so both channels are filtered the same. Later dynamics and sidechain can sit in the same stage without replacing the clock. Tracks are pulled into the same callback block, so a later sidechain can read another stem.
 
 Loudness, RMS, correlation, width, onsets, and spectrum inside the audible band can later be measured from the 48 kHz proxy. True peak, crest factor, the source-mix sum, and anything above 20 kHz stay on the original file. Playback does not call Python.
 
 The project screen's Audio engine disclosure shows the engine kind, device format, output rate, callback size, proxy progress, buffer minimum and average, reader backlog, underruns, seek prime time, and callback time against the callback budget. A line in that panel notes when callback time exceeds 70% of the budget. It is not a user-facing alarm.
 
-`npm run stress:audio` runs the ignored release tests: synthetic 32×48 kHz, 32×96 kHz, 11×192 kHz, and 64×48 kHz mixes, then a 5-minute offline soak of Generated 5 and Generated2 when those projects are on disk. CI runs `cargo test --workspace` and does not open a sound device. The soak and the synthetic stress tests are marked ignored so CI stays short. Compare a debug run with `cargo test -p audiosous-audio --lib -- --ignored --nocapture` only when investigating; acceptance numbers come from the release command.
+`npm run stress:audio` runs the ignored release tests one at a time: synthetic 32×48 kHz, 32×96 kHz, 11×192 kHz, and 64×48 kHz mixes, the EQ and EQ + spatial callback cost, then a 5-minute offline soak of Generated 5 and Generated2 when those projects are on disk. Running them in parallel skews each other's timing, and the 64-stem stereo test writes about 450 MB of synthetic stems to the temp directory (set `TMPDIR` to put them elsewhere). CI runs `cargo test --workspace` and does not open a sound device. The soak and the synthetic stress tests are marked ignored so CI stays short. Compare a debug run with `cargo test -p audiosous-audio --lib -- --ignored --nocapture` only when investigating; acceptance numbers come from the release command.
 
 ## Test assets
 
@@ -456,6 +460,205 @@ npx vite-node packages/eq-planner/scripts/plan-eq-project.ts -- scenario.json
 services/analysis/.venv/bin/python packages/eq-planner/scripts/render-eq-audition.py OUT_DIR
 ```
 
+## Stereo and spatial planning
+
+Milestone 5 is pan, balance, and width planning. It finds stems that compete for the same frequencies while they also sit in the same place in the stereo field, and proposes conservative, explainable moves. It does not use delay, reverb, chorus, decorrelation, or any other way of making stereo out of mono, and it has no frequency-dependent width. It does not compress, EQ, limit, or master, and it does not call a model.
+
+```text
+playback proxy ──► stereo frames (Rust) ──┐
+playback proxy ──► EQ band frames (Rust) ─┼─► stereo model ─► spatial pairs ─► spatial planner
+analysis cache ───► measurements ─────────┤   (current mix:      (M4 pairs +      │
+project ──────────► faders, saved EQ, ────┘    fader, EQ, pan,     field overlap)   ▼
+                    pan, width, roles, intent   width)            versioned plan ◄── evaluation (2 passes + whole plan)
+                                                                       │
+                                                                       ├─► proxy check (native spatial stage on the proxies)
+                                                                       ├─► candidate overlay ─► native engine ─► A/B
+                                                                       └─► apply ─► track pan/width, section overrides (one undo step)
+```
+
+### Pan, balance, and width
+
+Three controls, not one:
+
+- **Pan** (mono stem): equal-power position, −1 left … +1 right. The engine's law splits power linearly, `left = √(1 − p)`, `right = √p`, `p = (pan + 1) / 2`, so a centered stem is −3 dB in each channel and a stem panned to `x` has energy balance exactly `x`.
+- **Balance** (stereo stem): the same coefficients scale each channel. Nothing is crossfed, so a stereo image moves as a whole and keeps its width.
+- **Width** (stereo stem): `M = (L + R) / 2`, `S = (L − R) / 2`, `S ← S · width`, `L = M + S`, `R = M − S`. 0 is mono, 1 is as recorded, 2 is the technical cap. A mono stem ignores width.
+
+The per-track order is:
+
+```text
+source → EQ (track, then section) → width → pan / balance → gain → sum
+```
+
+Width runs after EQ so a filter sees the stem as recorded, and before pan so balance moves the finished image. Gain and pan are both linear, so their order does not matter; gain stays last, as before.
+
+**No level compensation.** Width never touches the mid, so the mono fold-down of a stem is the same at every width and 100% skips the matrix entirely (bit-exact). Narrowing only removes side energy. Widening adds it: a stem's stereo level changes by `10·log10((M + w²S) / (M + S))`, at most ×2 in amplitude for fully anti-phase material. That change is bounded and deterministic, the planner predicts it from the stem's own mid/side levels and reports it on every row (about +1 dB for a typical 140% widening), and the candidate headroom estimate covers the peaks. A signal-dependent gain inside the DSP would have made the engine's output depend on analysis that might be missing.
+
+### Native spatial stage
+
+`crates/audio-engine/src/spatial.rs`. The control thread publishes a table of whole-song pan and width per track index plus up to 128 section windows (start frame, end frame, pan, width) through a sequence-locked table of atomics, like the mix snapshot and the EQ table. The audio thread copies it only when the sequence moves, into memory allocated when the engine was created. Each track keeps its current and target values, a ramp counter, and the frame span over which its section assignment holds; it re-resolves the section only when the playhead leaves that span.
+
+- Every change, including a section boundary, ramps linearly over 30 ms (1440 frames), whatever its size. Pan coefficients are recomputed only while pan moves.
+- At the start of each block, a track that is not ramping and stays inside one section span for the whole block (no loop wrap) gets its width and pan coefficients once, and the inner loop only multiplies. Without that, per-frame bookkeeping made the plain mix 2–3× slower in the throughput test.
+- A seek snaps: the control thread marks every track while the audio thread is idle, so playback starts at the new section's values instead of ramping from the old ones. A loop wrap inside one section is not a change.
+- Values are sanitized (finite, pan −1…1, width 0…2).
+- `set_track` pan still works and feeds the same table, so the lane control and the plan cannot disagree.
+
+The callback still does not lock, allocate, free, read files, or call JavaScript, Tauri, or Python. `callback_with_eq_and_spatial_does_not_allocate` runs 8 stereo stems with EQ, pan, width, and section windows through a spatial table change and expects 0 allocations, with the counter proven by a probe. Tests cover the pan law, balance without crossfeed, width 0/100/150/200%, the mono fold-down at every width, correlation against `(1 − w²)/(1 + w²)` on decorrelated noise, every legal setting finite and bounded, the 30 ms ramp with no step, section windows and their edges, a seek into a section, several tracks and windows, table limits, and the engine end to end.
+
+### Stereo frames
+
+The sidecar reports one balance, correlation, and mid/side figure per stem. Spatial planning needs to know where a stem sits while it plays against another, and in which frequency range, so `crates/audio-engine/src/stereo.rs` measures the 48 kHz playback proxy with 8192-point Hann FFTs on both channels and keeps, per frame and per band, left power, right power, and the left/right correlation. Bands are the EQ grid's 24 log bands taken three at a time (8 bands, 20 Hz–20 kHz); frames use the EQ band grid (`max(0.25 s, duration / 360)`). The cache is `cache/analysis/<trackId>__stereo.json` with the same identity rule as the EQ bands (version 1, source size and modification time, proxy version, resampler id). A 141 s stem takes about 100 ms in a release build.
+
+Without stereo frames the planner shapes each stem's measured band levels with its whole-file balance and mid/side levels, so position and width are the same at every step, and the plan summary says so.
+
+### Stereo statistics
+
+A stem in one band over a stretch of time is three numbers: `E[L²]`, `E[R²]`, and `E[L·R]`. Width and pan are linear and static between ramps, so their effect on these averages is exact: width scales the side power by `w²` and the mid/side cross term by `w`; pan or balance scales each channel's power by its coefficient squared and the cross term by both. That lets the planner simulate any candidate on the cached statistics without touching audio. The Rust test `measures_correlation_and_mono_loss_before_and_after_a_width_change` holds the native DSP to these formulas on real proxy audio, and the acceptance bounce below reproduces them on Generated 5 within about 0.02 in correlation and 0.1 dB in mono loss.
+
+The stereo model (`packages/spatial-planner/src/model.ts`) puts every stem on the EQ planner's time grid as heard: the stem's raw statistics scaled by the fader or section gain and the band-averaged power response of its saved EQ, then placed with the pan and width in effect at each step (section overrides included). From the statistics:
+
+| Reading | Definition | Meaning |
+| --- | --- | --- |
+| position | `(R − L) / (R + L)` | where the stem sounds; equals the pan value for a panned mono stem |
+| correlation | `C / √(L·R)` | +1 mono, 0 decorrelated, < 0 anti-phase |
+| spread | `1 − correlation`, clamped 0…1 | half-width of the image; balance does not change it, width does |
+| M/S ratio | side minus mid level, dB | |
+| mono loss | `10·log10((L + R)/2 ÷ ((L + R)/2)²)` | how much quieter the stem is folded to mono; 0 for mono, 3 dB for decorrelated noise, more for anti-phase |
+
+Spread comes from correlation, not from the side share, because a mono part panned off center has side energy without being wide.
+
+**Occupancy.** Where a stem lives across the field is a distribution over 41 positions: a point part (`1 − spread`) with a 0.08 localization blur at its position, and a diffuse part (`spread`) spread evenly over the image span. From it: center, left, and right shares (center is |x| ≤ 0.25), and the overlap of two stems (histogram intersection). Two point sources 25% apart overlap about 0.12. This is an Audiosous description for comparing stems, not a model of binaural localization.
+
+### Spatial interaction
+
+The spatial pairs (`interaction.ts`) start from Milestone 4's pairs: the same scopes (the whole song, each section, each unmarked gap), the same rule for playing together (stems that never or barely overlap in time have no pair), the same tiers (prominence, notes, role), and the same frequency competition, measured on the mix as it is now: faders, section gain, and saved EQ. The spatial planner adds where each stem sits in the bands where they compete.
+
+```text
+severity = frequency competition × localizable field overlap × activity
+```
+
+- **Frequency competition** is M4's masked fraction of the more important stem (saturated, 0…1). For two stems of the same tier it is the larger direction. If an EQ cut already separated two stems, this is small and no spatial move follows.
+- **Field overlap** is computed per stereo band and weighted by that band's share of the frequency competition, so two stems that collide at 2–5 kHz are compared where they sit at 2–5 kHz.
+- **Localizable**: each band's overlap is weighted by how well position separates parts there (0.1, 0.2, 0.45, 0.75, then 1 from 632 Hz up). A conflict that lives under ~250 Hz is not a spatial problem; panning cannot separate it and low end stays centered.
+- **Activity** is M4's activity factor (simultaneity and coverage).
+
+Each pair also reports center competition (√ of the two center shares, weighted the same way), plain field overlap, both images, the competing range, and the level gap.
+
+**Who moves.**
+
+- Kick, bass, snare, lead, vocal, and drum-bus stems are never moved automatically, whatever their tier. An explicit note can still move them.
+- A Primary or Focal stem is never the one moved. The lower tier moves.
+- Two stems of the same Supporting or Background tier compete for space only when they are within 6 dB of each other while both play; then the quieter one moves. Two Primary or Focal stems have no automatic mover.
+- **Level, not space.** If the stem that should move is more than 6 dB louder than the one it would protect (in the competing bands or overall), the pair is a level problem, and the plan says so instead of panning it away.
+- **Priority**: 1 under a Primary or Focal stem, 0.6 for a Background stem under one (as in EQ, a background bed rarely hides a lead), 0.8 between Supporting peers, 0.7 for Supporting over Background.
+
+### Planner
+
+`planner.ts`, `plannerVersion` 5.0.0. Same project, gains, EQ, spatial state, analysis, roles, sections, intent, and settings give the same plan. No randomness.
+
+1. **Notes that pin a stem** ("keep the vocal centered", "push the guitar left") are read first; the stem's pan is held there.
+2. **Separation pass.** Each stem that should move in a pair over the threshold is searched, strongest conflict first. The search is a bounded grid: pan moves in 5% steps up to the strength's limit, width changes in 5-point steps, at least 10% or 10 points, coarse (10%) first and then the neighbours of the best. Every candidate is scored by the same evaluator the review panel uses:
+   - **benefit**: how much it relieves the conflicts this stem should give way in, read where those conflicts happen (a Chorus-only clash counts in full), minus any conflict it adds to other pairs by moving into their space;
+   - **cost**: grows with the square of the move, so a modest move wins unless the cap clearly helps more; narrowing back toward 100% costs half (it undoes a widening); pan and width together cost a little extra (the last step of the hierarchy); a level rise from widening and a mono-loss increase past 0.5 dB cost;
+   - **hard limits**: never widen a stem with correlation under 0.2, never take correlation under 0.2 by widening, never add more than 1.5 dB of mono loss, never push the mix's left/right lean past 30%, never pan past ±80%, never widen a stem that is mostly low end, never pan it.
+   A move is kept when its benefit and its net gain both clear the strength's minimum.
+3. **Global or section.** A whole-song move is tried first. It is allowed only when the conflict covers at least half of the stem's playing time. A section move needs a reason the rest of the song does not have: prominence or a note in that section, or a protected stem that plays mostly (≥ 70%) there.
+4. **Other reasons to move** (no pair needed):
+   - *Mono safety*: a stem that is out of phase (correlation under −0.1), or that someone widened past 105% and left under 0.2 correlation, is narrowed. It may go all the way back to 100%, past the strength's step, because that undoes a widening. A narrowing below 100% of a stem that is out of phase as recorded goes to review.
+   - *Surround*: a Background stem that is mostly mono (spread under 0.3), with healthy recorded correlation (≥ 0.4), where the mix center is crowded (center load ≥ 50%), may be widened.
+5. **Correction pass.** The model is rebuilt with the first-pass moves; stems not yet moved whose conflicts remain are searched once more.
+6. **Notes.** Section and Track × Section notes are read last, against the whole-song moves, and merged into any section row the stem already has, so a note's row never undoes a whole-song row. A note asking for "wider" never produces a narrowing: a stem already at or past the limit is left alone and the plan says so.
+7. **Whole plan.** Every kept move is re-read with all the others in place. A separation move that no longer relieves enough, or one that now breaks a safety limit, is dropped.
+
+| Strength | Max pan move | Max width change | Min conflict | Min benefit | Note step (width / pan) |
+| --- | --- | --- | --- | --- | --- |
+| Conservative | 15% | 20 points | 0.38 | 0.11 | 10 / 15 |
+| Normal | 25% | 30 points | 0.30 | 0.08 | 20 / 25 |
+| Strong | 40% | 40 points | 0.24 | 0.05 | 30 / 35 |
+
+Automatic width stays within 60–140%. Anything outside the automatic range or larger than these moves, a confidence under 0.55, or a row whose proxy check disagrees goes to review and stays out of Apply all until accepted. Editing a row so that it trips a safety check also sends it to review.
+
+**Confidence** starts from the pairs' confidence (simultaneity, shared time, roles) and moves with the share of the conflict the move removes, the stereo source (proxy frames or whole-file figures), an unlabeled role, peers of equal tier, section scope, and the second pass. A row from a Track × Section note starts at 0.88, a section note naming the stem at 0.84, and a whole-section note at 0.80.
+
+### Intent
+
+Spatial words are read by a fixed phrase table in `intent.ts`, not by language understanding:
+
+| Reading | Phrases |
+| --- | --- |
+| wider | wide, wider, widen, spread, spread out, surround |
+| narrower | narrow, narrower, narrow down, focused, intimate |
+| center | centered, center, centre, in the middle, down the middle |
+| left / right | left, right (not "right now", "right after", and similar) |
+
+Tone words (warm, punchy, bright, aggressive, big) never move anything. A negated clause is ignored. A clause with two different readings is ignored. Direction words are removed before stem names are matched, so a track called "Gtr Left" is not named by "push the guitar left". A word that could mean two stems is not applied, and the summary says which stems it could mean.
+
+- A **whole-section** instruction ("Make the breakdown wider.") applies width to eligible Supporting and Background stems in that section. "Surround" applies to Background stems only. A whole-section side ("move everything left") is not read.
+- A **named** instruction applies to that stem: width, centering, or a side, by the strength's note step.
+
+Precedence, highest first: a saved Track × Section pan or width override (structured beats inferred; the note is reported, not applied), a Track × Section note, a section note naming the stem, a whole-section instruction, the role prior.
+
+### Evaluation
+
+Every row carries its evaluation, and the review panel recomputes it on every edit from the evidence stored with the row (no planner, no audio):
+
+- the conflict it addresses and any conflict it adds elsewhere, before and after;
+- field overlap where they compete, and the stem's share in the center;
+- the stem's correlation and mono fold-down loss, before and after;
+- the mix's center load, left/right lean, correlation, and mono loss where the stem plays;
+- the stem's level change from width.
+
+The plan also reports the mix before and after the proposed rows.
+
+**Proxy check (desktop).** Each row's stem runs through its saved EQ and the native spatial stage over the 48 kHz proxy, for up to 20 s of the windows where it competes, at its current and proposed pan and width (`crates/audio-engine/src/verify.rs`, Tauri `spatial_check`). A row whose measured correlation or mono loss moves much further than predicted, or past a safety limit, goes to review with the numbers in its reasons.
+
+**Headroom.** Pan moves energy between channels and widening raises the side, so a peak can rise when no gain moves. Each channel gets its own power-sum estimate from each stem's cached peak and its statistics under the current and the candidate setting. If the louder channel would get hotter than now or than −1 dBFS, a uniform trim (up to −6 dB) is proposed and labeled as a safety trim. It is an estimate, not a rendered true-peak pass, and not a limiter.
+
+### Plan contract
+
+`packages/spatial-planner/src/plan.ts`: `planVersion` 1, `plannerVersion` 5.0.0, `kind: "spatial-balance"`, the same envelope as the AutoBalance and EQ plans. Each recommendation has the track, the scope (`global` or `section`), `processing: { type: "spatial", pan, width }` (null leaves that control alone), the saved values in that scope (`current`), the values as planned, whether it edits a saved section override, the related stems and interactions, the purpose (separation, widen, narrow, mono-safety, intent), confidence, status, an edited flag, 1–6 reasons, safety warnings, the evaluation, and the evidence it was judged on. The plan also carries the top 40 interactions, where every stem sits in each scope (for the field view), the mix before and after, a headroom trim, and per-stem levels. Everything is plain JSON validated with zod.
+
+**Stale identity** covers the project id, analysis version, stereo frames version, planner version, strength, each stem's id, name, label, role, gain, mute, duration, and file identity, every pan and width (track and section), sections (bounds, type, intent), Track × Section prominence, notes, and gain overrides, and every saved EQ node: an EQ change can change which conflict remains. Selecting a row or moving the playhead is not an edit.
+
+### Preview, A/B, apply, undo
+
+The candidate is an overlay through the same monitor path as the AutoBalance and EQ auditions: saved pan and width plus the included rows. **Current** plays the saved mix. **Spatial Candidate** plays the proposed and accepted rows (plus a safety trim if needed). **Bypassed / Recommended** on a row plays the whole mix with only that row switched. Starting any audition stops the others, so one comparison plays at a time. An edit is heard on the next publish; nothing reloads and the device does not restart.
+
+**Apply all** writes proposed and accepted rows, **Apply accepted** accepted rows: a global row into `track.pan` and `track.width`, a section row into `overrides.pan` and `overrides.width` (whole-song rows first, and only the controls a row sets). That is one `replaceDocument` with history, so Ctrl+Z restores the whole previous mix. Source files, proxies, and analysis caches are not touched.
+
+A newer run, a cancel, or another project bumps the session's generation, and every later step of an older run is discarded. A plan that went stale while it was planned or checked is refused.
+
+### Review UI
+
+Plans has three tabs: Gain, EQ, and Space, with the same Current / Candidate / Apply all / Apply accepted / Cancel and per-row Accept / Reject / Edit / Bypassed / Recommended. While a plan is open, Plans is a drawer under the timeline: drag its handle (or use the arrow keys on it) to trade height with the timeline, which always keeps at least 200 px, and "Hide details" collapses it to the tabs and the A/B and Apply bar so the tracks, loop, and transport stay in view while you listen. The size is remembered per viewer. The header says what is playing (Current, the Candidate, or one row with or without its change). Editing a row in Space or EQ makes it heard: if the whole Candidate is playing and includes the row nothing changes, otherwise that row's single-row audition starts. Each row shows current → proposed → change for pan or balance and for width. The detail shows the stereo field for that scope: every stem at its position with a band as wide as its image, the moving stem's current image dashed and the proposed one solid. Dragging moves its pan; Shift-drag, the wheel, or Shift+arrows change its width; sliders and number fields do the same. Correlation is drawn on a −1…+1 scale with what it means here (+1 is not "good" and 0 is not "bad"; what matters is whether the part survives a mono fold-down). Analysis → Spatial interaction lists the pairs with both images, their numbers, and the explanation. A lane shows a SPACE badge when the track has a width other than 100% or a section pan or width, and stereo lanes have a width slider (double-click resets 100%).
+
+### Legacy engine
+
+The browser preview and `AUDIOSOUS_AUDIO_ENGINE=legacy` play pan and section pan (by polling the playhead) but not width. The Space panel says so.
+
+### Known limitations
+
+- The field model (position, a fixed localization blur, spread from correlation, localizability per band) is an Audiosous heuristic on 8 bands. It is not a binaural or psychoacoustic model, and it does not model depth, precedence, or reverb.
+- Stems are assumed uncorrelated with each other when the mix's statistics are summed.
+- Two fully decorrelated layers are hard to separate by position in this model; a wide layer that was widened past 100% is narrowed back for mono, and what remains is left to EQ.
+- Width has no level compensation by design; widening raises a stem's level (reported per row).
+- No frequency-dependent width, no mono-low-end processing, and no M/S EQ.
+- Stem roles drive who moves. A mislabeled role (Generated 5 imports most stems as Bass) changes the plan.
+- The legacy and browser engines ignore width.
+- The proxy check confirms the stem's own correlation and mono loss on the proxy; it is not a listening result.
+
+### Acceptance harness
+
+```sh
+cargo run --release -p audiosous-audio --example eq_bands -- "test-assets/Generated 5"
+cargo run --release -p audiosous-audio --example stereo_frames -- "test-assets/Generated 5"
+npx vite-node packages/spatial-planner/scripts/plan-space-project.ts -- scenario.json
+services/analysis/.venv/bin/python packages/spatial-planner/scripts/render-space-audition.py OUT_DIR [--wav]
+```
+
+The scenario edits roles, gains, pan, width, saved EQ, sections, prominence, notes, and section overrides in memory, and can script a review. The render script is an independent NumPy implementation of the spatial stage; it measures Current, Spatial Candidate, and the reviewed plan in stereo and folded to mono, cross-checks each row's predicted correlation and mono loss, and with `--wav` writes the bounces for listening.
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
@@ -469,7 +672,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 

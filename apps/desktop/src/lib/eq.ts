@@ -3,6 +3,7 @@ import {
   applyEqPlan,
   checkRange,
   eqPlanIsStale,
+  eqRecommendationIncluded,
   planEq,
   withProxyChecks,
   type EqApplyMode,
@@ -102,7 +103,7 @@ export async function runEqPlan(): Promise<void> {
 }
 
 /** Proxy band frames per track; a track that fails falls back to the sidecar spectrogram in the planner. */
-async function loadBandFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EqBandFrames | null>> {
+export async function loadBandFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EqBandFrames | null>> {
   const out: Record<string, EqBandFrames | null> = {};
   try {
     const responses = await platform.eqBandFrames(
@@ -191,7 +192,10 @@ export function applyEq(mode: EqApplyMode): boolean {
 /** Whole-plan A/B. Starting an EQ audition stops any gain audition, so one comparison plays at a time. */
 export function setEqPreview(preview: boolean): void {
   useAppStore.getState().setEq({ preview, auditionId: null });
-  if (preview) useAppStore.getState().setBalance({ preview: false, auditionId: null });
+  if (preview) {
+    useAppStore.getState().setBalance({ preview: false, auditionId: null });
+    useAppStore.getState().setSpace({ preview: false, auditionId: null });
+  }
   void logEvent(getPlatform(), "info", "eqplan.preview", preview ? "Playing the EQ candidate." : "Playing the current mix.", { mode: preview ? "candidate" : "current" });
 }
 
@@ -200,6 +204,32 @@ export function auditionEq(id: string, side: "bypassed" | "recommended"): void {
   const eq = useAppStore.getState().eq;
   const same = eq.auditionId === id && eq.auditionSide === side;
   useAppStore.getState().setEq(same ? { auditionId: null } : { auditionId: id, auditionSide: side, preview: false });
-  if (!same) useAppStore.getState().setBalance({ preview: false, auditionId: null });
+  if (!same) {
+    useAppStore.getState().setBalance({ preview: false, auditionId: null });
+    useAppStore.getState().setSpace({ preview: false, auditionId: null });
+  }
   void logEvent(getPlatform(), "info", "eqplan.preview", "Auditioned one EQ filter.", { id, side: same ? "off" : side });
+}
+
+/** Called when a filter is edited: make sure the edit is heard (see hearSpaceRow). */
+export function hearEqRow(id: string): void {
+  const eq = useAppStore.getState().eq;
+  const change = eq.plan?.changes.find((item) => item.id === id);
+  if (!change) return;
+  if (eq.preview && eqRecommendationIncluded(change, "preview")) return;
+  if (eq.auditionId === id && eq.auditionSide === "recommended") return;
+  useAppStore.getState().setEq({ auditionId: id, auditionSide: "recommended", preview: false });
+  useAppStore.getState().setBalance({ preview: false, auditionId: null });
+  useAppStore.getState().setSpace({ preview: false, auditionId: null });
+}
+
+/** What the EQ panel is playing right now, in words. */
+export function eqHearing(document: ProjectDocument, eq: EqSession): string {
+  if (!eq.plan || eq.phase !== "ready") return "Hearing the saved mix";
+  if (eq.auditionId) {
+    const change = eq.plan.changes.find((item) => item.id === eq.auditionId);
+    const name = document.tracks.find((track) => track.id === change?.trackId)?.name ?? "this stem";
+    return eq.auditionSide === "recommended" ? `Hearing ${name} with only this filter` : `Hearing ${name} without this filter`;
+  }
+  return eq.preview ? "Hearing the EQ Candidate" : "Hearing Current (saved mix)";
 }

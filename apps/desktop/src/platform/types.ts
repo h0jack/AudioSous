@@ -59,6 +59,31 @@ export interface EqCheckResponse {
   error: string | null;
 }
 
+export interface SpatialStatsDto {
+  leftDb: number;
+  rightDb: number;
+  correlation: number;
+  monoLossDb: number;
+  peakDbfs: number;
+}
+
+export interface SpatialCheckRequest {
+  id: string;
+  trackId: string;
+  relativePath: string;
+  windows: Array<[number, number]>;
+  /** Saved EQ that runs before the spatial stage in this scope. */
+  saved: EqCheckFilter[];
+  before: { pan: number; width: number };
+  after: { pan: number; width: number };
+}
+
+export interface SpatialCheckResponse {
+  id: string;
+  result: { before: SpatialStatsDto; after: SpatialStatsDto; seconds: number } | null;
+  error: string | null;
+}
+
 export interface DesktopPlatform {
   kind: "tauri" | "browser";
   pickAudioFiles(): Promise<ListedFile[] | null>;
@@ -88,6 +113,10 @@ export interface DesktopPlatform {
   checkEq(projectFile: string, requests: EqCheckRequest[]): Promise<EqCheckResponse[]>;
   /** Band levels measured from the playback proxies for EQ planning, cached per track. Desktop only. */
   eqBandFrames(projectFile: string, tracks: Array<{ trackId: string; relativePath: string }>): Promise<Array<{ trackId: string; json: string | null; error: string | null }>>;
+  /** Stereo statistics measured from the playback proxies for spatial planning, cached per track. Desktop only. */
+  stereoFrames(projectFile: string, tracks: Array<{ trackId: string; relativePath: string }>): Promise<Array<{ trackId: string; json: string | null; error: string | null }>>;
+  /** Runs candidate pan/width through the native spatial stage on the playback proxies and measures the result. Desktop only. */
+  checkSpatial(projectFile: string, requests: SpatialCheckRequest[]): Promise<SpatialCheckResponse[]>;
   measureWaveform(projectFile: string, relativePath: string, trackId: string, onProgress: (ratio: number) => void): Promise<void>;
   cancelWaveform(): Promise<void>;
   hasPreview(): boolean;

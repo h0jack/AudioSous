@@ -100,7 +100,7 @@ export function setSectionEqNodes(document: ProjectDocument, trackId: string, se
     sectionId,
     userIntent: existing?.userIntent ?? null,
     prominence: existing?.prominence ?? null,
-    overrides: existing?.overrides ?? { gainDb: null, pan: null },
+    overrides: existing?.overrides ?? { gainDb: null, pan: null, width: null },
     processing: { ...(existing?.processing ?? emptyProcessingGraph()), nodes: checked.nodes },
   };
   const rest = document.sectionTrackSettings.filter((row) => row.trackId !== trackId || row.sectionId !== sectionId);

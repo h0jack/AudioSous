@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::eq::{EqChain, FilterKind, FilterSpec};
 use crate::proxy::{ProxyReader, PLAYBACK_RATE};
+use crate::spatial::{process_interleaved, SpatialParams};
 
 const SETTLE_FRAMES: usize = 2_400;
 const CHUNK_FRAMES: usize = 8_192;
@@ -124,6 +125,108 @@ pub fn check_candidate(
     })
 }
 
+/// Stereo statistics of one track after its saved EQ and one pan/width setting, before the fader.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StereoStats {
+    pub left_db: f64,
+    pub right_db: f64,
+    pub correlation: f64,
+    /// How much quieter the stem is folded to mono than in stereo: 10·log10(((L² + R²) / 2) / ((L + R) / 2)²).
+    pub mono_loss_db: f64,
+    pub peak_dbfs: f64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpatialCheck {
+    pub before: StereoStats,
+    pub after: StereoStats,
+    pub seconds: f64,
+}
+
+/// Runs a track's proxy through its saved EQ and the native spatial stage at the current and the
+/// candidate pan/width, over the windows where the conflict happens, and measures both.
+pub fn check_spatial(
+    proxy: &Path,
+    windows: &[(f64, f64)],
+    saved: &[FilterSpec],
+    before: SpatialParams,
+    after: SpatialParams,
+    max_seconds: f64,
+) -> Result<SpatialCheck, String> {
+    let (header, mut reader) = ProxyReader::open(proxy)?;
+    let channels = usize::from(header.channels).clamp(1, 2);
+    let rate = PLAYBACK_RATE as f32;
+    // left², right², left·right, mono², peak, for before and after.
+    let mut sums = [[0.0_f64; 5]; 2];
+    let mut counted = 0_usize;
+    let budget = (max_seconds.max(0.5) * f64::from(PLAYBACK_RATE)) as usize;
+    let mut buffer = Vec::with_capacity(CHUNK_FRAMES * channels);
+    let mut placed = Vec::with_capacity(CHUNK_FRAMES * 2);
+    for &(start, end) in windows {
+        if counted >= budget {
+            break;
+        }
+        if !(start.is_finite() && end.is_finite()) || end <= start {
+            continue;
+        }
+        let first = (start * f64::from(PLAYBACK_RATE)) as u64;
+        let last = ((end * f64::from(PLAYBACK_RATE)) as u64).min(header.frames);
+        if last <= first {
+            continue;
+        }
+        reader.seek_frame(first)?;
+        let mut eq = EqChain::new(saved, rate);
+        let mut position = 0_usize;
+        let wanted = (last - first) as usize;
+        while position < wanted && counted < budget {
+            let frames = (wanted - position).min(CHUNK_FRAMES);
+            let got = reader.read_interleaved(frames, &mut buffer)?;
+            if got == 0 {
+                break;
+            }
+            let mut filtered = buffer[..got * channels].to_vec();
+            eq.process_interleaved(&mut filtered, channels);
+            let skip = SETTLE_FRAMES.saturating_sub(position).min(got);
+            for (slot, params) in [before, after].into_iter().enumerate() {
+                process_interleaved(&filtered, channels, params, &mut placed);
+                let sum = &mut sums[slot];
+                for frame in placed.chunks(2).skip(skip) {
+                    let (left, right) = (f64::from(frame[0]), f64::from(frame[1]));
+                    sum[0] += left * left;
+                    sum[1] += right * right;
+                    sum[2] += left * right;
+                    sum[3] += (0.5 * (left + right)).powi(2);
+                    sum[4] = sum[4].max(left.abs()).max(right.abs());
+                }
+            }
+            counted += got - skip;
+            position += got;
+        }
+    }
+    if counted == 0 {
+        return Err("No proxy audio in the requested windows.".into());
+    }
+    let stats = |sum: &[f64; 5]| {
+        let n = counted as f64;
+        let db = |value: f64| 10.0 * (value / n).max(1e-20).log10();
+        let norm = (sum[0] * sum[1]).sqrt();
+        StereoStats {
+            left_db: db(sum[0]),
+            right_db: db(sum[1]),
+            correlation: if norm > 1e-20 { (sum[2] / norm).clamp(-1.0, 1.0) } else { 1.0 },
+            mono_loss_db: 10.0 * ((0.5 * (sum[0] + sum[1])).max(1e-20) / sum[3].max(1e-20)).log10(),
+            peak_dbfs: 20.0 * sum[4].max(1e-10).log10(),
+        }
+    };
+    Ok(SpatialCheck {
+        before: stats(&sums[0]),
+        after: stats(&sums[1]),
+        seconds: counted as f64 / f64::from(PLAYBACK_RATE),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,6 +282,63 @@ mod tests {
         assert!((check.seconds - 2.0 + SETTLE_FRAMES as f64 / 48_000.0).abs() < 0.05);
         let elsewhere = check_candidate(&proxy, &[(0.5, 2.5)], &[], &[cut], 150.0, 260.0, 10.0).unwrap();
         assert!((elsewhere.region_after_db - elsewhere.region_before_db).abs() < 0.2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn measures_correlation_and_mono_loss_before_and_after_a_width_change() {
+        let dir = std::env::temp_dir().join(format!("audiosous-verify-space-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("wide.wav");
+        // Stereo: a shared component plus independent noise per side, so correlation sits near 0.5.
+        // SplitMix64 per sample, so the three seeds are independent.
+        let hash = |value: u32, seed: u32| {
+            let mut x = u64::from(value).wrapping_add(u64::from(seed) << 32).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            x ^= x >> 30;
+            x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            x ^= x >> 27;
+            x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+            x ^= x >> 31;
+            (x >> 40) as f32 / (1_u64 << 24) as f32 - 0.5
+        };
+        let frames = 48_000 * 3;
+        let mut body = Vec::with_capacity(44 + frames * 8);
+        let data = (frames * 8) as u32;
+        body.extend_from_slice(b"RIFF");
+        body.extend_from_slice(&(36 + data).to_le_bytes());
+        body.extend_from_slice(b"WAVEfmt ");
+        body.extend_from_slice(&16_u32.to_le_bytes());
+        body.extend_from_slice(&3_u16.to_le_bytes());
+        body.extend_from_slice(&2_u16.to_le_bytes());
+        body.extend_from_slice(&48_000_u32.to_le_bytes());
+        body.extend_from_slice(&(48_000_u32 * 8).to_le_bytes());
+        body.extend_from_slice(&8_u16.to_le_bytes());
+        body.extend_from_slice(&32_u16.to_le_bytes());
+        body.extend_from_slice(b"data");
+        body.extend_from_slice(&data.to_le_bytes());
+        for frame in 0..frames as u32 {
+            let shared = hash(frame, 1);
+            body.extend_from_slice(&(0.3 * (shared + 0.58 * hash(frame, 2))).to_le_bytes());
+            body.extend_from_slice(&(0.3 * (shared + 0.58 * hash(frame, 3))).to_le_bytes());
+        }
+        std::fs::write(&source, body).unwrap();
+        let proxy = dir.join("wide.proxy");
+        ensure_proxy(&source, &proxy, 1, 1, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let neutral = SpatialParams { pan: 0.0, width: 1.0 };
+        let wider = SpatialParams { pan: 0.0, width: 1.5 };
+        let check = check_spatial(&proxy, &[(0.2, 2.8)], &[], neutral, wider, 10.0).unwrap();
+        // Shared power 1, side power 0.58² each: correlation 1 / (1 + 0.3364) ≈ 0.75.
+        assert!((check.before.correlation - 0.748).abs() < 0.03, "before {}", check.before.correlation);
+        // Mid/side power ratio r = (1 − ρ)/(1 + ρ); widening scales side power by w², so ρ' = (1 − w²r)/(1 + w²r).
+        let ratio = (1.0 - check.before.correlation) / (1.0 + check.before.correlation);
+        let predicted = (1.0 - 2.25 * ratio) / (1.0 + 2.25 * ratio);
+        assert!((check.after.correlation - predicted).abs() < 0.02, "after {} predicted {predicted}", check.after.correlation);
+        let predicted_loss = 10.0 * (1.0 + 2.25 * ratio).log10();
+        assert!((check.after.mono_loss_db - predicted_loss).abs() < 0.1, "mono loss {} predicted {predicted_loss}", check.after.mono_loss_db);
+        assert!(check.after.mono_loss_db > check.before.mono_loss_db);
+        let narrower = check_spatial(&proxy, &[(0.2, 2.8)], &[], neutral, SpatialParams { pan: 0.0, width: 0.0 }, 10.0).unwrap();
+        assert!(narrower.after.correlation > 0.999 && narrower.after.mono_loss_db.abs() < 0.01);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

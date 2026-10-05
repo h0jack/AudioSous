@@ -1,5 +1,5 @@
 import { assertSafeRelativePath } from "./paths";
-import { defaultUiState, emptyProcessingGraph, type MixVariant, type ProjectDocument, type Track, type TrackRole } from "./schema";
+import { SCHEMA_VERSION, defaultUiState, emptyProcessingGraph, type MixVariant, type ProjectDocument, type Track, type TrackRole } from "./schema";
 
 export interface NewTrackInput {
   id: string;
@@ -89,6 +89,7 @@ export function createProject(input: CreateProjectInput): ProjectDocument {
       metadata: track.metadata,
       gainDb: 0,
       pan: 0,
+      width: 1,
       muted: false,
       solo: false,
       processing: emptyProcessingGraph(),
@@ -96,7 +97,7 @@ export function createProject(input: CreateProjectInput): ProjectDocument {
   });
 
   return {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     project: {
       id: projectId,
       name: input.name.trim(),
@@ -133,7 +134,7 @@ export function withUpdatedAt(document: ProjectDocument, now = new Date()): Proj
 export function updateTrack(
   document: ProjectDocument,
   trackId: string,
-  patch: Partial<Pick<Track, "name" | "role" | "customLabel" | "gainDb" | "pan" | "muted" | "solo">>,
+  patch: Partial<Pick<Track, "name" | "role" | "customLabel" | "gainDb" | "pan" | "width" | "muted" | "solo">>,
 ): ProjectDocument {
   return {
     ...document,

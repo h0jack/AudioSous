@@ -1,7 +1,7 @@
 import { applyMixPlan, planBalance, planIsStale, type ApplyMode, type AuditionMix, type TrackMeasurements } from "@audiosous/balance-planner";
 import type { AudioEngine } from "@audiosous/audio-engine";
 import { formatClock, type ProjectDocument } from "@audiosous/project-model";
-import { balanceAudition, monitorGainAt, monitorState, publishMonitor } from "./monitor";
+import { balanceAudition, monitorGainAt, monitorPanAt, monitorState, publishMonitor } from "./monitor";
 import { loadTrackAnalysis } from "./track-analysis";
 import { logEvent } from "./log";
 import { getPlatform } from "../platform";
@@ -40,17 +40,20 @@ export function currentAudition(document: ProjectDocument, balance: BalanceSessi
 /** Sends the saved mix plus any audition to the engine. See monitor.ts for the layering. */
 export function publishMonitorMix(engine: AudioEngine, document: ProjectDocument, native: boolean): void {
   const state = useAppStore.getState();
-  publishMonitor(engine, document, monitorState(document, state.balance, state.eq), native);
+  publishMonitor(engine, document, monitorState(document, state.balance, state.eq, state.space), native);
 }
 
-/** Legacy engines follow section gain by polling the playhead. */
+/** Legacy engines follow section gain and section pan by polling the playhead. They do not play width. */
 export function refreshLegacyMonitor(engine: AudioEngine, document: ProjectDocument): void {
   const state = useAppStore.getState();
-  const monitor = monitorState(document, state.balance, state.eq);
-  if (monitor.gainRegions.length === 0) return;
+  const monitor = monitorState(document, state.balance, state.eq, state.space);
+  const gains = monitor.gainRegions.length > 0;
+  const pans = monitor.spatialAudition.regions.length > 0;
+  if (!gains && !pans) return;
   const time = engine.getCurrentTime();
   for (const track of document.tracks) {
-    engine.setTrackGain(track.id, monitorGainAt(monitor, track.id, time));
+    if (gains) engine.setTrackGain(track.id, monitorGainAt(monitor, track.id, time));
+    if (pans) engine.setTrackPan(track.id, monitorPanAt(monitor, track.id, time));
   }
 }
 

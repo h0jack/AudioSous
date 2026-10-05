@@ -14,6 +14,7 @@
     "@audiosous/analysis-contract": "0.1.0",
     "@audiosous/balance-planner": "0.1.0",
     "@audiosous/eq-planner": "0.1.0",
+    "@audiosous/spatial-planner": "0.1.0",
     "@audiosous/audio-engine": "0.1.0",
     "@audiosous/audio-files": "0.1.0",
     "@audiosous/project-model": "0.1.0",

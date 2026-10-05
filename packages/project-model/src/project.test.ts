@@ -53,7 +53,7 @@ describe("project file", () => {
       }),
     ]);
 
-    expect(document.schemaVersion).toBe(2);
+    expect(document.schemaVersion).toBe(3);
     expect(document.tracks[0]?.processing).toEqual({ schemaVersion: 1, nodes: [] });
     expect(document.project.sampleRate).toBe(48_000);
     expect(document.project.durationSeconds).toBe(241.72);
@@ -62,6 +62,7 @@ describe("project file", () => {
     expect(document.comparison.scope).toBe("entire-mix");
     expect(document.tracks[0]?.gainDb).toBe(0);
     expect(document.tracks[0]?.pan).toBe(0);
+    expect(document.tracks[0]?.width).toBe(1);
 
     const text = serializeProject(document);
     expect(text).not.toMatch(/\/(home|Users|tmp)\//);
@@ -70,9 +71,9 @@ describe("project file", () => {
 
   it("rejects a newer schema and invalid JSON", () => {
     expect(() => deserializeProject("{")).toThrow(ProjectFileError);
-    expect(() => deserializeProject(JSON.stringify({ schemaVersion: 3 }))).toThrow(ProjectFileError);
+    expect(() => deserializeProject(JSON.stringify({ schemaVersion: 4 }))).toThrow(ProjectFileError);
     try {
-      deserializeProject(JSON.stringify({ schemaVersion: 3 }));
+      deserializeProject(JSON.stringify({ schemaVersion: 4 }));
     } catch (error) {
       expect(error).toMatchObject({ code: "unsupported-schema" });
     }

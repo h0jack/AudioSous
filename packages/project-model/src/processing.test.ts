@@ -39,9 +39,12 @@ describe("processing graph", () => {
     const v2 = song();
     const v1 = JSON.parse(serializeProject(v2)) as Record<string, unknown> & { tracks: Array<Record<string, unknown>> };
     v1.schemaVersion = 1;
-    for (const track of v1.tracks) delete track.processing;
+    for (const track of v1.tracks) {
+      delete track.processing;
+      delete track.width;
+    }
     const migrated = deserializeProject(JSON.stringify(v1));
-    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.schemaVersion).toBe(3);
     expect(migrated.tracks.every((track) => track.processing.nodes.length === 0)).toBe(true);
   });
 

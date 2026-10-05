@@ -13,7 +13,7 @@ import {
 import { EQ_FILTER_KINDS, EQ_FILTER_LABELS, eqChainForSection, isPassFilter, type EqFilter, type ProjectDocument } from "@audiosous/project-model";
 import { formatSignedDb } from "@audiosous/balance-planner";
 import { useEffect, useRef } from "react";
-import { applyEq, auditionEq, cancelEqPlan, eqScope, runEqPlan, setEqPreview } from "../lib/eq";
+import { applyEq, auditionEq, cancelEqPlan, eqHearing, eqScope, hearEqRow, runEqPlan, setEqPreview } from "../lib/eq";
 import { logEvent } from "../lib/log";
 import { currentEqAudition } from "../lib/monitor";
 import type { usePlayback } from "../lib/playback";
@@ -55,7 +55,7 @@ export function EqPanel({ document, playback }: { document: ProjectDocument; pla
   const native = playback.engineKind === "native";
 
   return (
-    <section className="flex max-h-[52%] min-h-0 flex-col border-t border-line bg-panel" aria-label="EQ plan">
+    <section className="flex min-h-0 flex-1 flex-col border-t border-line bg-panel" aria-label="EQ plan">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
         <h2 className="text-sm text-ink">EQ</h2>
         <label className="flex items-center gap-1 text-xs text-muted">
@@ -74,6 +74,11 @@ export function EqPanel({ document, playback }: { document: ProjectDocument; pla
         <Button title="Build a new EQ plan from the current project" className="px-3 py-1.5 text-xs" disabled={busy} onClick={() => void runEqPlan()}>
           {busy ? (eq.progress ?? "Working…") : plan ? "Regenerate" : "Plan EQ"}
         </Button>
+        {plan && eq.phase === "ready" && !stale ? (
+          <span className="text-xs text-accent" role="status" aria-live="polite">
+            {eqHearing(document, eq)}
+          </span>
+        ) : null}
         <div className="ml-auto flex flex-wrap gap-2">
           <Button title="Hear the saved mix and its saved EQ" className="px-3 py-1.5 text-xs" disabled={!plan || stale} tone={!eq.preview ? "accent" : "ghost"} onClick={() => setEqPreview(false)}>
             Current
@@ -92,7 +97,7 @@ export function EqPanel({ document, playback }: { document: ProjectDocument; pla
           </Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+      <div className="min-h-0 flex-1 overflow-auto group-data-[collapsed=true]:hidden px-4 py-3">
         <p className="mb-2 max-w-3xl text-xs text-faint">{eqScope(document)}</p>
         {!native ? (
           <p className="mb-2 max-w-3xl text-xs text-danger">This audio engine plays without EQ. Use the native engine to hear the candidate.</p>
@@ -216,6 +221,8 @@ function EqDetail({ document, plan, change, disabled }: { document: ProjectDocum
     const current = useAppStore.getState().eq.plan;
     if (!current) return;
     useAppStore.getState().setEq({ plan: editEqRecommendation(current, change.id, patch) });
+    // An edit is only useful if you hear it.
+    hearEqRow(change.id);
   };
   const interactions = plan.interactions.filter((item) => change.interactionIds.includes(item.id));
   return (

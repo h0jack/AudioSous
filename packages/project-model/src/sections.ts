@@ -96,7 +96,7 @@ export function setTrackSectionState(
     sectionId,
     userIntent: intent,
     prominence,
-    overrides: existing?.overrides ?? { gainDb: null, pan: null },
+    overrides: existing?.overrides ?? { gainDb: null, pan: null, width: null },
     processing: existing?.processing ?? emptyProcessingGraph(),
   };
   const rest = document.sectionTrackSettings.filter((setting) => setting.trackId !== trackId || setting.sectionId !== sectionId);
@@ -111,6 +111,7 @@ export function sectionSettingInUse(setting: TrackSectionState): boolean {
     setting.prominence !== null ||
     setting.overrides.gainDb !== null ||
     setting.overrides.pan !== null ||
+    setting.overrides.width !== null ||
     setting.processing.nodes.length > 0
   );
 }

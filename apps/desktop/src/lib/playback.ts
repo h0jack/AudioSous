@@ -201,18 +201,19 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
 
   const balance = useAppStore((state) => state.balance);
   const eq = useAppStore((state) => state.eq);
+  const space = useAppStore((state) => state.space);
 
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !document) return;
     publish(engine, document, nativeRef.current);
-  }, [document, balance, eq]);
+  }, [document, balance, eq, space]);
 
-  /** Sends gain, section gain, and EQ only when what the engine would hear changed. */
+  /** Sends gain, section gain, EQ, and pan/width only when what the engine would hear changed. */
   function publish(engine: RunningEngine, song: ProjectDocument, native: boolean): void {
     const state = useAppStore.getState();
-    const monitor = monitorState(song, state.balance, state.eq);
-    const key = `${native}:${monitorKey(monitor)}:${song.tracks.map((track) => `${track.pan}:${track.muted}:${track.solo}`).join("|")}`;
+    const monitor = monitorState(song, state.balance, state.eq, state.space);
+    const key = `${native}:${monitorKey(monitor)}:${song.tracks.map((track) => `${track.muted}:${track.solo}`).join("|")}`;
     if (key === publishedKey.current) return;
     publishedKey.current = key;
     publishMonitor(engine, song, monitor, native);

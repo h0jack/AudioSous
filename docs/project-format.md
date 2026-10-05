@@ -1,6 +1,6 @@
 # Project format
 
-Audiosous writes a folder, not a single blob. The human-readable file is `project.amix`. It is JSON, schema version 2.
+Audiosous writes a folder, not a single blob. The human-readable file is `project.amix`. It is JSON, schema version 3.
 
 ```text
 Night Drive/
@@ -11,7 +11,7 @@ Night Drive/
     └── project.amix
 ```
 
-`media/` holds copies of imported stems. `cache/waveforms/<trackId>.peaks` holds derived waveform peaks, `cache/playback/` holds disposable 48 kHz proxies, and `cache/analysis/` holds measurement JSON, including `<trackId>__eqbands.json`, the band levels EQ planning measures from the playback proxy. None of those caches are part of the schema, and all of them are safe to delete. They are not committed. `recovery/project.amix` keeps the previous successful save. A new project starts with the same bytes in both files. The next save leaves that version in `recovery/` and writes the new document to `project.amix`. Opening `recovery/project.amix` reads that previous copy even when the primary file is still there. The next save writes the primary file and keeps the replaced primary as the new recovery copy.
+`media/` holds copies of imported stems. `cache/waveforms/<trackId>.peaks` holds derived waveform peaks, `cache/playback/` holds disposable 48 kHz proxies, and `cache/analysis/` holds measurement JSON, including `<trackId>__eqbands.json`, the band levels EQ planning measures from the playback proxy, and `<trackId>__stereo.json`, the stereo statistics spatial planning measures from it. None of those caches are part of the schema, and all of them are safe to delete. They are not committed. `recovery/project.amix` keeps the previous successful save. A new project starts with the same bytes in both files. The next save leaves that version in `recovery/` and writes the new document to `project.amix`. Opening `recovery/project.amix` reads that previous copy even when the primary file is still there. The next save writes the primary file and keeps the replaced primary as the new recovery copy.
 
 Source files chosen at import are never modified.
 
@@ -24,7 +24,12 @@ Every document starts with `schemaVersion`. The loader:
 3. Runs each registered migration from the file's version up to the current version.
 4. Validates the result against the current schema.
 
-One migration exists: **v1 → v2** gives every track a `processing` graph (`{ "schemaVersion": 1, "nodes": [] }`) and makes processing nodes typed EQ nodes. Version 1 never wrote a processing node, so any v1 node is dropped rather than guessed. A v1 file opens and the next save writes v2.
+Two migrations exist:
+
+- **v1 → v2** gives every track a `processing` graph (`{ "schemaVersion": 1, "nodes": [] }`) and makes processing nodes typed EQ nodes. Version 1 never wrote a processing node, so any v1 node is dropped rather than guessed.
+- **v2 → v3** gives every track `width: 1` (as recorded) and every Track × Section row `overrides.width: null`. Pan and the section pan override keep their meaning, so a v2 file sounds the same after the migration.
+
+An older file opens and the next save writes v3.
 
 Fields this application does not understand are dropped by validation. That is deliberate: each version has one schema, and later shapes get a new version plus a migration.
 
@@ -32,7 +37,7 @@ Fields this application does not understand are dropped by validation. That is d
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "project": {
     "id": "project-id",
     "name": "Night Drive",
@@ -69,10 +74,11 @@ Roles: Kick, Snare / Clap, Hi-Hat, Percussion, Drums, Bass, Lead, Synth, Pad, Ke
 Monitoring state is the user's current audition mix, not an AI processor:
 
 - `gainDb`: −96 to +12. The bottom of the future fader is effectively silent. JSON cannot store −∞, and mute is a separate boolean.
-- `pan`: −1 (full left) to +1 (full right). The UI shows −100 to +100.
+- `pan`: −1 (full left) to +1 (full right). The UI shows −100 to +100. On a mono stem it is an equal-power pan; on a stereo stem it is a balance control (each channel scaled, no crossfeed).
+- `width`: 0 to 2, 1 = as recorded. Scales the side signal `(L − R) / 2` of a stereo stem and leaves the mid alone, so the mono fold-down never changes with width. 0 is mono. Ignored on a mono stem; Audiosous never synthesizes stereo.
 - `muted` and `solo`: stored independently. Solo precedence is implemented with the mixer, not in this slice.
 
-`processing` is the track's own processing graph. It applies to the whole song, before gain and pan. In schema v2 it holds static EQ nodes only, up to 6 per track.
+`processing` is the track's own processing graph. It applies to the whole song, before width, pan, and gain. It holds static EQ nodes only, up to 6 per track.
 
 `file.relativePath` is relative to the project folder and must begin with `media/`. Absolute paths and `..` are invalid. `file.filename` is the original basename, kept for display.
 
@@ -90,7 +96,7 @@ Sections are first-class. Times are seconds. A section must have `endTime > star
 
 `sectionTrackSettings` holds intent for one stem inside one section. `prominence` may be `primary`, `focal`, `supporting`, or null. The section editor writes both when a lane and a section are selected.
 
-`overrides.gainDb` and `overrides.pan` are optional overrides for that section. AutoBalance may set `overrides.gainDb` to a section gain, and playback uses it inside the section. A row is kept only while it carries intent, prominence, an override, or a processing node.
+`overrides.gainDb`, `overrides.pan`, and `overrides.width` are optional overrides for that section. Each replaces the track's value inside the section, the way a section gain replaces the fader. AutoBalance may set `overrides.gainDb`; the spatial plan may set `overrides.pan` and `overrides.width`. Playback uses all three inside the section, and pan and width changes at the section edges ramp over 30 ms. An override equal to the track's own value is not stored. A row is kept only while it carries intent, prominence, an override, or a processing node.
 
 `processing` holds up to 4 extra EQ nodes for that stem inside that section.
 
@@ -121,12 +127,23 @@ Sections are first-class. Times are seconds. A section must have `endTime > star
 **Inheritance.** Track × Section nodes are **added** after the track's own nodes while playback is inside that section:
 
 ```text
-source → track nodes → Track × Section nodes (inside the section) → gain → pan → mix
+source → track nodes → Track × Section nodes (inside the section) → width → pan / balance → gain → mix
 ```
 
 A section node never replaces, edits, or bypasses a track node. There is no section-wide graph shared by all stems and no mix-bus graph. Gain overrides keep their own rule: a section gain replaces the track gain inside the section.
 
 The graph is project state. Source files, playback proxies, and analysis caches are never rewritten with EQ. A later export has to apply these nodes to the original source at its own sample rate.
+
+### Spatial state
+
+Pan and width are not processing nodes. They are track state like the fader, with one source of truth each:
+
+| Where | Field | Applies |
+| --- | --- | --- |
+| Track | `pan`, `width` | the whole song |
+| Track × Section | `overrides.pan`, `overrides.width` | inside that section, replacing the track value |
+
+The spatial plan writes these fields directly: a whole-song row sets `track.pan` and/or `track.width`, a section row sets the overrides. It never writes a node and never duplicates a value. Width and pan are rate-independent, so a later export applies them to the original source unchanged.
 
 ### Mix variants and comparison
 

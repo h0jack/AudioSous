@@ -48,6 +48,7 @@ export function createNativeAudioEngine(projectFile: string): NativeAudioEngine 
             relativePath: track.file.relativePath,
             gainDb: track.gainDb,
             pan: track.pan,
+            width: track.width,
             muted: track.muted,
             solo: track.solo,
           })),
@@ -104,6 +105,13 @@ export function createNativeAudioEngine(projectFile: string): NativeAudioEngine 
     },
     setTrackEq(tracks) {
       void invoke("audio_set_eq", { tracks });
+    },
+    setTrackSpatial(tracks) {
+      // If the shell cannot take spatial state, keep pan working rather than failing silently.
+      invoke("audio_set_spatial", { tracks }).catch((error: unknown) => {
+        console.warn("audio_set_spatial failed; falling back to pan only", error);
+        for (const track of tracks) void invoke("audio_set_track", { track: { id: track.trackId, gainDb: null, pan: track.pan, muted: null, solo: null } });
+      });
     },
     getCurrentTime() {
       return position;

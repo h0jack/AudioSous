@@ -55,10 +55,10 @@ export type {
 } from "./plan";
 
 export { bandPowerGain, chainMagnitudeDb, filterMagnitudeDb, octavesForQ, qForOctaves, responseCurve, RESPONSE_SAMPLE_RATE } from "./response";
-export { GRID_BANDS, bandGrid, buildSpectralModel } from "./spectra";
+export { GRID_BANDS, bandGrid, buildSpectralModel, stepsIn, toDb } from "./spectra";
 export type { SpectralModel, TrackSpectra } from "./spectra";
-export { analyzeInteractions, maskCurve, regionWeight } from "./interaction";
-export type { InteractionAnalysis, PairAnalysis } from "./interaction";
+export { activeLevelDb, activityFactor, analysisScopes, analyzeInteractions, maskCurve, regionWeight, roleLabel, saturate } from "./interaction";
+export type { AnalysisScope, DirectionResult, InteractionAnalysis, PairAnalysis } from "./interaction";
 export { TONAL_WORDS, readTonalNotes, tonalEvidence } from "./tonal";
 export { musicalFrequency, planEq } from "./planner";
 export type { PlanEqInput } from "./planner";

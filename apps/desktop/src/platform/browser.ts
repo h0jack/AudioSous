@@ -121,6 +121,12 @@ export const browserPlatform: DesktopPlatform = {
   async eqBandFrames() {
     return [];
   },
+  async stereoFrames() {
+    return [];
+  },
+  async checkSpatial() {
+    return [];
+  },
   async measureWaveform() {
     throw new Error("Waveform measurement in the browser uses the JavaScript measurer.");
   },

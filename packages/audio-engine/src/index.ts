@@ -31,6 +31,17 @@ export interface TrackEqSetting {
 }
 
 /**
+ * Spatial state per track: whole-song pan and width, then section windows that replace them.
+ * Width is 0 (mono) … 1 (as recorded) … 2 and only acts on stereo stems.
+ */
+export interface TrackSpatialSetting {
+  trackId: string;
+  pan: number;
+  width: number;
+  regions: Array<{ startSeconds: number; endSeconds: number; pan: number; width: number }>;
+}
+
+/**
  * One transport clock for every stem.
  * Pan is -1 (full left) through 0 (center) to +1 (right).
  * Gain is decibels.
@@ -57,6 +68,12 @@ export interface AudioEngine {
    * a track not listed runs flat. The native engine ramps changes; other engines may ignore this.
    */
   setTrackEq?(tracks: TrackEqSetting[]): void;
+  /**
+   * Pan and width per track, plus section windows. Sets the listed tracks and replaces every section window.
+   * The native engine runs width before pan and ramps changes over 30 ms; other engines may ignore this
+   * and follow `setTrackPan` only.
+   */
+  setTrackSpatial?(tracks: TrackSpatialSetting[]): void;
   getCurrentTime(): number;
   getDuration(): number;
   dispose(): void;
