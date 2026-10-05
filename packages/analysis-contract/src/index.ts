@@ -1,6 +1,15 @@
 import { z } from "zod";
 
 export {
+  ENVELOPE_FLOOR_DB,
+  ENVELOPE_FRAMES_VERSION,
+  decodeEnvelopeSeries,
+  encodeEnvelopeSeries,
+  envelopeFramesCachePath,
+  envelopeFramesCacheSchema,
+  envelopeFramesSchema,
+  type EnvelopeFrames,
+  type EnvelopeFramesCacheEntry,
   ANALYSIS_ENGINE_VERSION,
   ANALYSIS_SCHEMA_VERSION,
   EQ_BANDS_VERSION,

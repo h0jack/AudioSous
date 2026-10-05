@@ -342,3 +342,85 @@ export type StereoFramesCacheEntry = z.infer<typeof stereoFramesCacheSchema>;
 export function stereoFramesCachePath(trackId: string): string {
   return `cache/analysis/${analysisCacheName(`${trackId}__stereo`)}.json`;
 }
+
+/**
+ * Level envelopes for dynamics planning, measured in Rust from the 48 kHz playback proxy every 10 ms:
+ * stereo-linked RMS, peak, and the RMS of the mono mid under 150 Hz (fourth-order low-pass). Each series is one
+ * byte per frame, base64, `dB = byte / 2 − 100` (byte 0 is −100 dBFS or quieter). Versioned on its own; it does
+ * not invalidate the sidecar, EQ band, or stereo caches.
+ */
+export const ENVELOPE_FRAMES_VERSION = 1;
+
+export const envelopeFramesSchema = z.object({
+  version: z.literal(ENVELOPE_FRAMES_VERSION),
+  sampleRate: z.number().int().positive(),
+  channels: z.number().int().positive().max(64),
+  durationSeconds: z.number().finite().nonnegative(),
+  hopSeconds: z.number().finite().positive(),
+  frameCount: z.number().int().nonnegative().max(4_000_000),
+  lowHz: z.number().finite().positive(),
+  rms: z.string(),
+  peak: z.string(),
+  low: z.string(),
+});
+
+export type EnvelopeFrames = z.infer<typeof envelopeFramesSchema>;
+
+export const envelopeFramesCacheSchema = z.object({
+  kind: z.literal("envelope-frames"),
+  identity: z.object({
+    version: z.literal(ENVELOPE_FRAMES_VERSION),
+    sourceSize: z.number().int().nonnegative(),
+    sourceModifiedNs: z.string(),
+    proxyVersion: z.number().int().positive(),
+    resamplerId: z.number().int().positive(),
+  }),
+  envelope: envelopeFramesSchema,
+});
+
+export type EnvelopeFramesCacheEntry = z.infer<typeof envelopeFramesCacheSchema>;
+
+export function envelopeFramesCachePath(trackId: string): string {
+  return `cache/analysis/${analysisCacheName(`${trackId}__envelope`)}.json`;
+}
+
+/** The floor of an envelope series: −100 dB means at or below −100 dBFS. */
+export const ENVELOPE_FLOOR_DB = -100;
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** One envelope series as dB per frame. */
+export function decodeEnvelopeSeries(text: string): Float32Array {
+  const clean = text.replace(/=+$/, "");
+  const out = new Float32Array(Math.floor((clean.length * 3) / 4));
+  let bits = 0;
+  let count = 0;
+  let index = 0;
+  for (let at = 0; at < clean.length; at += 1) {
+    const value = BASE64.indexOf(clean[at]!);
+    if (value < 0) continue;
+    bits = (bits << 6) | value;
+    count += 6;
+    if (count >= 8) {
+      count -= 8;
+      out[index] = ((bits >> count) & 0xff) / 2 + ENVELOPE_FLOOR_DB;
+      index += 1;
+    }
+  }
+  return index === out.length ? out : out.slice(0, index);
+}
+
+/** dB per frame as an envelope series, quantized like the Rust measurement. For fixtures and tests. */
+export function encodeEnvelopeSeries(values: ArrayLike<number>): string {
+  let text = "";
+  const byte = (db: number) => (Number.isFinite(db) && db > ENVELOPE_FLOOR_DB ? Math.max(0, Math.min(255, Math.round((db - ENVELOPE_FLOOR_DB) * 2))) : 0);
+  for (let at = 0; at < values.length; at += 3) {
+    const a = byte(values[at]!);
+    const b = at + 1 < values.length ? byte(values[at + 1]!) : 0;
+    const c = at + 2 < values.length ? byte(values[at + 2]!) : 0;
+    const word = (a << 16) | (b << 8) | c;
+    text += BASE64[(word >> 18) & 63]! + BASE64[(word >> 12) & 63]!;
+    text += at + 1 < values.length ? BASE64[(word >> 6) & 63]! : "=";
+    text += at + 2 < values.length ? BASE64[word & 63]! : "=";
+  }
+  return text;
+}

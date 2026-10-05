@@ -104,3 +104,17 @@ describe("track measurement contract", () => {
     expect(levelDeltaDb(null, -9)).toBeNull();
   });
 });
+
+describe("envelope frames", () => {
+  it("round-trips a series at 0.5 dB steps with a −100 dB floor", async () => {
+    const { decodeEnvelopeSeries, encodeEnvelopeSeries } = await import("./measurements");
+    for (const length of [0, 1, 2, 3, 4, 5, 7]) {
+      const values = Array.from({ length }, (_, index) => -60 + index * 7.3);
+      const decoded = Array.from(decodeEnvelopeSeries(encodeEnvelopeSeries(values)));
+      expect(decoded).toEqual(values.map((value) => Math.round(value * 2) / 2));
+    }
+    expect(Array.from(decodeEnvelopeSeries(encodeEnvelopeSeries([-140, Number.NEGATIVE_INFINITY, 40])))).toEqual([-100, -100, 27.5]);
+    // The Rust encoder's output for bytes [77, 97, 110] ("Man").
+    expect(Array.from(decodeEnvelopeSeries("TWFu"))).toEqual([77 / 2 - 100, 97 / 2 - 100, 110 / 2 - 100]);
+  });
+});
