@@ -3,6 +3,7 @@ import {
   GAIN_DB_MAX,
   GAIN_DB_MIN,
   emptyProcessingGraph,
+  sectionSettingInUse,
   withUpdatedAt,
   type ProjectDocument,
   type TrackSectionState,
@@ -354,9 +355,7 @@ export function applyMixPlan(document: ProjectDocument, plan: MixPlan, mode: App
     if (Math.abs(region.gainDb - trackGain) < 0.05) continue;
     sectionTrackSettings.push(sectionSetting(document, region.trackId, region.sectionId, region.gainDb));
   }
-  const kept = sectionTrackSettings.filter(
-    (setting) => setting.userIntent !== null || setting.prominence !== null || setting.overrides.gainDb !== null || setting.overrides.pan !== null,
-  );
+  const kept = sectionTrackSettings.filter(sectionSettingInUse);
   return withUpdatedAt({
     ...document,
     tracks,

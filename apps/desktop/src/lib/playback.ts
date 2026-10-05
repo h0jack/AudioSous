@@ -4,7 +4,8 @@ import type { ProjectDocument } from "@audiosous/project-model";
 import { useEffect, useRef, useState } from "react";
 import { getPlatform } from "../platform";
 import type { DesktopPlatform } from "../platform/types";
-import { publishMonitorMix, refreshLegacyMonitor } from "./autobalance";
+import { refreshLegacyMonitor } from "./autobalance";
+import { monitorKey, monitorState, publishMonitor } from "./monitor";
 import { logEvent } from "./log";
 import { audioEngineKind, createNativeAudioEngine, type NativeEngineStatus } from "./native-playback";
 import { useAppStore } from "../state/app-store";
@@ -89,6 +90,7 @@ export function arrowSeekStep(event: { shiftKey: boolean; ctrlKey: boolean }): n
 
 export function usePlayback(document: ProjectDocument | null, projectFile: string | null) {
   const engineRef = useRef<RunningEngine | null>(null);
+  const publishedKey = useRef<string | null>(null);
   const nativeRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(document?.uiState.playheadSeconds ?? 0);
@@ -151,12 +153,8 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
       if (cancelled) return;
       const latest = useAppStore.getState().document;
       if (!latest) return;
-      for (const track of latest.tracks) {
-        engine.setTrackGain(track.id, track.gainDb);
-        engine.setTrackPan(track.id, track.pan);
-        engine.setMute(track.id, track.muted);
-        engine.setSolo(track.id, track.solo);
-      }
+      publishedKey.current = null;
+      publish(engine, latest, native);
       const loop = latest.uiState.loop;
       engine.setLoop(loop?.enabled ? { startSeconds: loop.start, endSeconds: loop.end } : null);
       engine.seek(latest.uiState.playheadSeconds);
@@ -201,25 +199,24 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     engineRef.current?.setLoop(loop?.enabled ? { startSeconds: loop.start, endSeconds: loop.end } : null);
   }, [document?.uiState.loop]);
 
-  const balanceKey = useAppStore((state) =>
-    [
-      state.balance.preview,
-      state.balance.auditionId,
-      state.balance.auditionSide,
-      state.balance.phase,
-      state.balance.generation,
-      state.balance.settings.strength,
-      state.balance.plan?.stateIdentity ?? "",
-      state.balance.plan?.candidateTrim.gainDb ?? 0,
-      state.balance.plan?.trackChanges.map((change) => `${change.id}:${change.status}:${change.recommendedGainDb}`).join("|") ?? "",
-    ].join("~"),
-  );
+  const balance = useAppStore((state) => state.balance);
+  const eq = useAppStore((state) => state.eq);
 
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !document) return;
-    publishMonitorMix(engine, document, nativeRef.current);
-  }, [document?.tracks, document, balanceKey]);
+    publish(engine, document, nativeRef.current);
+  }, [document, balance, eq]);
+
+  /** Sends gain, section gain, and EQ only when what the engine would hear changed. */
+  function publish(engine: RunningEngine, song: ProjectDocument, native: boolean): void {
+    const state = useAppStore.getState();
+    const monitor = monitorState(song, state.balance, state.eq);
+    const key = `${native}:${monitorKey(monitor)}:${song.tracks.map((track) => `${track.pan}:${track.muted}:${track.solo}`).join("|")}`;
+    if (key === publishedKey.current) return;
+    publishedKey.current = key;
+    publishMonitor(engine, song, monitor, native);
+  }
 
   useEffect(() => {
     if (!playing || nativeRef.current) return;

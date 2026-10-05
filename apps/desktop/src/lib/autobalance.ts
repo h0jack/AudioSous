@@ -1,15 +1,7 @@
-import {
-  applyMixPlan,
-  auditionGainAt,
-  auditionMix,
-  planBalance,
-  planIsStale,
-  type ApplyMode,
-  type AuditionMix,
-  type TrackMeasurements,
-} from "@audiosous/balance-planner";
+import { applyMixPlan, planBalance, planIsStale, type ApplyMode, type AuditionMix, type TrackMeasurements } from "@audiosous/balance-planner";
 import type { AudioEngine } from "@audiosous/audio-engine";
 import { formatClock, type ProjectDocument } from "@audiosous/project-model";
+import { balanceAudition, monitorGainAt, monitorState, publishMonitor } from "./monitor";
 import { loadTrackAnalysis } from "./track-analysis";
 import { logEvent } from "./log";
 import { getPlatform } from "../platform";
@@ -42,45 +34,23 @@ function coveredSeconds(sections: ProjectDocument["sections"], duration: number)
 }
 
 export function currentAudition(document: ProjectDocument, balance: BalanceSession): AuditionMix | null {
-  if (!balance.plan || balance.phase !== "ready") return null;
-  if (!balance.preview && !balance.auditionId) return null;
-  if (planIsStale(balance.plan, document, balance.fingerprints, balance.settings)) return null;
-  return auditionMix(document, balance.plan, {
-    mode: balance.preview ? "candidate" : "current",
-    focusId: balance.auditionId,
-    focusSide: balance.auditionSide,
-  });
+  return balanceAudition(document, balance);
 }
 
+/** Sends the saved mix plus any audition to the engine. See monitor.ts for the layering. */
 export function publishMonitorMix(engine: AudioEngine, document: ProjectDocument, native: boolean): void {
-  const mix = currentAudition(document, useAppStore.getState().balance);
-  const time = engine.getCurrentTime();
-  for (const track of document.tracks) {
-    const base = mix?.tracks.find((item) => item.trackId === track.id)?.gainDb ?? track.gainDb;
-    const gain = mix && !native ? auditionGainAt(mix, track.id, time) : base;
-    engine.setTrackGain(track.id, gain);
-    engine.setTrackPan(track.id, track.pan);
-    engine.setMute(track.id, track.muted);
-    engine.setSolo(track.id, track.solo);
-  }
-  engine.setGainRegions?.(
-    native && mix
-      ? mix.regions.map((region) => ({
-          trackId: region.trackId,
-          startSeconds: region.startSeconds,
-          endSeconds: region.endSeconds,
-          gainDb: region.gainDb,
-        }))
-      : [],
-  );
+  const state = useAppStore.getState();
+  publishMonitor(engine, document, monitorState(document, state.balance, state.eq), native);
 }
 
+/** Legacy engines follow section gain by polling the playhead. */
 export function refreshLegacyMonitor(engine: AudioEngine, document: ProjectDocument): void {
-  const mix = currentAudition(document, useAppStore.getState().balance);
-  if (!mix || mix.regions.length === 0) return;
+  const state = useAppStore.getState();
+  const monitor = monitorState(document, state.balance, state.eq);
+  if (monitor.gainRegions.length === 0) return;
   const time = engine.getCurrentTime();
   for (const track of document.tracks) {
-    engine.setTrackGain(track.id, auditionGainAt(mix, track.id, time));
+    engine.setTrackGain(track.id, monitorGainAt(monitor, track.id, time));
   }
 }
 

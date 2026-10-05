@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnalysisView } from "../components/AnalysisView";
-import { AutoBalancePanel } from "../components/AutoBalancePanel";
+import { FrequencyInteractionView } from "../components/FrequencyInteractionView";
+import { PlansPanel } from "../components/PlansPanel";
 import { Timeline } from "../components/Timeline";
 import { usePlayback } from "../lib/playback";
 import { loadProjectWaveforms, waveformLoadRatio, type LoadedWaveform, type WaveformLoadProgress } from "../lib/waveforms";
@@ -13,6 +14,7 @@ export function ProjectScreen() {
   const warnings = useAppStore((state) => state.warnings);
   const workspace = useAppStore((state) => state.workspace);
   const [waveforms, setWaveforms] = useState<Record<string, LoadedWaveform>>({});
+  const [analysisView, setAnalysisView] = useState<"stems" | "interaction">("stems");
   const [status, setStatus] = useState<string | null>("Measuring waveforms");
   const [progress, setProgress] = useState<WaveformLoadProgress | null>(() => initialWaveformProgress());
   const trackKey = document?.tracks.map((track) => `${track.id}:${track.metadata.fileSizeBytes}:${track.metadata.durationSeconds}`).join("|") ?? "";
@@ -85,11 +87,31 @@ export function ProjectScreen() {
           <div className="min-h-0 flex-1">
             <Timeline document={document} waveforms={waveforms} status={status} playback={playback} />
           </div>
-          <AutoBalancePanel document={document} playback={playback} />
+          <PlansPanel document={document} playback={playback} />
         </div>
         {workspace === "analysis" ? (
-          <div className="min-h-0 flex-1">
-            <AnalysisView document={document} projectFile={projectFilePath} playheadSeconds={playback.playhead} onSeek={playback.seek} />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center gap-1 border-b border-line px-4 py-1.5" role="tablist" aria-label="Analysis views">
+              {(["stems", "interaction"] as const).map((view) => (
+                <button
+                  key={view}
+                  type="button"
+                  role="tab"
+                  aria-selected={analysisView === view}
+                  className={`rounded px-2.5 py-1 text-xs ${analysisView === view ? "bg-panel-2 text-ink" : "text-muted hover:text-ink"}`}
+                  onClick={() => setAnalysisView(view)}
+                >
+                  {view === "stems" ? "Stems" : "Frequency interaction"}
+                </button>
+              ))}
+            </div>
+            <div className="min-h-0 flex-1">
+              {analysisView === "stems" ? (
+                <AnalysisView document={document} projectFile={projectFilePath} playheadSeconds={playback.playhead} onSeek={playback.seek} />
+              ) : (
+                <FrequencyInteractionView document={document} onSeek={playback.seek} />
+              )}
+            </div>
           </div>
         ) : null}
         <p className="px-5 py-2 text-xs text-faint">

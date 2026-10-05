@@ -86,7 +86,10 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
             className="px-3 py-1.5 text-xs"
             disabled={!plan || stale}
             tone={balance.preview ? "accent" : "ghost"}
-            onClick={() => useAppStore.getState().setBalance({ preview: true, auditionId: null })}
+            onClick={() => {
+              useAppStore.getState().setBalance({ preview: true, auditionId: null });
+              useAppStore.getState().setEq({ preview: false, auditionId: null });
+            }}
           >
             AutoBalance
           </Button>
@@ -280,6 +283,7 @@ function audition(id: string, side: "original" | "recommended"): void {
   const balance = useAppStore.getState().balance;
   const same = balance.auditionId === id && balance.auditionSide === side;
   useAppStore.getState().setBalance(same ? { auditionId: null } : { auditionId: id, auditionSide: side, preview: false });
+  if (!same) useAppStore.getState().setEq({ preview: false, auditionId: null });
 }
 
 function focusRecommendation(document: ProjectDocument, change: GainRecommendation, playback: Playback): void {

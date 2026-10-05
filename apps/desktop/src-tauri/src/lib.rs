@@ -1,6 +1,7 @@
 mod analysis;
 mod audio_host;
 mod bundle;
+mod eq_check;
 mod waveform;
 
 use std::path::PathBuf;
@@ -277,6 +278,64 @@ fn audio_set_gain_regions(host: tauri::State<'_, audio_host::AudioHost>, regions
     );
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioEqRegion {
+    start_seconds: f64,
+    end_seconds: f64,
+    filters: Vec<audiosous_audio::FilterSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioTrackEq {
+    track_id: String,
+    filters: Vec<audiosous_audio::FilterSpec>,
+    regions: Vec<AudioEqRegion>,
+}
+
+#[tauri::command]
+fn audio_set_eq(host: tauri::State<'_, audio_host::AudioHost>, tracks: Vec<AudioTrackEq>) {
+    host.engine.set_eq(
+        tracks
+            .into_iter()
+            .map(|track| audiosous_audio::TrackEq {
+                track_id: track.track_id,
+                filters: track.filters,
+                regions: track
+                    .regions
+                    .into_iter()
+                    .map(|region| audiosous_audio::TrackEqRegion {
+                        start_seconds: region.start_seconds,
+                        end_seconds: region.end_seconds,
+                        filters: region.filters,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    );
+}
+
+#[tauri::command]
+async fn eq_check(
+    project_file: String,
+    requests: Vec<eq_check::EqCheckRequest>,
+) -> Result<Vec<eq_check::EqCheckResponse>, String> {
+    tauri::async_runtime::spawn_blocking(move || eq_check::check(&project_file, requests))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn eq_band_frames(
+    project_file: String,
+    tracks: Vec<eq_check::EqBandsRequest>,
+) -> Result<Vec<eq_check::EqBandsResponse>, String> {
+    tauri::async_runtime::spawn_blocking(move || eq_check::band_frames(&project_file, tracks))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 fn audio_set_loop(
     host: tauri::State<'_, audio_host::AudioHost>,
@@ -331,6 +390,9 @@ pub fn run() {
             audio_seek,
             audio_set_track,
             audio_set_gain_regions,
+            audio_set_eq,
+            eq_check,
+            eq_band_frames,
             audio_set_loop,
             audio_status,
             append_log

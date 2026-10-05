@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { assertSafeRelativePath } from "./paths";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const GAIN_DB_MIN = -96;
 export const GAIN_DB_MAX = 12;
@@ -86,12 +86,66 @@ const timestampSchema = z.string().refine((value) => Number.isFinite(Date.parse(
 });
 const secondsSchema = z.number().finite().nonnegative();
 
+export const EQ_FILTER_KINDS = ["high-pass", "low-pass", "bell", "low-shelf", "high-shelf"] as const;
+export type EqFilterKind = (typeof EQ_FILTER_KINDS)[number];
+
+export const EQ_FILTER_LABELS: Record<EqFilterKind, string> = {
+  "high-pass": "High-pass",
+  "low-pass": "Low-pass",
+  bell: "Bell",
+  "low-shelf": "Low shelf",
+  "high-shelf": "High shelf",
+};
+
+/** Bounds for any stored filter, manual or planned. The planner uses narrower limits of its own. */
+export const EQ_LIMITS = {
+  minHz: 20,
+  maxHz: 20_000,
+  minGainDb: -18,
+  maxGainDb: 12,
+  minQ: 0.1,
+  maxQ: 10,
+} as const;
+
+/** Track-wide filters per track, and extra filters per Track × Section. The native engine reserves exactly these slots. */
+export const MAX_TRACK_EQ_NODES = 6;
+export const MAX_SECTION_EQ_NODES = 4;
+
+export const eqFilterSchema = z.object({
+  kind: z.enum(EQ_FILTER_KINDS),
+  frequencyHz: z.number().finite().min(EQ_LIMITS.minHz).max(EQ_LIMITS.maxHz),
+  /** Ignored by high-pass and low-pass. Stored as 0 there. */
+  gainDb: z.number().finite().min(EQ_LIMITS.minGainDb).max(EQ_LIMITS.maxGainDb),
+  q: z.number().finite().min(EQ_LIMITS.minQ).max(EQ_LIMITS.maxQ),
+});
+
+export type EqFilter = z.infer<typeof eqFilterSchema>;
+
+/** One static filter. A node is one band; a graph runs its enabled nodes in order. */
+export const eqNodeSchema = z.object({
+  id: idSchema,
+  type: z.literal("eq"),
+  enabled: z.boolean(),
+  filter: eqFilterSchema,
+  origin: z.enum(["manual", "eq-plan"]),
+  /** Short explanation kept with planned nodes so the saved project says why the filter exists. */
+  note: z.string().max(400).nullable(),
+});
+
+export type EqNode = z.infer<typeof eqNodeSchema>;
+export type ProcessingNode = EqNode;
+
 export const processingGraphSchema = z.object({
   schemaVersion: z.literal(1),
-  nodes: z.array(z.unknown()),
+  nodes: z.array(eqNodeSchema).max(MAX_TRACK_EQ_NODES),
 });
 
 export type ProcessingGraph = z.infer<typeof processingGraphSchema>;
+
+const sectionProcessingGraphSchema = z.object({
+  schemaVersion: z.literal(1),
+  nodes: z.array(eqNodeSchema).max(MAX_SECTION_EQ_NODES),
+});
 
 export const trackSchema = z.object({
   id: idSchema,
@@ -114,6 +168,8 @@ export const trackSchema = z.object({
   pan: z.number().finite().min(-1).max(1),
   muted: z.boolean(),
   solo: z.boolean(),
+  /** Track-wide processing, before gain and pan. Applies to the whole song. */
+  processing: processingGraphSchema,
 });
 
 export type Track = z.infer<typeof trackSchema>;
@@ -141,7 +197,8 @@ export const trackSectionStateSchema = z.object({
     gainDb: z.number().finite().min(GAIN_DB_MIN).max(GAIN_DB_MAX).nullable(),
     pan: z.number().finite().min(-1).max(1).nullable(),
   }),
-  processing: processingGraphSchema,
+  /** Added after the track's own processing while playback is inside this section. It never replaces track nodes. */
+  processing: sectionProcessingGraphSchema,
 });
 
 export type TrackSectionState = z.infer<typeof trackSectionStateSchema>;
@@ -236,6 +293,9 @@ export const projectDocumentSchema = z
         issue(ctx, ["tracks", index, "file", "relativePath"], "Two stems use the same media path.");
       }
       mediaPaths.add(track.file.relativePath);
+      if (duplicate(track.processing.nodes, (node) => node.id).size > 0) {
+        issue(ctx, ["tracks", index, "processing", "nodes"], "Processing node ids must be unique on a track.");
+      }
       try {
         assertSafeRelativePath(track.file.relativePath);
       } catch (error) {

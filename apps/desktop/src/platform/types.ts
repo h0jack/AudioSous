@@ -35,6 +35,30 @@ export interface AnalyzeAudioRequest {
   jobId: number;
 }
 
+export interface EqCheckFilter {
+  kind: "high-pass" | "low-pass" | "bell" | "low-shelf" | "high-shelf";
+  frequencyHz: number;
+  gainDb: number;
+  q: number;
+}
+
+export interface EqCheckRequest {
+  id: string;
+  trackId: string;
+  relativePath: string;
+  windows: Array<[number, number]>;
+  saved: EqCheckFilter[];
+  candidate: EqCheckFilter[];
+  lowHz: number;
+  highHz: number;
+}
+
+export interface EqCheckResponse {
+  id: string;
+  result: { regionBeforeDb: number; regionAfterDb: number; totalBeforeDb: number; totalAfterDb: number; seconds: number } | null;
+  error: string | null;
+}
+
 export interface DesktopPlatform {
   kind: "tauri" | "browser";
   pickAudioFiles(): Promise<ListedFile[] | null>;
@@ -60,6 +84,10 @@ export interface DesktopPlatform {
   analyzeTrackFile(projectFile: string, relativePath: string): Promise<TrackAnalysisBridgeResult>;
   analyzeAudio(projectFile: string, request: AnalyzeAudioRequest): Promise<TrackAnalysisBridgeResult>;
   cancelAnalysis(jobId: number): Promise<void>;
+  /** Runs candidate EQ filters over the playback proxies and measures the result. Desktop only. */
+  checkEq(projectFile: string, requests: EqCheckRequest[]): Promise<EqCheckResponse[]>;
+  /** Band levels measured from the playback proxies for EQ planning, cached per track. Desktop only. */
+  eqBandFrames(projectFile: string, tracks: Array<{ trackId: string; relativePath: string }>): Promise<Array<{ trackId: string; json: string | null; error: string | null }>>;
   measureWaveform(projectFile: string, relativePath: string, trackId: string, onProgress: (ratio: number) => void): Promise<void>;
   cancelWaveform(): Promise<void>;
   hasPreview(): boolean;

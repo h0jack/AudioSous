@@ -28,7 +28,14 @@ export type LogEvent =
   | "autobalance.complete"
   | "autobalance.apply"
   | "autobalance.cancel"
-  | "autobalance.stale";
+  | "autobalance.stale"
+  | "eqplan.start"
+  | "eqplan.complete"
+  | "eqplan.verify"
+  | "eqplan.preview"
+  | "eqplan.apply"
+  | "eqplan.cancel"
+  | "eqplan.stale";
 
 export async function logEvent(
   platform: DesktopPlatform,

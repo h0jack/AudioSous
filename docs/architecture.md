@@ -1,6 +1,6 @@
 # Architecture
 
-Audiosous is a local desktop application. Milestone 1 does not mix, host plugins, or call a model. It exists so later analysis and DSP can sit on a stable project, a single playback clock, and a selection context.
+Audiosous is a local desktop application. Milestone 1 did not mix, host plugins, or call a model. It exists so later analysis and DSP can sit on a stable project, a single playback clock, and a selection context.
 
 ## Repository layout
 
@@ -12,8 +12,9 @@ Audiosous/
 │   ├── project-model/     Versioned .amix schema, migrations, roles, import checks
 │   ├── audio-files/       WAV and AIFF header inspection (no full decode)
 │   ├── audio-engine/      Playback interface. Desktop uses the Rust engine; the browser preview uses Web Audio.
-│   ├── analysis-contract/ Versioned JSON DTOs for the analysis sidecar
-│   └── balance-planner/   Deterministic gain-only AutoBalance. No DSP and no network.
+│   ├── analysis-contract/ Versioned JSON DTOs for the analysis sidecar and the EQ band cache
+│   ├── balance-planner/   Deterministic gain-only AutoBalance. No DSP and no network.
+│   └── eq-planner/        Frequency interaction analysis and deterministic static-EQ planning. No network.
 ├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
 └── test-assets/           Reserved for generated stems in a later slice
@@ -30,8 +31,10 @@ apps/desktop
   → audio-engine
   → analysis-contract
   → balance-planner
+  → eq-planner
 
 balance-planner → project-model, analysis-contract
+eq-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom)
 audio-engine → project-model
 services/analysis  has no dependency on the UI
 ```
@@ -53,12 +56,13 @@ There is no cloud client, account system, or upload step.
 
 ## Project schema
 
-The on-disk document is schema version 1. The shape is **song → sections → tracks → track × section**. Tracks, manual sections, section intent, and track × section intent can be edited.
+The on-disk document is schema version 2. The shape is **song → sections → tracks → track × section**. Tracks, manual sections, section intent, and track × section intent can be edited.
 
 Persisted now:
 
 - sections, including source, confidence, and `structuralGroupId`
-- track × section intent, optional prominence (`primary` / `focal` / `supporting`), gain/pan overrides, and an empty `ProcessingGraph`
+- a per-track processing graph of static EQ nodes (schema v2, see [Frequency interaction and EQ](#frequency-interaction-and-eq))
+- track × section intent, optional prominence (`primary` / `focal` / `supporting`), gain/pan overrides, and a Track × Section EQ graph that adds to the track's own
 - mix variants (`Original`, `Working Mix`) and an A/B comparison record with three scopes: entire mix, soloed track, and one track inside the full mix
 - selection context: track, section, time range, and loop
 
@@ -92,7 +96,7 @@ If the device is not 48 kHz float, a mixer thread outside the callback does the 
 
 Steady-state playback memory is the rings plus a small scratch buffer per reader. A 5-second stereo float ring is about 1.9 MB, so 11 stems are about 21 MB, 32 stems about 61 MB, and 64 stems about 123 MB. The proxy file stays on disk. The reader never loads it whole.
 
-The mix order is read, then a per-track process stage that is currently identity, then gain, pan, sum, then a mix-bus stage that is currently identity. Later EQ, dynamics, and sidechain can sit in those stages without replacing the clock. Tracks are pulled into the same callback block, so a later sidechain can read another stem.
+The mix order is read, then the per-track process stage (static EQ since Milestone 4: track filters, then the filters of the section under the playhead), then gain, pan, sum, then a mix-bus stage that is still identity. EQ sits before the fader so a fader move never changes what the filter sees, and before pan so both channels are filtered the same. Later dynamics and sidechain can sit in the same stage without replacing the clock. Tracks are pulled into the same callback block, so a later sidechain can read another stem.
 
 Loudness, RMS, correlation, width, onsets, and spectrum inside the audible band can later be measured from the 48 kHz proxy. True peak, crest factor, the source-mix sum, and anything above 20 kHz stay on the original file. Playback does not call Python.
 
@@ -262,6 +266,8 @@ The plan is ephemeral. Applying it writes `track.gainDb` and, where a section of
 
 Preview is a candidate overlay on the saved mix. The native engine keeps the base fader and a lock-free list of up to 96 section gain windows. A window sets the target of the existing per-sample gain slew, so its edges ramp over at most 10 ms instead of stepping. Changing the preview does not reload proxies or restart the device. The browser preview follows the playhead in the UI and ramps gain over about 20 ms. Single-row A/B plays that stem at its saved gain or its recommended gain with everything else at the saved mix and no trim. Cancel discards the overlay.
 
+Saved Track × Section gain plays in both engines. Before Milestone 4 the engines only received section windows while an AutoBalance preview was running, so a section gain written by Apply was saved but not heard. The shared monitor path in `apps/desktop/src/lib/monitor.ts` now sends saved section gain, the AutoBalance audition, saved EQ, and the EQ audition together.
+
 A plan is marked out of date when gain, role, mute, sections, section intent, track × section intent or prominence, settings, or source identity change. A stale plan cannot be previewed or applied. Selecting a row (track, section, playhead) does not make the plan stale. Strength is Conservative (±2 dB), Normal (±4 dB), or Strong (±6 dB). Moves past ±6 dB before the cap are marked for review and are not part of Apply all until accepted.
 
 ### Headroom trim
@@ -288,6 +294,168 @@ npx vite-node packages/balance-planner/scripts/plan-project.ts -- scenario.json
 services/analysis/.venv/bin/python packages/balance-planner/scripts/render-audition.py OUT_DIR
 ```
 
+## Frequency interaction and EQ
+
+Milestone 4 is static EQ planning. It finds where two stems compete for the same frequencies while they play together and proposes conservative, explainable filters. It does not compress, use dynamic EQ, pan, widen, add effects, limit, or master. It does not call a model.
+
+```text
+playback proxy ──► EQ band frames (Rust) ─┐
+analysis cache ───► measurements ─────────┼─► spectral model ─► pairwise interactions ─► EQ planner
+project ──────────► faders, section gain, ┘        (current mix state)                     │
+                    saved EQ, roles, intent                                                 ▼
+                                               versioned EQ plan ◄── evaluation (2 passes + whole plan)
+                                                      │
+                                                      ├─► proxy check (native filters on the proxies)
+                                                      ├─► candidate overlay ─► native engine ─► A/B
+                                                      └─► apply ─► processing graph nodes (one undo step)
+```
+
+### Spectral data
+
+EQ needs low-frequency resolution that the sidecar spectrogram does not have. That spectrogram is drawn for the eye with 1024-point FFTs per column, so at 192 kHz its bins are 187 Hz wide and everything under about 280 Hz lands in one band. On Generated 5 that put the kick/bass overlap at "150–200 Hz".
+
+So EQ planning reads **EQ band frames**, measured in Rust (`crates/audio-engine/src/bands.rs`) from the 48 kHz playback proxy. The measurement uses 8192-point Hann FFTs with 50% overlap (5.9 Hz bins), the mono mid, and one-sided power scaled so the bins of a segment sum to its mean square. It averages into the planner's 24 log bands, 20 Hz to 20 kHz, on frames of `max(0.25 s, duration / 360)`. A 96-bin whole-file spectrum is kept for placing a filter inside a band. Each stem is read once, in blocks, and the result is cached as `cache/analysis/<trackId>__eqbands.json`. The cache identity is the band measurement version (1), the source size and modification time, the proxy version, and the resampler id. The sidecar's `analysisVersion` did not change, so no existing measurement was invalidated. A 141 s stem takes about 65 ms in a release build.
+
+If a stem has no band frames, the planner falls back to the sidecar spectrogram and the plan summary says the low end is less certain.
+
+The **spectral model** (`packages/eq-planner/src/spectra.ts`) puts every unmuted, measured stem on one project time grid. Each band power is shifted by the current fader, the Track × Section gain override where one applies, and the averaged power response of the saved EQ (track nodes plus the section's nodes). That analyzes the mix as it is now. If AutoBalance was applied, its gains are used. Adding a gain in dB to a power in dB is exact. Multiplying a band power by a static filter's band-averaged power response is close for a spectrum that is smooth inside the band. A step counts as active when it is within 30 dB of the stem's loudest step, above −65 dB before the fader, and above −80 dB after it.
+
+### Interaction analysis
+
+Overlap is not masking. The existing band overlap (shared band-energy share) is still reported, but the planner works from a narrower question:
+
+> Of the energy that defines the more important stem, weighted by what matters for its role, how much sits in bands where the other stem is at a comparable or louder level, during the time both play?
+
+For each pair and each scope (the whole song, each section, and each unmarked gap):
+
+1. **Simultaneous activity.** Only steps where both are active count. A pair that shares fewer than 2 steps, or less than 10% of the sparser stem's activity, is not an interaction, whatever its spectra look like.
+2. **Band levels.** The mean band power of each stem over those shared steps.
+3. **Competition per band.** victim share × role weight × `1 / (1 + e^-(Δ+4)/2.5)`, where Δ is the competitor's level minus the victim's in dB. That is 0.5 when the competitor is 4 dB under, about 0.83 at equal level, and near 0 at 12 dB under.
+4. **Role weights** (`regionWeight`) say which ranges matter for a role. Kick: 40–120 Hz, plus click at 2–6 kHz. Bass: 35–250 Hz. Snare: 150–300 Hz and 1–6 kHz. Hi-hat: 5–14 kHz. Lead, vocal, and melodic parts: 1–5 kHz first, then 300 Hz–1 kHz. Pads and atmospheres: broad and low. A stem marked Focal in a section also counts as melodic there.
+5. **Masked fraction.** The weighted competition divided by the victim's weighted identity, 0 to 1.
+6. **Severity.** `1 − e^(−masked/0.5)`, times an activity factor (√simultaneity × coverage), times a stereo factor that lowers concern by up to 35% when the two stems sit apart (pan plus measured balance, discounted by width). Both centered and simultaneous keeps full concern. Severity is an Audiosous decision heuristic, not a masking percentage.
+7. **Regions.** Up to two broad regions of at most seven bands (about three octaves) are grown around the peak of the competition. Each has its range, center, shared energy, masked share, level difference, severity, and persistence (the share of the shared time the competitor stays within 6 dB).
+8. **Confidence** rises with simultaneity, shared seconds, and persistence, and falls for unlabeled roles and for equal or layered pairs.
+
+**Priority.** Tiers come from the same resolution AutoBalance uses (`balance-planner/src/tiers.ts`). The highest precedence is Track × Section prominence, then a Track × Section note, then a section note naming the stem, then the role. The whole-song tier is the tier that holds for most of the stem's active time. Kinds:
+
+| Kind | When | Priority |
+| --- | --- | --- |
+| kick-bass | the roles are Kick and Bass | 1.0 |
+| lead-support | a lead, vocal, or Focal stem over a pad, synth, keys, guitar, strings, brass, backing vocal, or atmosphere | 1.0 |
+| hierarchy | different tiers | 0.85 under Primary, 1.0 under Focal, 0.6 Primary over Background, 0.45 between lower tiers |
+| equal | same tier | no automatic yielder |
+| layered | same role, or names that differ only by a number or side (Gtr L / Gtr R) | halved, and no move without a stated hierarchy |
+
+Work is bounded. Muted stems, stems more than 36 dB under the loudest stem, and Background/Background pairs are skipped. 32 stems is at most 496 pairs × scopes, each 24 bands over the grid. Generated 5 (11 stems, 5 sections) analyzes 33 pairs and plans in 50–90 ms.
+
+### Who yields
+
+- Only a **Primary or Focal** stem makes another stem give way. Supporting parts share their space; that is the arrangement.
+- The **lower tier yields**. A Supporting pad is cut for a Focal lead; the lead is never cut for the pad.
+- **Equal tiers** have no automatic yielder. Kick and Bass are both Primary by role. The plan says so in words ("Kick and Bass overlap strongly from 36–63 Hz, but both are Primary and neither has a clear priority. No automatic EQ change was proposed.") unless the kick is clearly the transient owner of a concentrated fundamental: crest ≥ 10 dB, ≥ 0.8 hits a second, at least 30% of its level at 40–150 Hz, and the bass sustaining over it. In that case a small bass cut at the kick's strongest low bin is offered for **review only** (confidence 0.48). Marking Bass Supporting (or Kick Focal) in the sections turns that into a normal recommendation. Marking Bass Focal makes the kick yield.
+- **Layered** parts are left alone unless the user has stated a hierarchy.
+- A pair is never cut both ways in the same place.
+
+### Filters
+
+- **Separation cut.** A bell on the yielding stem. The center comes from the competition-weighted center of the region, refined with the fine spectra toward where both stems are strongest. For kick/bass it sits on the kick's strongest bin under 200 Hz. Frequencies are rounded to two significant figures (82 Hz, 2.4 kHz). Q comes from the region width (0.6–2.0, 0.9–2.0 for kick/bass). The size targets a gap after the move read off the competition curve: 6 dB under a Focal stem or over a Background yielder, 4 dB otherwise, 3 dB for kick/bass. It takes 40/50/60% of that (Conservative/Normal/Strong) scaled by severity, then caps it.
+- **Saved boosts first.** If a saved, enabled boost on the yielding stem adds at least 1.5 dB in the conflict range, the recommendation reduces that node instead of stacking a cut on it ("Reduce MasterEQ's saved bell +6.0 dB at 2.5 kHz to −1.0 dB because …"). Undoing a boost may go past the cut limit, stops at −1 dB, and is not capped as a loss of identity. A saved node of the same kind within half an octave is also replaced rather than duplicated (`replacesNodeId`).
+- **Level, not EQ.** If the competing level would still be more than 6 dB over the protected stem after the largest allowed correction, no filter is planned. The plan says the gap is a level or arrangement problem.
+- **High-pass** only from measurements: a Supporting or Background stem (and, with less confidence, a lead or vocal) whose energy below a corner is at least 2% of its level and at most 15%, with Kick and Bass at least 6 dB louder there while they play together, persistently. The corner is the highest point where that holds, under a role cap (300 Hz hi-hat, 140 Hz pad, 90 Hz vocal, …). Kick, bass, drums, and unlabeled stems never get one. There is no preset.
+- **Low-pass** is rare and always for review: a Background stem or pad that keeps at least 10% of its level above 8 kHz and sits within 3 dB of a hi-hat, lead, vocal, or snare up there.
+- **Presence boost** only for a lead, vocal, or Focal stem crowded in its presence range by the rest of the mix when no single lower-tier stem is responsible (if one were, cutting it is the better move). It is at most +1.5 dB at Q 0.8, and dropped if it makes the lifted stem crowd an equal or higher-tier stem more.
+- **Tone words** in section and Track × Section notes come from a short table (harsh, muddy, boomy, boxy, nasal, too bright / darker, thin, dull / brighter). A word only proposes where to look: harsh means 2–5 kHz, muddy 200–500 Hz, and so on. The stem's band levels during that section must confirm it against a straight-line fit of its own spectrum (±1.5 dB) before a filter is planned. The move is sized from the measured excess. Negated clauses, clauses naming no single stem, and level words ("Trumpets should dominate") are not tone requests. When the measurement disagrees, the plan says so and changes nothing.
+
+### Global or section
+
+Global filters are preferred. A conflict becomes one track-wide filter when the agreeing scopes (region centers within ¾ octave) cover at least half of the time the yielding stem plays. Otherwise a section filter is planned. It needs a reason the rest of the song does not have: prominence or a note in that section, or a protected stem that plays mostly (≥ 70%) there. A section filter runs after the track's filters, so it only adds what the track-wide filter leaves. When the track-wide filter already covers it, none is added. Track-wide and section cuts together never pass the strength's cut limit at one frequency.
+
+### Regularization and limits
+
+| Strength | Max cut | Max boost | New filters per track (global / section) | Min severity | Max own-level loss |
+| --- | --- | --- | --- | --- | --- |
+| Conservative | 2 dB | 1 dB | 2 / 1 | 0.50 | 0.6 dB |
+| Normal | 3.5 dB | 2 dB | 3 / 2 | 0.40 | 1.0 dB |
+| Strong | 6 dB | 3 dB | 3 / 2 | 0.33 | 1.5 dB |
+
+Planner output stays within Q 0.4–4. Broad moves use at most Q 2. Moves under 0.5 dB are not made. Each move has a cost (base, gain, Q above 1.5, section scope, boost, a Primary or Focal target) and a benefit (severity × priority × how far it actually pulls the competition down). A move survives only when its benefit beats its cost. Two cuts on one track less than 0.6 octave apart merge into one broader cut. At most two stems are carved for one protected stem at one place. A track that wants more filters than its limit keeps the best ones and loses confidence on them. Saved nodes count toward the engine's 6 track and 4 section slots.
+
+A recommendation goes to review, and stays out of Apply all until it is accepted, when confidence is under 0.55, a cut is deeper than 4 dB, a boost is over 2 dB (taking back a saved boost counts as a cut), Q is over 2.5, or the move is a low-pass, a kick/bass call between equal priorities, a large tone boost, or a filter the proxy check could not confirm.
+
+### Evaluation
+
+Every move is checked before it is shown. There are at most two planning passes and no open-ended loop.
+
+1. **Spectral transfer, pass 1.** The filter's response (divided by the response of a node it replaces) is applied to the band levels the move was planned from. Two numbers decide. First, how far it pulls the competitor under the protected stem inside the conflict, weighted by where the conflict is (`gapReductionDb`). Second, the same against everything else playing at that time (`contextGapReductionDb`). A move must pull the competitor at least 0.4 dB and 30% of its own peak gain further under, and the whole competing mix at least 0.5 dB and 20% of its gain. Otherwise it is dropped. That is what stops the planner from carving one of four pads for a lead buried in a dense arrangement, and from keeping a filter that sits off the conflict. A cut that would take more than the strength's limit from its own stem overall is scaled down and checked once more.
+2. **Correction pass.** The spectral model is rebuilt with the first-pass filters in place. Separation conflicts are looked for once more, only on stems and ranges the first pass did not touch, within the remaining limits. On the problem mix below, this is how the second of two boosted synths was found.
+3. **Whole plan.** Every kept filter is applied to the model at once and each targeted conflict is measured again. The summary reports how much further under the protected stems the competitors sit. A boost that makes its stem crowd others is dropped.
+4. **Proxy check (desktop).** Each filter runs through the native filter code over the 48 kHz proxy, for up to 20 s of the windows where the stems overlap (`crates/audio-engine/src/verify.rs`, Tauri `eq_check`). The check measures the level inside the conflict range (fourth-order band edges) and overall, with and without the filter. A filter whose measured in-range change is much smaller than predicted, or under 0.3 dB, goes to review with the numbers in its reasons.
+
+Editing a recommendation reruns step 1 for that row from the band levels stored in the plan, and recomputes the headroom trim. It does not rerun the planner, and it does not reread audio.
+
+### Plan contract
+
+`packages/eq-planner/src/plan.ts`: `planVersion` 1, `plannerVersion` 4.0.0, `kind: "frequency-balance"`. The plan has the same envelope as the AutoBalance plan (`kind: "auto-balance"`): version, project id, analysis version, settings, state identity, summary, a headroom trim, and per-stem levels. A later combined mix plan can hold both. Each recommendation has the track, the scope (`global` or `section`), `processing: { type: "eq", filter }`, the filter as planned, the node it replaces, the protected stems, the interaction ids, the purpose (separation, low-end, high-end, intent, presence), confidence, status, an edited flag, 1–6 reasons, the evaluation, and the band levels it was judged on (for drawing and re-checking). The plan also carries the top 40 interactions with their regions, outcome, and explanation. Everything is plain JSON validated with zod.
+
+**Stale identity** covers the project id, analysis version, planner version, strength, and each stem's id, name, label, role, gain, pan, mute, duration, and file identity. It also covers sections (bounds, type, intent), Track × Section prominence, notes, and gain and pan overrides, and every saved EQ node (enabled, kind, frequency, gain, Q). A stale plan cannot be previewed or applied. Selecting a row is not an edit.
+
+### Preview, A/B, apply, undo
+
+The candidate is an overlay: saved processing plus the included filters, through the same monitor path that carries the AutoBalance audition. **Current** plays the saved mix. **EQ Candidate** plays the proposed and accepted rows, plus a safety trim when boosts need one. **Bypassed / With filter** on a row plays the whole mix with only that filter switched, without the trim. Starting an EQ audition stops a gain audition, so one comparison plays at a time. Edits are heard on the next publish. The engine ramps each changed band over 30 ms, and nothing reloads.
+
+**Apply all** writes proposed and accepted rows. **Apply accepted** writes accepted rows. Each becomes an `eq-plan` node with its reason, in the track graph or the Track × Section graph, replacing a node where the row says so. The safety trim, if any, is added to every fader and section gain. That is one `replaceDocument` with history, so Ctrl+Z restores the whole pre-plan processing graph and gains. Preview never enters history. Source files, proxies, and analysis caches are not touched.
+
+**Headroom.** Cuts are not counted, so the estimate never under-reads. For a boost, the largest band gain it puts where the stem has at least 3% of its level is added to that stem's cached peak in the same power-sum estimate AutoBalance uses. If the candidate sum would get hotter than the current mix or −1 dBFS, a uniform trim (up to −6 dB) is proposed. It is labeled as a safety trim, not an EQ decision.
+
+### Native EQ
+
+`crates/audio-engine/src/eq.rs`. Each band is a second-order section with the RBJ cookbook responses (high-pass, low-pass, bell, low shelf, high shelf), run in Andrew Simper's trapezoidal state-variable form. The magnitude response equals the cookbook biquad's: both are bilinear transforms prewarped at the band frequency, and the tests hold the filter to the cookbook formula within 0.1 dB from 30 Hz to 18 kHz. The SVF form was chosen over a direct-form biquad because its coefficients can move sample by sample without the state blowing up (g and k stay positive along a linear path). So a parameter edit, a section boundary, a seek, or a loop wrap ramps the band over 30 ms (1440 samples) instead of switching it. A band that turns on fades in from bypass at its own frequency and damping, and a band that turns off fades out the same way, so its state is never cold at full mix.
+
+Each track has 10 slots: 6 for track filters and 4 for the section under the playhead. The control thread designs coefficients at 48 kHz from `set_eq` and publishes them through a sequence-locked table of atomics (`PublishedEq`), exactly like the mix snapshot. The audio thread copies the table only when its sequence changes, into memory allocated when the engine was created. It keeps per-track filter state, ramps, and the current section span, and it re-resolves the section only when the playhead leaves that span. A track with no bands is skipped entirely. A bypassed band is bit-exact. Parameters are sanitized (finite, 20 Hz to 0.45 × rate, ±24 dB, Q 0.1–10), and every legal combination is tested for finite, bounded output on noise.
+
+The callback still does not lock, allocate, free, read files, or call JavaScript, Tauri, or Python. `callback_with_eq_does_not_allocate` counts allocations on the audio thread with a counting global allocator through 60 callbacks, an EQ table change, and section boundaries, and expects 0. The probe in that test proves the counter counts. Filter memory lives beside the ring consumers and follows the same ownership handoff. The control thread resets it only while both audio paths are idle.
+
+Callback cost, release build, 512-frame callback (10.67 ms budget), stereo noise stems, paced in real time:
+
+| Stems | No EQ | 1 bell per track | HPF + 2 bells per track + a section bell |
+| --- | --- | --- | --- |
+| 11 | 0.03 ms | 0.06 ms | 0.11–0.31 ms |
+| 32 | 0.13–0.14 ms | 0.20–0.22 ms | 0.30–0.40 ms (2.8–3.8%) |
+| 64 | 0.26–0.36 ms | 0.46–0.51 ms | 0.69–0.81 ms (6.5–7.6%) |
+
+Ranges are two runs. All runs had 0 underruns. That leaves headroom for later dynamics.
+
+### Export
+
+There is no final render yet. When export is built, it has to run the same nodes on the original source at its own sample rate, not on the 48 kHz proxy. The response formulas are rate-independent and the planner stores frequencies, gains, and Q, not coefficients. Above about 0.45 × the playback rate the proxy and a high-rate source differ, and the planner never places a filter there.
+
+### Legacy engine
+
+The browser preview and `AUDIOSOUS_AUDIO_ENGINE=legacy` play without EQ. The EQ panel says so. Planning and the proxy check need the desktop app.
+
+### Known limitations
+
+- Severity is a heuristic on 24 bands (about 0.4 octave each). It is not a psychoacoustic masking model and ignores temporal masking.
+- Band levels are mono mid. Stereo position is only a discount on severity. Width, pan, and phase are never changed, and correlation is not analyzed per band.
+- A filter's effect is predicted from band-averaged responses. The independent Python bounce check and the Rust proxy check agree with the prediction within about 0.6 dB on Generated 5, not exactly.
+- Kick/bass priority without a stated hierarchy is a review-only call from crest and onset rate. It does not detect sidechain ducking already in the stems.
+- Resonance hunting is out of scope. No narrow (Q > 2) cut is planned except on a low-end fundamental.
+- Tone words are a short table. A word outside it is ignored. Confirmation compares a stem with its own spectral tilt, not with a genre reference.
+- The level-problem rule hands large gaps to AutoBalance or the arrangement. On Generated 5 the Phase Plant 2 stand-in for trumpets sits 20 dB under the mix in Drop 2, so "Trumpets should be more prominent" plans no EQ.
+- The legacy and browser engines ignore EQ.
+- The proxy check reads up to 20 s per filter from the 24 longest overlap windows. It confirms the filter's effect on its own stem, not a listening result.
+
+### Acceptance harness
+
+`packages/eq-planner/scripts/plan-eq-project.ts` runs the planner on a project folder with roles, gains, saved EQ, sections, prominence, and notes edited in memory from a scenario file (`EQ_TRACE=1` prints every stage). `crates/audio-engine/examples/eq_bands.rs` fills the band cache the desktop app would. `render-eq-audition.py` bounces Current, EQ Candidate, and the reviewed plan from the proxies with an independent Python implementation of the same filters, and measures each filter's in-range change for comparison with the prediction.
+
+```sh
+cargo run --release -p audiosous-audio --example eq_bands -- "test-assets/Generated 5"
+npx vite-node packages/eq-planner/scripts/plan-eq-project.ts -- scenario.json
+services/analysis/.venv/bin/python packages/eq-planner/scripts/render-eq-audition.py OUT_DIR
+```
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
@@ -301,7 +469,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, and `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, and `autobalance.stale`. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 

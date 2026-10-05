@@ -17,6 +17,19 @@ export interface MediaResolver {
 
 export type { LoopRegion };
 
+export interface EngineFilter {
+  kind: "high-pass" | "low-pass" | "bell" | "low-shelf" | "high-shelf";
+  frequencyHz: number;
+  gainDb: number;
+  q: number;
+}
+
+export interface TrackEqSetting {
+  trackId: string;
+  filters: EngineFilter[];
+  regions: Array<{ startSeconds: number; endSeconds: number; filters: EngineFilter[] }>;
+}
+
 /**
  * One transport clock for every stem.
  * Pan is -1 (full left) through 0 (center) to +1 (right).
@@ -39,6 +52,11 @@ export interface AudioEngine {
   setLoop(region: LoopRegion | null): void;
   /** Section gain windows. Empty clears them. The native engine follows the playhead; other engines may ignore this. */
   setGainRegions?(regions: Array<{ trackId: string; startSeconds: number; endSeconds: number; gainDb: number }>): void;
+  /**
+   * Static EQ per track: track-wide filters, then extra filters inside section windows. Replaces every track's EQ;
+   * a track not listed runs flat. The native engine ramps changes; other engines may ignore this.
+   */
+  setTrackEq?(tracks: TrackEqSetting[]): void;
   getCurrentTime(): number;
   getDuration(): number;
   dispose(): void;

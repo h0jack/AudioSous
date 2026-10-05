@@ -258,3 +258,41 @@ function sameScope(cached: MeasurementScope, scope: MeasurementScope): boolean {
   }
   return true;
 }
+
+/**
+ * Time-resolved band levels for EQ planning, measured in Rust from the 48 kHz playback proxy
+ * (8192-point FFTs, 24 log bands from 20 Hz to 20 kHz). Versioned on its own, so adding it does not
+ * invalidate the sidecar measurements above.
+ */
+export const EQ_BANDS_VERSION = 1;
+
+export const eqBandFramesSchema = z.object({
+  version: z.literal(EQ_BANDS_VERSION),
+  sampleRate: z.number().int().positive(),
+  durationSeconds: z.number().finite().nonnegative(),
+  hopSeconds: z.number().finite().positive(),
+  edgesHz: z.array(z.number().finite().positive()).length(25),
+  frames: z.array(z.array(z.number().finite().min(-200).max(80)).length(24)).max(400),
+  fineHz: z.array(z.number().finite().positive()).max(128),
+  fineDb: z.array(z.number().finite().min(-200).max(80)).max(128),
+});
+
+export type EqBandFrames = z.infer<typeof eqBandFramesSchema>;
+
+export const eqBandsCacheSchema = z.object({
+  kind: z.literal("eq-bands"),
+  identity: z.object({
+    version: z.literal(EQ_BANDS_VERSION),
+    sourceSize: z.number().int().nonnegative(),
+    sourceModifiedNs: z.string(),
+    proxyVersion: z.number().int().positive(),
+    resamplerId: z.number().int().positive(),
+  }),
+  bands: eqBandFramesSchema,
+});
+
+export type EqBandsCacheEntry = z.infer<typeof eqBandsCacheSchema>;
+
+export function eqBandsCachePath(trackId: string): string {
+  return `cache/analysis/${analysisCacheName(`${trackId}__eqbands`)}.json`;
+}

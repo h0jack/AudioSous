@@ -124,6 +124,93 @@ The Generated 5 stems are still mostly marked Bass. The import role guess reads 
 - a listening pass on the Current and AutoBalance bounces;
 - a manual walk-through of the review panel in the desktop app: row click selection and seek, the A/B buttons, Apply accepted, Ctrl+Z, and stale and cancel.
 
+## Milestone 4
+
+Milestone 4 is static EQ planning: frequency interaction between stems, then conservative, explainable EQ moves that improve separation and hierarchy. It previews on the existing clock and applies as one undo step. It does not compress, use dynamic EQ or sidechain, pan, widen, add effects, limit, master, or host plugins. See [Frequency interaction and EQ](architecture.md#frequency-interaction-and-eq).
+
+| Slice | Status |
+| --- | --- |
+| 1. EQ contract | Done. Schema v2 with a v1 migration: typed EQ nodes on every track and Track × Section, additive inheritance, node limits, stale identity, versioned `frequency-balance` plan |
+| 2. Native DSP | Done. RBJ responses in SVF form, 6 track + 4 section slots per stem, 30 ms ramps, lock-free publish, no allocation in the callback (tested) |
+| 3. Interaction analysis | Done. Time-aware pairwise competition per scope, role-weighted regions, stereo discount, priority, confidence. Proxy band frames (Rust, 5.9 Hz bins) because the sidecar spectrogram is too coarse below a few hundred Hz |
+| 4. EQ planner | Done. Who yields, center, gain, Q, global vs section, kick/bass, lead/supporting, measured high-pass, rare low-pass, tone words, saved-boost reduction, level-problem notes, regularization, confidence |
+| 5. Candidate preview | Done. Overlay through one monitor path with AutoBalance, Current vs EQ Candidate, single-filter Bypassed / With filter, curve editor, accept, reject |
+| 6. Evaluation | Done. Spectral transfer per move (pairwise and in context), a second correction pass, a whole-plan check, and a proxy check with the native filters |
+| 7. Hardening | Partly. Undo, stale plans, performance, real-music runs, and docs are done. CI has not run on these changes, and the listening pass and GUI walk-through are open |
+
+### Tests
+
+- `packages/eq-planner` (46). Spec fixtures A–F: Lead Focal vs Pad, Kick Primary vs Bass Supporting, Kick vs Bass both Primary (with and without transient evidence), never simultaneous, already separated, sparse Focal in Drop 2 from prominence and from a section note. Also global preferred over section, measured high-pass (and none without low end), fader state and saved EQ heard, a saved node replaced rather than stacked, layering, stereo discount, tone words confirmed and refused, an already-good mix, determinism, strength limits, filter caps, staleness, a 32-stem timing check, proxy bands over a smeared spectrogram, the plan contract (edit, reset, misplaced filter, clamps, audition, apply, Apply all vs Apply accepted, safety trim, HPF evaluation, proxy-check merge), and the response math.
+- `packages/project-model` (29). v1 → v2 migration, the inheritance order, rows kept for filters only, node limits and ids, clamping, and processing identity.
+- `apps/desktop` (32, 9 new). The EQ review flow drives the store with the real functions: the acceptance plan shape, whole-plan and single-filter A/B through the monitor, EQ audition stopping a gain audition, edit + reject + accept + Apply accepted + one undo step, stale refusal after a fader or prominence change, cancel, saved section gain reaching the engine, and saved EQ reaching the engine.
+- `crates/audio-engine` (Rust, 15 new). Bell, HPF, LPF, low shelf, and high shelf against the cookbook formula, multiple filters, bypass bit-exactness, every legal parameter combination finite and bounded, ramped parameter update, section fade in and out, retargeting between sections, a seek into a section, table round trip, track and section EQ through the real offline engine, the allocation counter, the proxy check, and band frames (Parseval and no low-end smear).
+- `npm run stress:audio` adds `stress_eq_callback_cost`.
+
+### Acceptance run
+
+Planned from the cached analysis plus proxy band frames with `plan-eq-project.ts`. Bounced from the proxies with `render-eq-audition.py`. Generated 5 used the same sections and roles as the Milestone 3 run: Intro 0–17.7 s, Break –33.6 s, Drop –86.6 s, Drop 2 –123.7 s, Outro –141.4 s. Roles: PunchBox Kick, Bass Bus Bass, Bleeps Bus Lead, MasterEQ Pad, Skimming Air Atmosphere, Phase Plant 2 Brass "Trumpets", Stutter Expression and Subway Synth, CZ V FX. All faders at 0 dB.
+
+**Already-good mix (the producer's stems).**
+
+| Case | Filters | Largest | Section | Notes |
+| --- | --- | --- | --- | --- |
+| Conservative | 1 | Subway −1.3 dB at 2.2 kHz | 0 | Kick/Bass both Primary: overlap 36–63 Hz, no change. Bleeps 10 dB under MasterEQ in its range: level, not EQ |
+| Normal | 2 | MasterEQ −2.3 dB at 1.6 kHz, Subway −1.7 dB at 2.2 kHz | 0 | Kick/Bass no change |
+| Strong | 3 | adds Stutter Expression −3.3 dB at 1.6 kHz (second pass) | 0 | |
+| Normal, Drop 2 note "Trumpets should be more prominent." | 2 | same as Normal | 0 | The stand-in sits 20 dB under the mix in Drop 2: level, not EQ |
+| Normal, Bass Bus Supporting in every section | 3 | Bass Bus −2.9 dB at 46 Hz, Q 2, at PunchBox's strongest low band | 0 | |
+
+None of the 11 stems got more than one filter. The first calibration run on this mix proposed 9 cuts with 5 section filters, 5 of them on Skimming Air. Five faults caused that, and all five are fixed and covered:
+- Supporting parts were protected.
+- Moves were judged against one competitor instead of everything playing.
+- Gaps no conservative cut can close were attempted.
+- Section filters were allowed without a stated reason.
+- The severity scale saturated.
+
+A sixth fault was in the data: the sidecar spectrogram has 187 Hz bins at 192 kHz, so the low end was unresolved and kick/bass read "150–200 Hz". The proxy band frames fixed that.
+
+**Deliberately problematic mix.** The good mix with bad EQ and gain saved on it:
+- MasterEQ +3 dB, a +6 dB bell at 2.5 kHz, and a +5 dB low shelf at 120 Hz.
+- Stutter Expression with a +6 dB bell at 1.8 kHz.
+- Skimming Air +5 dB with a +8 dB low shelf at 150 Hz.
+- Bass Bus +2 dB with a +5 dB bell at 60 Hz.
+- Phase Plant 2 Focal in Drop 2.
+
+- Top conflicts: MasterEQ over Bleeps Bus at 1.1–3.6 kHz (+11 dB), Stutter Expression over Bleeps Bus at 1.1–2.7 kHz (+7 dB), PunchBox and Bass Bus at 36–63 Hz (both Primary), and Phase Plant 2 under MasterEQ in Drop 2 (24 dB, level).
+- Proposed: reduce MasterEQ's saved +6 dB bell to −1.0 dB, and on the second pass reduce Stutter Expression's +6 dB bell to +1.1 dB. Both Global, confidence 0.93 and 0.92.
+- Not proposed: the two low shelves. The producer had already high-passed MasterEQ and Skimming Air, so the shelves boost almost nothing and sit about 20 dB under the bass. Kick/Bass had no stated priority. Phase Plant 2 is a level problem.
+- Review in the harness: accept both, then edit MasterEQ to −0.9 dB. A Bass Bus reject was scripted but there was no Bass Bus row to reject.
+- Bounce peaks: current +1.2 dBFS (clipping), candidate −1.5 dBFS, reviewed −1.2 dBFS.
+
+**Prediction vs audio.** The independent Python filters on the proxies measured each filter's change inside its conflict range over the overlap windows:
+
+| Filter | Predicted | Measured |
+| --- | --- | --- |
+| Stutter Expression bell 1.8 kHz, 1.1–2.7 kHz | −3.25 dB | −3.62 dB |
+| MasterEQ bell 2.5 kHz, 1.1–3.6 kHz | −3.41 dB | −2.84 dB |
+| MasterEQ −2.3 dB at 1.6 kHz | −1.11 dB | −1.33 dB |
+| Bass Bus −2.9 dB at 46 Hz, 36–63 Hz | −2.10 dB | −1.70 dB |
+| Subway −1.7 dB at 2.2 kHz | −1.24 dB | −1.27 dB |
+
+**Night Drive (synthetic, 6 stems, 80 s).** A 55 Hz kick blip sits under a constant 55 Hz bass, both Primary. The plan is one review-only Bass cut at 53 Hz, −1.1 dB, confidence 0.48, and nothing automatic.
+
+**Timing.** For 11 stems and 5 sections: band frames 0.86 s for all stems from existing proxies (cached afterwards), cache load 15–55 ms, and planning 50–90 ms including both passes and the whole-plan check.
+
+**Audio engine.** Release build, same machine, same tests, before and after EQ:
+- Synthetic, 256-frame callbacks: 32×48 kHz 0.047 → 0.048 ms, 32×96 kHz 0.037 → 0.041, 11×192 kHz 0.015 → 0.021, 64×48 kHz 0.062 → 0.086 (budget 5.33 ms).
+- Soaks: Generated 5 0.146 → 0.143 ms, Generated2 0.125 → 0.162 ms, both with seeks, a loop, mute, and solo.
+- EQ loads, 512-frame callbacks: 32 stems with HPF + 2 bells + a section bell, 0.30–0.40 ms of 10.67 ms. 64 stems, 0.69–0.81 ms.
+- Every run had 0 underruns.
+
+**Fixed along the way.**
+- Milestone 3 Track × Section gain written by Apply was saved but never sent to either engine outside a preview. Both engines now play it.
+- AutoBalance's apply dropped Track × Section rows that held only filters.
+
+**Still open before Milestone 4 is complete:**
+- a listening pass on the Current, EQ Candidate, and reviewed bounces of both mixes;
+- a GUI walk-through: the EQ tab, the curve editor (drag, wheel, keys), Bypassed / With filter, Current / EQ Candidate, Apply accepted, Ctrl+Z, a stale plan after a fader move, the Frequency interaction view, and the lane EQ badge;
+- GitHub Actions on these changes.
+
 ## Explicitly later
 
-Automatic EQ, compression, saturation, reverb, delay, mastering, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.
+Dynamic EQ, compression, sidechain, multiband, transient shaping, de-essing, automatic stereo width or panning, saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.

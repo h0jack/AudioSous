@@ -115,6 +115,7 @@ name = "audiosous-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "realfft",
  "rtrb",
  "rubato",
  "serde",

@@ -1,5 +1,5 @@
 import { assertSafeRelativePath } from "./paths";
-import { defaultUiState, type MixVariant, type ProjectDocument, type Track, type TrackRole } from "./schema";
+import { defaultUiState, emptyProcessingGraph, type MixVariant, type ProjectDocument, type Track, type TrackRole } from "./schema";
 
 export interface NewTrackInput {
   id: string;
@@ -91,11 +91,12 @@ export function createProject(input: CreateProjectInput): ProjectDocument {
       pan: 0,
       muted: false,
       solo: false,
+      processing: emptyProcessingGraph(),
     };
   });
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     project: {
       id: projectId,
       name: input.name.trim(),

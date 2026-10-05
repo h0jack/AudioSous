@@ -1,4 +1,11 @@
 export {
+  EQ_FILTER_KINDS,
+  EQ_FILTER_LABELS,
+  EQ_LIMITS,
+  MAX_SECTION_EQ_NODES,
+  MAX_TRACK_EQ_NODES,
+  eqFilterSchema,
+  eqNodeSchema,
   GAIN_DB_MAX,
   GAIN_DB_MIN,
   SCHEMA_VERSION,
@@ -18,6 +25,10 @@ export {
   uiStateSchema,
 } from "./schema";
 export type {
+  EqFilter,
+  EqFilterKind,
+  EqNode,
+  ProcessingNode,
   MixComparison,
   MixVariant,
   ProcessingGraph,
@@ -43,7 +54,20 @@ export { MIGRATIONS, applyMigrations, deserializeProject, migrateProject, readSc
 export type { SchemaMigration } from "./migrate";
 
 export { createProject, projectTiming, updateTrack, withUpdatedAt } from "./create-project";
-export { addManualSection, applyAutomaticSections, clearSuggestedSections, mergeSectionWithNext, moveSectionBoundary, removeSection, sectionAtTime, setTrackSectionState, splitSection, updateSection } from "./sections";
+export {
+  eqChainAt,
+  eqChainForSection,
+  enabledFilters,
+  isPassFilter,
+  normalizeEqFilter,
+  processingIdentity,
+  roundFrequency,
+  sectionEqNodes,
+  setSectionEqNodes,
+  setTrackEqNodes,
+  trackEqNodes,
+} from "./processing";
+export { sectionSettingInUse, addManualSection, applyAutomaticSections, clearSuggestedSections, mergeSectionWithNext, moveSectionBoundary, removeSection, sectionAtTime, setTrackSectionState, splitSection, updateSection } from "./sections";
 export type { NewSectionInput, SectionEditResult, SuggestedSection } from "./sections";
 export type { CreateProjectInput, NewTrackInput } from "./create-project";
 

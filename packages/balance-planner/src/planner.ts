@@ -7,7 +7,8 @@ import {
   type Track,
   type TrackRole,
 } from "@audiosous/project-model";
-import { indexSectionIntent, trackIntentTier, type SectionIntentIndex } from "./intent";
+import { indexSectionIntent, type SectionIntentIndex } from "./intent";
+import { defaultTierFor, readTier, type Tier, type TierSource } from "./tiers";
 import { balanceMetrics, lowBandOverlap, type BalanceMetrics } from "./metrics";
 import {
   DEFAULT_AUTOBALANCE_SETTINGS,
@@ -42,40 +43,11 @@ export interface PlanBalanceInput {
   now?: string;
 }
 
-type Tier = "primary" | "focal" | "supporting" | "background" | "unknown";
-
-const ROLE_TIER: Record<TrackRole, Tier> = {
-  kick: "primary",
-  bass: "primary",
-  lead: "primary",
-  vocal: "primary",
-  drums: "primary",
-  "snare-clap": "supporting",
-  "hi-hat": "supporting",
-  percussion: "supporting",
-  synth: "supporting",
-  pad: "supporting",
-  keys: "supporting",
-  guitar: "supporting",
-  "backing-vocal": "supporting",
-  brass: "supporting",
-  strings: "supporting",
-  fx: "background",
-  atmosphere: "background",
-  other: "unknown",
-};
-
 const ANCHOR_ORDER: TrackRole[] = ["kick", "vocal", "lead", "bass", "drums"];
 
 /** Time outside every section is still checked, as scopes that feed the track-wide decision only. */
 const UNMARKED_PREFIX = "__unmarked:";
 const UNMARKED_MIN_SECONDS = 1;
-
-/**
- * Where a scope's tier came from, highest precedence first:
- * explicit Track × Section prominence, Track × Section note, section note naming the track, role.
- */
-type TierSource = "prominence" | "track-intent" | "section-intent" | "role";
 
 interface ScopeRead {
   section: SongSection | null;
@@ -203,28 +175,21 @@ function readScope(
   const metrics = section
     ? balanceMetrics(bag?.sections?.[section.id] ?? null) ?? balanceMetrics(bag?.track ?? null, { start: section.startTime, end: section.endTime })
     : balanceMetrics(bag?.track ?? null);
-  const trackNote = section ? trackIntentTier(document, track, setting?.userIntent) : null;
-  const sectionNote = section ? (intents.targets.get(section.id)?.get(track.id) ?? null) : null;
-  const ambiguous = section ? intents.ambiguous.some((item) => item.sectionId === section.id && item.trackIds.includes(track.id)) : false;
-  let tier: Tier = defaultTier;
-  let source: TierSource = "role";
-  let intentText: string | null = null;
-  if (setting?.prominence) {
-    tier = setting.prominence;
-    source = "prominence";
-  } else if (trackNote) {
-    tier = trackNote.tier;
-    source = "track-intent";
-    intentText = trackNote.text;
-  } else if (sectionNote) {
-    tier = sectionNote.tier;
-    source = "section-intent";
-    intentText = sectionNote.text;
-  }
-  const explicit = source !== "role";
+  const read = readTier(document, track, section, intents);
   const currentGainDb = section ? (setting?.overrides.gainDb ?? track.gainDb) : track.gainDb;
   const audible = metrics?.activeLevelDb === null || metrics?.activeLevelDb === undefined ? null : metrics.activeLevelDb + currentGainDb;
-  return { section, metrics, tier, defaultTier, explicit, source, intentText, ambiguous: ambiguous && source === "role", audible, currentGainDb };
+  return {
+    section,
+    metrics,
+    tier: read.tier,
+    defaultTier,
+    explicit: read.explicit,
+    source: read.source,
+    intentText: read.intentText,
+    ambiguous: read.ambiguous,
+    audible,
+    currentGainDb,
+  };
 }
 
 function wishFor(
@@ -476,11 +441,6 @@ function chooseAnchor(document: ProjectDocument, measurements: Record<string, Tr
     reason: `${chosen.track.name} is marked ${TRACK_ROLE_LABELS[chosen.track.role]}, active through most of its file, and is the clearest structural anchor.`,
     level,
   };
-}
-
-function defaultTierFor(track: Track, tracks: Track[]): Tier {
-  if (track.role === "drums" && tracks.some((item) => item.role === "kick" && item.id !== track.id)) return "supporting";
-  return ROLE_TIER[track.role];
 }
 
 function reasonLines(

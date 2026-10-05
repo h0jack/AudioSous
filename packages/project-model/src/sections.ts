@@ -100,8 +100,19 @@ export function setTrackSectionState(
     processing: existing?.processing ?? emptyProcessingGraph(),
   };
   const rest = document.sectionTrackSettings.filter((setting) => setting.trackId !== trackId || setting.sectionId !== sectionId);
-  const keep = next.userIntent !== null || next.prominence !== null || next.overrides.gainDb !== null || next.overrides.pan !== null;
+  const keep = sectionSettingInUse(next);
   return { ok: true, document: { ...document, sectionTrackSettings: keep ? [...rest, next] : rest } };
+}
+
+/** A Track × Section row is stored only while it carries something. */
+export function sectionSettingInUse(setting: TrackSectionState): boolean {
+  return (
+    setting.userIntent !== null ||
+    setting.prominence !== null ||
+    setting.overrides.gainDb !== null ||
+    setting.overrides.pan !== null ||
+    setting.processing.nodes.length > 0
+  );
 }
 
 export interface SuggestedSection {

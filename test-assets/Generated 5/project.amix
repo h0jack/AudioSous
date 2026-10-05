@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "project": {
     "id": "5bf8e22e-c501-4266-a067-da0154c77017",
     "name": "Generated 5",
     "createdAt": "2026-10-04T04:55:48.775Z",
-    "updatedAt": "2026-10-04T17:28:43.831Z",
+    "updatedAt": "2026-10-05T02:08:28.540Z",
     "sampleRate": 192000,
     "durationSeconds": 141.428421875
   },
@@ -26,10 +26,14 @@
         "durationSeconds": 141.428421875,
         "fileSizeBytes": 217234790
       },
-      "gainDb": 0,
+      "gainDb": 0.5,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "4a0baab5-be3a-4459-bef6-03e9e53d25e8",
@@ -51,7 +55,11 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "dc5ce90e-2a4a-4279-ac8d-7eac88aef4e0",
@@ -73,7 +81,11 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "b294208b-42b4-471d-8493-baea7b4e91ca",
@@ -95,7 +107,11 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "41cb9b54-1182-42d2-ac26-2c5fc29d68ae",
@@ -117,7 +133,11 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "92576768-4448-4da7-be83-db050cfe5e74",
@@ -139,7 +159,11 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "13dc52a7-3084-4778-940a-5396da83fdbe",
@@ -161,7 +185,11 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "c1ede4a4-a15c-47b3-8f69-b56e40292b1c",
@@ -180,10 +208,14 @@
         "durationSeconds": 141.428421875,
         "fileSizeBytes": 217234790
       },
-      "gainDb": 0,
+      "gainDb": 0.7,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "a074cd6e-9742-49a1-8918-9262528254d4",
@@ -202,10 +234,14 @@
         "durationSeconds": 141.428421875,
         "fileSizeBytes": 217234790
       },
-      "gainDb": 0,
+      "gainDb": -2.3,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "3a63fd7d-2a63-405f-a5f3-77d8f0bcdf42",
@@ -227,7 +263,11 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     },
     {
       "id": "08958fb3-e592-4264-b59c-20fa881bb381",
@@ -249,27 +289,31 @@
       "gainDb": 0,
       "pan": 0,
       "muted": false,
-      "solo": false
+      "solo": false,
+      "processing": {
+        "schemaVersion": 1,
+        "nodes": []
+      }
     }
   ],
   "sections": [
     {
-      "id": "02916169-f310-4ce2-b334-55b92c7d0068",
-      "name": "Sectio",
+      "id": "3caddc2d-226d-413a-a0da-7bd5c16fa892",
+      "name": "Section",
       "type": null,
       "startTime": 0,
-      "endTime": 18.208,
+      "endTime": 20.948,
       "userIntent": null,
       "source": "manual",
       "confidence": null,
       "structuralGroupId": null
     },
     {
-      "id": "61169947-4fee-48f1-b4e3-3d63ff58fd66",
-      "name": "Section 2d",
+      "id": "efd2ed34-2b05-4952-a8d8-427b2875170c",
+      "name": "Section 2",
       "type": null,
-      "startTime": 18.263,
-      "endTime": 33.383,
+      "startTime": 20.948,
+      "endTime": 23.87,
       "userIntent": null,
       "source": "manual",
       "confidence": null,
@@ -312,16 +356,13 @@
     "trackId": null
   },
   "uiState": {
-    "selectedTrackId": "4a0baab5-be3a-4459-bef6-03e9e53d25e8",
-    "selectedSectionId": "02916169-f310-4ce2-b334-55b92c7d0068",
-    "timeRange": {
-      "start": 34.5180638746123,
-      "end": 75.50522333697023
-    },
+    "selectedTrackId": null,
+    "selectedSectionId": null,
+    "timeRange": null,
     "loop": {
       "enabled": true,
-      "start": 34.5180638746123,
-      "end": 75.50522333697023,
+      "start": 53.513251100719636,
+      "end": 69.67005001598805,
       "sectionId": null
     },
     "playheadSeconds": 0,

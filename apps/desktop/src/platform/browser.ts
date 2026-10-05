@@ -115,6 +115,12 @@ export const browserPlatform: DesktopPlatform = {
     throw new Error("Stem analysis runs in the desktop app.");
   },
   async cancelAnalysis() {},
+  async checkEq() {
+    return [];
+  },
+  async eqBandFrames() {
+    return [];
+  },
   async measureWaveform() {
     throw new Error("Waveform measurement in the browser uses the JavaScript measurer.");
   },

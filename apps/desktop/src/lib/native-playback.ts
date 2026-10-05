@@ -102,6 +102,9 @@ export function createNativeAudioEngine(projectFile: string): NativeAudioEngine 
         })),
       });
     },
+    setTrackEq(tracks) {
+      void invoke("audio_set_eq", { tracks });
+    },
     getCurrentTime() {
       return position;
     },

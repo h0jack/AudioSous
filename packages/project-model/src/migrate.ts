@@ -8,7 +8,27 @@ export interface SchemaMigration {
   migrate: (document: unknown) => unknown;
 }
 
-export const MIGRATIONS: readonly SchemaMigration[] = [];
+/**
+ * v1 → v2: tracks gain a track-wide processing graph, and processing nodes become typed EQ nodes.
+ * Version 1 never wrote a processing node, so any v1 node is unreadable and is dropped rather than guessed.
+ */
+function migrateV1ToV2(document: unknown): unknown {
+  const source = document as Record<string, unknown>;
+  const empty = () => ({ schemaVersion: 1, nodes: [] });
+  const tracks = Array.isArray(source.tracks)
+    ? source.tracks.map((track) => (isRecord(track) ? { ...track, processing: empty() } : track))
+    : source.tracks;
+  const settings = Array.isArray(source.sectionTrackSettings)
+    ? source.sectionTrackSettings.map((row) => (isRecord(row) ? { ...row, processing: empty() } : row))
+    : source.sectionTrackSettings;
+  return { ...source, schemaVersion: 2, tracks, sectionTrackSettings: settings };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export const MIGRATIONS: readonly SchemaMigration[] = [{ fromVersion: 1, toVersion: 2, migrate: migrateV1ToV2 }];
 
 export function readSchemaVersion(document: unknown): number {
   if (typeof document !== "object" || document === null || Array.isArray(document)) {

@@ -131,6 +131,19 @@ export function indexSectionIntent(document: ProjectDocument): SectionIntentInde
   return { targets, ambiguous };
 }
 
+/** Sentence-level clauses of a note, in order. */
+export function noteClauses(text: string): string[] {
+  return clauses(text);
+}
+
+/**
+ * Tracks named in the subject of one clause ("the pad is muddy under the lead" names the pad).
+ * A word that matches more than one track comes back with every candidate; the caller decides.
+ */
+export function clauseTrackReferences(document: ProjectDocument, clause: string): Array<{ word: string; trackIds: string[] }> {
+  return references(subjectPart(clause), buildDictionary(document.tracks));
+}
+
 function clauses(text: string): string[] {
   return text
     .split(/[.!?;\n]+/)

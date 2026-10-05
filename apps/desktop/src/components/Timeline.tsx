@@ -34,6 +34,7 @@ import { getPlatform } from "../platform";
 import type { LoadedWaveform } from "../lib/waveforms";
 import { isTauri } from "../platform";
 import { useAppStore } from "../state/app-store";
+import { describeFilter } from "@audiosous/eq-planner";
 import { HoverTip, RoleSelect } from "./ui";
 
 const NAME_WIDTH = 232;
@@ -564,6 +565,7 @@ export function Timeline({
                       S
                     </TipButton>
                     {proposed ? <span className="font-mono text-[10px] text-accent">{formatSignedDb(proposed.deltaDb)}</span> : null}
+                    <SavedEqBadge document={document} trackId={track.id} />
                     <HoverTip className="block min-w-0 flex-1" label={`Gain ${formatDb(gain)}`}>
                       <input
                         type="range"
@@ -1375,4 +1377,19 @@ function WaveformCanvas({
   }, [peaks, width, height, pixelsPerSecond, scrollSeconds, amplitude, color, range, loop, sections]);
 
   return <canvas ref={ref} className="block h-full w-full" />;
+}
+
+/** Shows that a track has saved EQ, and lists it on hover. Planned and manual filters alike. */
+function SavedEqBadge({ document, trackId }: { document: ProjectDocument; trackId: string }) {
+  const own = document.tracks.find((track) => track.id === trackId)?.processing.nodes.filter((node) => node.enabled) ?? [];
+  const sections = document.sectionTrackSettings
+    .filter((row) => row.trackId === trackId)
+    .flatMap((row) => row.processing.nodes.filter((node) => node.enabled).map((node) => ({ node, section: document.sections.find((item) => item.id === row.sectionId)?.name ?? "section" })));
+  if (own.length === 0 && sections.length === 0) return null;
+  const label = [...own.map((node) => describeFilter(node.filter)), ...sections.map((item) => `${item.section}: ${describeFilter(item.node.filter)}`)].join(" · ");
+  return (
+    <HoverTip label={`Saved EQ: ${label}`}>
+      <span className="rounded bg-canvas px-1 py-0.5 text-[10px] text-ok">EQ</span>
+    </HoverTip>
+  );
 }

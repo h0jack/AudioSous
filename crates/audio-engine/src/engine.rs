@@ -13,6 +13,7 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 
+use crate::eq::{EqRuntime, EqTable, FilterSpec, PublishedEq, TrackEqInput};
 use crate::mix::{
     equal_power_pan, linear_gain, scheduled_linear_gain, GainRegion, MixSnapshot, PublishedGainSchedule, PublishedMix,
     TrackMix, MAX_GAIN_REGIONS,
@@ -37,6 +38,21 @@ pub struct TrackGainRegion {
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub gain_db: f32,
+}
+
+/// Static EQ for one track: track-wide filters, then extra filters inside each section window.
+#[derive(Clone, Debug)]
+pub struct TrackEq {
+    pub track_id: String,
+    pub filters: Vec<FilterSpec>,
+    pub regions: Vec<TrackEqRegion>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrackEqRegion {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub filters: Vec<FilterSpec>,
 }
 
 #[derive(Clone)]
@@ -90,6 +106,8 @@ const FORMAT_I16: u8 = 2;
 struct SharedRings {
     tracks: UnsafeCell<Vec<Consumer<f32>>>,
     device: UnsafeCell<Option<Consumer<f32>>>,
+    /// Filter memory and ramps. Same owner rule as the ring consumers.
+    eq: UnsafeCell<EqRuntime>,
 }
 
 impl SharedRings {
@@ -97,7 +115,13 @@ impl SharedRings {
         Self {
             tracks: UnsafeCell::new(Vec::new()),
             device: UnsafeCell::new(None),
+            eq: UnsafeCell::new(EqRuntime::new()),
         }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    fn eq(&self) -> &mut EqRuntime {
+        unsafe { &mut *self.eq.get() }
     }
 
     fn tracks(&self) -> &mut Vec<Consumer<f32>> {
@@ -175,6 +199,7 @@ struct Realtime {
     rings: SharedRings,
     published: PublishedMix,
     gain_schedule: PublishedGainSchedule,
+    eq: PublishedEq,
     gains: [AtomicU32; MAX_TRACKS],
     produced: [AtomicU64; MAX_TRACKS],
     consumed: [AtomicU64; MAX_TRACKS],
@@ -218,6 +243,7 @@ impl Realtime {
             rings: SharedRings::new(),
             published: PublishedMix::silent(),
             gain_schedule: PublishedGainSchedule::empty(),
+            eq: PublishedEq::empty(),
             gains: std::array::from_fn(|_| AtomicU32::new(1.0_f32.to_bits())),
             produced: std::array::from_fn(|_| AtomicU64::new(0)),
             consumed: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -283,6 +309,7 @@ enum Command {
     },
     SetLoop(Option<(f64, f64)>),
     SetGainRegions(Vec<TrackGainRegion>),
+    SetEq(Vec<TrackEq>),
     ProxyReady {
         load_id: u64,
         index: usize,
@@ -442,6 +469,11 @@ impl Engine {
         let _ = self.send(Command::SetGainRegions(regions));
     }
 
+    /// Replaces every track's EQ. Tracks that are not listed run flat. Changes ramp over about 30 ms.
+    pub fn set_eq(&self, tracks: Vec<TrackEq>) {
+        let _ = self.send(Command::SetEq(tracks));
+    }
+
     pub fn status(&self) -> EngineStatus {
         status_from(&self.rt)
     }
@@ -554,6 +586,10 @@ impl Control {
                 self.publish_gain_regions(regions);
                 false
             }
+            Command::SetEq(tracks) => {
+                self.publish_eq(tracks);
+                false
+            }
             Command::ProxyReady {
                 load_id,
                 index,
@@ -584,6 +620,7 @@ impl Control {
             self.rt.wait_audio_idle();
             self.rt.rings.tracks().clear();
             *self.rt.rings.device() = None;
+            self.rt.rings.eq().reset();
         }
         self.rt.track_count.store(0, Ordering::Release);
         self.rt.proxy_ready.store(0, Ordering::Release);
@@ -593,6 +630,7 @@ impl Control {
         self.rt.underruns.store(0, Ordering::Release);
         self.rt.presented.store(0, Ordering::Release);
         self.rt.gain_schedule.publish(&[]);
+        self.rt.eq.publish(&EqTable::empty());
         for index in 0..MAX_TRACKS {
             self.rt.produced[index].store(0, Ordering::Relaxed);
             self.rt.consumed[index].store(0, Ordering::Relaxed);
@@ -936,6 +974,52 @@ impl Control {
         self.rt.gain_schedule.publish(&scheduled);
     }
 
+    fn publish_eq(&self, tracks: Vec<TrackEq>) {
+        let ids = self.rt.ids.lock().expect("ids");
+        let mut owned: Vec<(usize, Vec<FilterSpec>, Vec<(u64, u64, Vec<FilterSpec>)>)> = Vec::new();
+        for track in tracks {
+            let Some(index) = ids.iter().position(|id| id == &track.track_id) else {
+                continue;
+            };
+            if index >= MAX_TRACKS {
+                continue;
+            }
+            let regions = track
+                .regions
+                .into_iter()
+                .map(|region| {
+                    (
+                        seconds_to_frame(region.start_seconds),
+                        seconds_to_frame(region.end_seconds),
+                        region.filters,
+                    )
+                })
+                .filter(|(start, end, _)| end > start)
+                .collect();
+            owned.push((index, track.filters, regions));
+        }
+        drop(ids);
+        let borrowed: Vec<Vec<(u64, u64, &[FilterSpec])>> = owned
+            .iter()
+            .map(|(_, _, regions)| {
+                regions
+                    .iter()
+                    .map(|(start, end, filters)| (*start, *end, filters.as_slice()))
+                    .collect()
+            })
+            .collect();
+        let inputs: Vec<TrackEqInput<'_>> = owned
+            .iter()
+            .zip(borrowed.iter())
+            .map(|((index, filters, _), regions)| TrackEqInput {
+                track_index: *index,
+                filters,
+                regions,
+            })
+            .collect();
+        self.rt.eq.publish(&EqTable::design(&inputs));
+    }
+
     fn publish_from_tracks(&self) {
         let tracks = self.tracks.read().expect("tracks");
         let mut snap = MixSnapshot::silent();
@@ -991,6 +1075,10 @@ impl Control {
             }
             Ok(Command::SetGainRegions(regions)) => {
                 self.publish_gain_regions(regions);
+                Ok(Poll::Continue)
+            }
+            Ok(Command::SetEq(tracks)) => {
+                self.publish_eq(tracks);
                 Ok(Poll::Continue)
             }
             Ok(Command::ProxyReady {
@@ -1287,6 +1375,8 @@ fn mix_consumers(
         pan[index] = equal_power_pan(mix.tracks[index].pan);
     }
     let schedule = rt.gain_schedule.load();
+    let eq = rt.rings.eq();
+    eq.refresh(&rt.eq);
     let origin = rt
         .prime_frame
         .load(Ordering::Relaxed)
@@ -1322,6 +1412,10 @@ fn mix_consumers(
             let mut sample = [0.0_f32; 2];
             if pull_frame(&mut consumers[track_index], channels, &mut sample) {
                 pulled[track_index] += 1;
+                // Per-track process stage: static EQ before gain and pan.
+                if eq.track_live(track_index) {
+                    eq.process(track_index, file_frame, channels, &mut sample);
+                }
                 let (pan_left, pan_right) = pan[track_index];
                 let gain = gains[track_index];
                 if channels == 1 {
@@ -1881,6 +1975,196 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    mod counting {
+        use std::alloc::{GlobalAlloc, Layout, System};
+        use std::cell::Cell;
+
+        thread_local! {
+            static WATCHING: Cell<bool> = const { Cell::new(false) };
+            static COUNT: Cell<usize> = const { Cell::new(0) };
+        }
+
+        /// Counts allocations made by the watching thread only. Other threads are untouched.
+        pub struct Counting;
+
+        unsafe impl GlobalAlloc for Counting {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                note();
+                System.alloc(layout)
+            }
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                note();
+                System.dealloc(ptr, layout)
+            }
+            unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+                note();
+                System.realloc(ptr, layout, size)
+            }
+        }
+
+        fn note() {
+            let _ = WATCHING.try_with(|watching| {
+                if watching.get() {
+                    let _ = COUNT.try_with(|count| count.set(count.get() + 1));
+                }
+            });
+        }
+
+        pub fn watch<T>(run: impl FnOnce() -> T) -> (T, usize) {
+            COUNT.with(|count| count.set(0));
+            WATCHING.with(|watching| watching.set(true));
+            let value = run();
+            WATCHING.with(|watching| watching.set(false));
+            (value, COUNT.with(Cell::get))
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: counting::Counting = counting::Counting;
+
+    /// The callback path with EQ on: no allocation or free, including a new EQ table and section boundaries.
+    #[test]
+    fn callback_with_eq_does_not_allocate() {
+        use crate::eq::{FilterKind, FilterSpec};
+        let dir = env::temp_dir().join(format!("audiosous-eq-alloc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let tracks: Vec<LoadedTrack> = (0..8)
+            .map(|index| track(&dir, &format!("t{index}"), 48_000 * 3, |frame| ((frame % 97) as f32 / 97.0) - 0.5))
+            .collect();
+        let engine = Engine::offline();
+        engine.load(tracks).unwrap();
+        let bell = |gain_db: f32| FilterSpec {
+            kind: FilterKind::Bell,
+            frequency_hz: 2_400.0,
+            gain_db,
+            q: 1.0,
+        };
+        let table = |gain_db: f32| -> Vec<TrackEq> {
+            (0..8)
+                .map(|index| TrackEq {
+                    track_id: format!("t{index}"),
+                    filters: vec![
+                        bell(gain_db),
+                        FilterSpec {
+                            kind: FilterKind::HighPass,
+                            frequency_hz: 60.0,
+                            gain_db: 0.0,
+                            q: 0.707,
+                        },
+                    ],
+                    regions: vec![TrackEqRegion {
+                        start_seconds: 0.3,
+                        end_seconds: 0.6,
+                        filters: vec![bell(-2.0)],
+                    }],
+                })
+                .collect()
+        };
+        engine.set_eq(table(-1.5));
+        engine.play(0.0).unwrap();
+        let mut block = vec![0.0_f32; 1_024];
+        engine.render_block(&mut block);
+        let ((), first) = counting::watch(|| {
+            for _ in 0..40 {
+                engine.render_block(&mut block);
+            }
+        });
+        engine.set_eq(table(-3.0));
+        thread::sleep(Duration::from_millis(30));
+        let ((), second) = counting::watch(|| {
+            for _ in 0..20 {
+                engine.render_block(&mut block);
+            }
+        });
+        let ((), probe) = counting::watch(|| drop(std::hint::black_box(vec![0_u8; 16])));
+        assert!(probe >= 1, "the allocation counter is not counting");
+        assert_eq!(first, 0, "callback allocated {first} times");
+        assert_eq!(second, 0, "callback allocated {second} times after an EQ update");
+        assert!(block.iter().all(|sample| sample.is_finite()));
+        engine.shutdown();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// EQ sits between the ring and the fader: a bell on one stem changes that stem only, a section band
+    /// applies inside its window only, and the gain still scales the filtered signal.
+    #[test]
+    fn track_and_section_eq_play_through_the_mix() {
+        use crate::eq::{FilterKind, FilterSpec};
+        let dir = env::temp_dir().join(format!("audiosous-eq-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let tone = |frame: usize| (2.0 * std::f32::consts::PI * 1_000.0 * frame as f32 / 48_000.0).sin() * 0.5;
+        let frames = 48_000 * 4;
+        let cut = track(&dir, "cut", frames, tone);
+        let flat = track(&dir, "flat", frames, tone);
+        let engine = Engine::offline();
+        engine.load(vec![cut, flat]).unwrap();
+        engine.set_track("cut", Some(0.0), Some(-1.0), Some(false), Some(false));
+        engine.set_track("flat", Some(-6.0), Some(1.0), Some(false), Some(false));
+        let bell = FilterSpec {
+            kind: FilterKind::Bell,
+            frequency_hz: 1_000.0,
+            gain_db: -6.0,
+            q: 1.0,
+        };
+        engine.set_eq(vec![
+            TrackEq {
+                track_id: "cut".into(),
+                filters: vec![bell],
+                regions: vec![],
+            },
+            TrackEq {
+                track_id: "flat".into(),
+                filters: vec![],
+                regions: vec![TrackEqRegion {
+                    start_seconds: 2.0,
+                    end_seconds: 3.0,
+                    filters: vec![bell],
+                }],
+            },
+            TrackEq {
+                track_id: "unknown".into(),
+                filters: vec![bell],
+                regions: vec![],
+            },
+        ]);
+        engine.play(0.0).unwrap();
+        let level = |block: &[f32], channel: usize| {
+            let samples: Vec<f32> = block.iter().skip(channel).step_by(2).copied().collect();
+            let rms = (samples.iter().map(|value| value * value).sum::<f32>() / samples.len() as f32).sqrt();
+            20.0 * (rms / (0.5 / 2_f32.sqrt())).log10()
+        };
+        let mut block = vec![0.0_f32; 2 * 4_800];
+        let mut early = Vec::new();
+        for _ in 0..10 {
+            engine.render_block(&mut block);
+            early.extend_from_slice(&block);
+        }
+        // Hard-left stem: -6 dB bell, unity gain. Hard-right stem: flat, -6 dB fader.
+        assert!((level(&early[9_600..], 0) + 6.0).abs() < 0.15, "track EQ {}", level(&early[9_600..], 0));
+        assert!((level(&early[9_600..], 1) + 6.0).abs() < 0.15, "fader only {}", level(&early[9_600..], 1));
+        let mut inside = Vec::new();
+        while inside.len() < 2 * 48_000 * 2 {
+            engine.render_block(&mut block);
+            inside.extend_from_slice(&block);
+        }
+        // 2.0 s to 3.0 s: the section band stacks on the fader.
+        let section = &inside[2 * (48_000 + 4_800)..2 * (48_000 + 43_000)];
+        assert!((level(section, 1) + 12.0).abs() < 0.2, "section EQ {}", level(section, 1));
+        assert_eq!(engine.status().underruns, 0);
+        engine.set_eq(vec![]);
+        thread::sleep(Duration::from_millis(50));
+        let mut released = Vec::new();
+        for _ in 0..4 {
+            engine.render_block(&mut block);
+            released.extend_from_slice(&block);
+        }
+        assert!(level(&released[2 * 4_800..], 0).abs() < 0.15, "bypass {}", level(&released[2 * 4_800..], 0));
+        engine.shutdown();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn an_empty_ring_underruns_without_blocking() {
         let dir = env::temp_dir().join(format!("audiosous-underrun-{}", std::process::id()));
@@ -2182,6 +2466,118 @@ mod tests {
             );
             assert!(status.buffered_ahead_min < RING_SECONDS as f64 + 0.5);
             engine.shutdown();
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Callback cost with EQ: 11, 32, and 64 stereo stems at 0, 1, and 3 filters per track,
+    /// the 3-filter case also crossing a section band. Paced in real time so readers are not starved.
+    #[test]
+    #[ignore = "EQ callback cost"]
+    fn stress_eq_callback_cost() {
+        use crate::eq::{FilterKind, FilterSpec};
+        let dir = env::temp_dir().join(format!("audiosous-eq-stress-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let bell = |frequency_hz: f32, gain_db: f32| FilterSpec {
+            kind: FilterKind::Bell,
+            frequency_hz,
+            gain_db,
+            q: 1.0,
+        };
+        let hpf = FilterSpec {
+            kind: FilterKind::HighPass,
+            frequency_hz: 70.0,
+            gain_db: 0.0,
+            q: 0.707,
+        };
+        for tracks in [11_usize, 32, 64] {
+            let loaded: Vec<LoadedTrack> = (0..tracks)
+                .map(|index| {
+                    let name = format!("s{tracks}-{index}");
+                    let source = dir.join(format!("{name}.wav"));
+                    let seed = 0x9e37_79b9_u32.wrapping_mul(index as u32 + 1);
+                    write_wav_rate(&source, 48_000, 48_000 * 6, move |frame| {
+                        let mut x = (frame as u32).wrapping_mul(0x85eb_ca6b) ^ seed;
+                        x ^= x << 13;
+                        x ^= x >> 17;
+                        x ^= x << 5;
+                        (x as f32 / u32::MAX as f32 - 0.5) * 0.1
+                    });
+                    let proxy = dir.join(format!("{name}.proxy"));
+                    let size = fs::metadata(&source).unwrap().len();
+                    ensure_proxy(&source, &proxy, size, 1, &AtomicBool::new(false), &mut |_| {}).unwrap();
+                    LoadedTrack {
+                        id: name.clone(),
+                        label: name,
+                        source_path: source,
+                        proxy_path: proxy,
+                        source_size: size,
+                        source_modified_ns: 1,
+                        gain_db: 0.0,
+                        pan: 0.0,
+                        muted: false,
+                        solo: false,
+                    }
+                })
+                .collect();
+            for filters in [0_usize, 1, 3] {
+                let engine = Engine::offline();
+                engine.load(loaded.clone()).unwrap();
+                let table: Vec<TrackEq> = loaded
+                    .iter()
+                    .map(|track| TrackEq {
+                        track_id: track.id.clone(),
+                        filters: match filters {
+                            0 => vec![],
+                            1 => vec![bell(2_400.0, -1.5)],
+                            _ => vec![hpf, bell(250.0, -1.0), bell(2_400.0, -1.5)],
+                        },
+                        regions: if filters == 3 {
+                            vec![TrackEqRegion {
+                                start_seconds: 1.0,
+                                end_seconds: 2.0,
+                                filters: vec![bell(1_800.0, -1.0)],
+                            }]
+                        } else {
+                            vec![]
+                        },
+                    })
+                    .collect();
+                engine.set_eq(table);
+                engine.play(0.0).unwrap();
+                let mut block = vec![0.0_f32; 1_024];
+                let block_duration = Duration::from_secs_f64(512.0 / f64::from(PLAYBACK_RATE));
+                let callbacks = 280_u32;
+                let mut total = 0_u128;
+                let mut worst = 0_u128;
+                let started = Instant::now();
+                for index in 0..callbacks {
+                    let tick = Instant::now();
+                    engine.render_block(&mut block);
+                    let spent = tick.elapsed().as_nanos();
+                    total += spent;
+                    worst = worst.max(spent);
+                    let due = started + block_duration.saturating_mul(index + 1);
+                    if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                        thread::sleep(wait);
+                    }
+                }
+                let status = engine.status();
+                let average = total as f64 / f64::from(callbacks) / 1_000_000.0;
+                let budget = 512.0 / f64::from(PLAYBACK_RATE) * 1_000.0;
+                eprintln!(
+                    "eq-stress tracks={tracks} filters/track={filters}{} callback avg={average:.3}ms max={:.3}ms budget={budget:.2}ms ({:.1}% avg) underruns={}",
+                    if filters == 3 { "+section" } else { "" },
+                    worst as f64 / 1_000_000.0,
+                    average / budget * 100.0,
+                    status.underruns
+                );
+                assert!(block.iter().all(|sample| sample.is_finite()));
+                assert_eq!(status.underruns, 0, "{tracks} tracks with {filters} filters underran");
+                assert!(average < budget * 0.5, "{tracks} tracks with {filters} filters used {average:.3} ms of {budget:.2} ms");
+                engine.shutdown();
+            }
         }
         let _ = fs::remove_dir_all(&dir);
     }
