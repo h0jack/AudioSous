@@ -41,6 +41,25 @@ function migrateV2ToV3(document: unknown): unknown {
   return { ...source, schemaVersion: 3, tracks, sectionTrackSettings: settings };
 }
 
+/**
+ * v3 → v4: every processing graph (track and Track × Section) becomes graph v2, which keeps its EQ nodes and gains
+ * an empty list of dynamics processors. Nothing a v3 file stored changes how it sounds.
+ */
+function migrateV3ToV4(document: unknown): unknown {
+  const source = document as Record<string, unknown>;
+  const graph = (value: unknown) => {
+    const nodes = isRecord(value) && Array.isArray(value.nodes) ? value.nodes : [];
+    return { schemaVersion: 2, nodes, dynamics: [] };
+  };
+  const tracks = Array.isArray(source.tracks)
+    ? source.tracks.map((track) => (isRecord(track) ? { ...track, processing: graph(track.processing) } : track))
+    : source.tracks;
+  const settings = Array.isArray(source.sectionTrackSettings)
+    ? source.sectionTrackSettings.map((row) => (isRecord(row) ? { ...row, processing: graph(row.processing) } : row))
+    : source.sectionTrackSettings;
+  return { ...source, schemaVersion: 4, tracks, sectionTrackSettings: settings };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -48,6 +67,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export const MIGRATIONS: readonly SchemaMigration[] = [
   { fromVersion: 1, toVersion: 2, migrate: migrateV1ToV2 },
   { fromVersion: 2, toVersion: 3, migrate: migrateV2ToV3 },
+  { fromVersion: 3, toVersion: 4, migrate: migrateV3ToV4 },
 ];
 
 export function readSchemaVersion(document: unknown): number {

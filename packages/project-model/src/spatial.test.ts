@@ -46,7 +46,7 @@ function song(): ProjectDocument {
 describe("spatial state", () => {
   it("starts every track centered at 100% width", () => {
     const document = song();
-    expect(document.schemaVersion).toBe(3);
+    expect(document.schemaVersion).toBe(4);
     expect(document.tracks.map((track) => [track.pan, track.width])).toEqual([
       [0, 1],
       [0, 1],
@@ -67,7 +67,7 @@ describe("spatial state", () => {
     for (const track of v2.tracks) delete track.width;
     for (const row of v2.sectionTrackSettings) delete row.overrides.width;
     const migrated = deserializeProject(JSON.stringify(v2));
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.tracks.map((track) => track.width)).toEqual([1, 1]);
     expect(migrated.tracks.find((track) => track.id === "pad")!.pan).toBe(0.3);
     expect(migrated.sectionTrackSettings[0]!.overrides).toEqual({ gainDb: null, pan: -0.2, width: null });

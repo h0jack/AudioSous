@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { assertSafeRelativePath } from "./paths";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const GAIN_DB_MIN = -96;
 export const GAIN_DB_MAX = 12;
@@ -145,18 +145,152 @@ export const eqNodeSchema = z.object({
 });
 
 export type EqNode = z.infer<typeof eqNodeSchema>;
-export type ProcessingNode = EqNode;
 
+/**
+ * Dynamics processors. They are not ordered by their position in the list: every graph runs its stages in
+ * DYNAMICS_STAGE_ORDER (see dynamics.ts), after the static EQ nodes and before width, pan, and gain.
+ */
+export const DYNAMICS_NODE_TYPES = ["dynamic-eq", "compressor", "transient", "ducking"] as const;
+export type DynamicsNodeType = (typeof DYNAMICS_NODE_TYPES)[number];
+
+export const DYNAMICS_NODE_LABELS: Record<DynamicsNodeType, string> = {
+  "dynamic-eq": "Dynamic EQ",
+  compressor: "Compressor",
+  transient: "Transient",
+  ducking: "Ducking",
+};
+
+/** Bounds for any stored dynamics node, manual or planned. The planner stays well inside them. */
+export const DYNAMICS_LIMITS = {
+  minThresholdDb: -60,
+  maxThresholdDb: 0,
+  minRatio: 1,
+  maxRatio: 20,
+  minAttackMs: 0.1,
+  maxAttackMs: 250,
+  minReleaseMs: 5,
+  maxReleaseMs: 2_000,
+  minKneeDb: 0,
+  maxKneeDb: 24,
+  minMakeupDb: 0,
+  maxMakeupDb: 12,
+  /** Ducking and dynamic EQ only reduce: range is the largest reduction, 0 … −12 dB. */
+  minRangeDb: -12,
+  maxRangeDb: 0,
+  minHz: 20,
+  maxHz: 20_000,
+  minQ: 0.3,
+  maxQ: 6,
+  /** Transient amounts are fractions: 0.15 is +15%. */
+  maxTransientAttack: 0.3,
+  maxTransientSustain: 0.2,
+} as const;
+
+/** Per graph and type. The native engine reserves exactly these slots. */
+export const MAX_TRACK_DYNAMICS: Record<DynamicsNodeType, number> = { "dynamic-eq": 3, compressor: 1, transient: 1, ducking: 2 };
+export const MAX_SECTION_DYNAMICS: Record<DynamicsNodeType, number> = { "dynamic-eq": 2, compressor: 1, transient: 1, ducking: 1 };
+
+/** How a sidechain key is followed: a fast peak follower for drums, a slower RMS follower for voices and leads. */
+export const KEY_DETECTORS = ["transient", "smooth"] as const;
+export type KeyDetector = (typeof KEY_DETECTORS)[number];
+
+const dynamicsBase = {
+  id: idSchema,
+  enabled: z.boolean(),
+  origin: z.enum(["manual", "dynamics-plan"]),
+  note: z.string().max(400).nullable(),
+};
+const thresholdSchema = z.number().finite().min(DYNAMICS_LIMITS.minThresholdDb).max(DYNAMICS_LIMITS.maxThresholdDb);
+const attackSchema = z.number().finite().min(DYNAMICS_LIMITS.minAttackMs).max(DYNAMICS_LIMITS.maxAttackMs);
+const releaseSchema = z.number().finite().min(DYNAMICS_LIMITS.minReleaseMs).max(DYNAMICS_LIMITS.maxReleaseMs);
+const rangeSchema = z.number().finite().min(DYNAMICS_LIMITS.minRangeDb).max(DYNAMICS_LIMITS.maxRangeDb);
+
+export const compressorNodeSchema = z.object({
+  ...dynamicsBase,
+  type: z.literal("compressor"),
+  thresholdDb: thresholdSchema,
+  ratio: z.number().finite().min(DYNAMICS_LIMITS.minRatio).max(DYNAMICS_LIMITS.maxRatio),
+  attackMs: attackSchema,
+  releaseMs: releaseSchema,
+  kneeDb: z.number().finite().min(DYNAMICS_LIMITS.minKneeDb).max(DYNAMICS_LIMITS.maxKneeDb),
+  /** 0 unless someone sets it. The planner never adds makeup to win a comparison by being louder. */
+  makeupDb: z.number().finite().min(DYNAMICS_LIMITS.minMakeupDb).max(DYNAMICS_LIMITS.maxMakeupDb),
+});
+
+/** Lowers the track by up to `rangeDb` while the key track plays, read from the key track's own source. */
+export const duckingNodeSchema = z.object({
+  ...dynamicsBase,
+  type: z.literal("ducking"),
+  keyTrackId: idSchema,
+  keyDetector: z.enum(KEY_DETECTORS),
+  thresholdDb: thresholdSchema,
+  rangeDb: rangeSchema,
+  attackMs: attackSchema,
+  releaseMs: releaseSchema,
+});
+
+export const transientNodeSchema = z.object({
+  ...dynamicsBase,
+  type: z.literal("transient"),
+  attack: z.number().finite().min(-DYNAMICS_LIMITS.maxTransientAttack).max(DYNAMICS_LIMITS.maxTransientAttack),
+  sustain: z.number().finite().min(-DYNAMICS_LIMITS.maxTransientSustain).max(DYNAMICS_LIMITS.maxTransientSustain),
+});
+
+/** A bell that dips by up to `rangeDb` while its detector (the key track's band, or the track's own) is over threshold. */
+export const dynamicEqNodeSchema = z.object({
+  ...dynamicsBase,
+  type: z.literal("dynamic-eq"),
+  filter: z.object({
+    kind: z.literal("bell"),
+    frequencyHz: z.number().finite().min(DYNAMICS_LIMITS.minHz).max(DYNAMICS_LIMITS.maxHz),
+    q: z.number().finite().min(DYNAMICS_LIMITS.minQ).max(DYNAMICS_LIMITS.maxQ),
+  }),
+  /** Null detects on the track's own signal in that band. */
+  keyTrackId: idSchema.nullable(),
+  keyDetector: z.enum(KEY_DETECTORS),
+  thresholdDb: thresholdSchema,
+  rangeDb: rangeSchema,
+  attackMs: attackSchema,
+  releaseMs: releaseSchema,
+});
+
+export const dynamicsNodeSchema = z.discriminatedUnion("type", [dynamicEqNodeSchema, compressorNodeSchema, transientNodeSchema, duckingNodeSchema]);
+
+export type CompressorNode = z.infer<typeof compressorNodeSchema>;
+export type DuckingNode = z.infer<typeof duckingNodeSchema>;
+export type TransientNode = z.infer<typeof transientNodeSchema>;
+export type DynamicEqNode = z.infer<typeof dynamicEqNodeSchema>;
+export type DynamicsNode = z.infer<typeof dynamicsNodeSchema>;
+export type ProcessingNode = EqNode | DynamicsNode;
+
+function dynamicsList(limits: Record<DynamicsNodeType, number>) {
+  return z
+    .array(dynamicsNodeSchema)
+    .max(Object.values(limits).reduce((total, count) => total + count, 0))
+    .superRefine((nodes, ctx) => {
+      for (const type of DYNAMICS_NODE_TYPES) {
+        const count = nodes.filter((node) => node.type === type).length;
+        if (count > limits[type]) ctx.addIssue({ code: "custom", message: `A graph holds up to ${limits[type]} ${DYNAMICS_NODE_LABELS[type]} ${limits[type] === 1 ? "node" : "nodes"}.` });
+      }
+    });
+}
+
+/**
+ * Graph v2. `nodes` are static EQ bands in array order. `dynamics` are dynamics processors, run in the fixed stage
+ * order after the EQ. Version 1 graphs held EQ only.
+ */
 export const processingGraphSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   nodes: z.array(eqNodeSchema).max(MAX_TRACK_EQ_NODES),
+  dynamics: dynamicsList(MAX_TRACK_DYNAMICS),
 });
 
 export type ProcessingGraph = z.infer<typeof processingGraphSchema>;
 
 const sectionProcessingGraphSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   nodes: z.array(eqNodeSchema).max(MAX_SECTION_EQ_NODES),
+  dynamics: dynamicsList(MAX_SECTION_DYNAMICS),
 });
 
 export const trackSchema = z.object({
@@ -309,7 +443,7 @@ export const projectDocumentSchema = z
         issue(ctx, ["tracks", index, "file", "relativePath"], "Two stems use the same media path.");
       }
       mediaPaths.add(track.file.relativePath);
-      if (duplicate(track.processing.nodes, (node) => node.id).size > 0) {
+      if (duplicate([...track.processing.nodes, ...track.processing.dynamics], (node) => node.id).size > 0) {
         issue(ctx, ["tracks", index, "processing", "nodes"], "Processing node ids must be unique on a track.");
       }
       try {
@@ -351,7 +485,26 @@ export const projectDocumentSchema = z
       if (!sectionIds.has(setting.sectionId)) {
         issue(ctx, ["sectionTrackSettings", index, "sectionId"], "Unknown section.");
       }
+      if (duplicate([...setting.processing.nodes, ...setting.processing.dynamics], (node) => node.id).size > 0) {
+        issue(ctx, ["sectionTrackSettings", index, "processing", "nodes"], "Processing node ids must be unique in a Track × Section graph.");
+      }
     }
+
+    // Sidechain routing is track → track. A key never points at its own track, and keys never form a loop.
+    // A key naming a track that is not in the project is kept but inert (see keyRoutingIssues).
+    const keyEdges = new Map<string, Set<string>>();
+    const addEdge = (from: string, node: { type: string; keyTrackId?: string | null }, path: (string | number)[]) => {
+      const key = "keyTrackId" in node ? node.keyTrackId : null;
+      if (!key) return;
+      if (key === from) issue(ctx, path, "A sidechain key cannot be the track itself.");
+      if (!keyEdges.has(from)) keyEdges.set(from, new Set());
+      keyEdges.get(from)!.add(key);
+    };
+    doc.tracks.forEach((track, index) => track.processing.dynamics.forEach((node, at) => addEdge(track.id, node, ["tracks", index, "processing", "dynamics", at, "keyTrackId"])));
+    doc.sectionTrackSettings.forEach((row, index) =>
+      row.processing.dynamics.forEach((node, at) => addEdge(row.trackId, node, ["sectionTrackSettings", index, "processing", "dynamics", at, "keyTrackId"])),
+    );
+    if (keyCycle(keyEdges)) issue(ctx, ["tracks"], "Sidechain keys form a loop.");
 
     const variantIds = new Set(doc.mixVariants.map((variant) => variant.id));
     if (duplicate(doc.mixVariants, (variant) => variant.id).size > 0) {
@@ -397,7 +550,24 @@ export const projectDocumentSchema = z
 export type ProjectDocument = z.infer<typeof projectDocumentSchema>;
 
 export function emptyProcessingGraph(): ProcessingGraph {
-  return { schemaVersion: 1, nodes: [] };
+  return { schemaVersion: 2, nodes: [], dynamics: [] };
+}
+
+/** True when following keys from some track leads back to it. Self-keys are reported separately. */
+export function keyCycle(edges: Map<string, Set<string>>): boolean {
+  const state = new Map<string, "visiting" | "done">();
+  const visit = (track: string): boolean => {
+    const mark = state.get(track);
+    if (mark === "done") return false;
+    if (mark === "visiting") return true;
+    state.set(track, "visiting");
+    for (const next of edges.get(track) ?? []) {
+      if (next !== track && visit(next)) return true;
+    }
+    state.set(track, "done");
+    return false;
+  };
+  return [...edges.keys()].some((track) => visit(track));
 }
 
 export function defaultUiState(): UiState {

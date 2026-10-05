@@ -112,7 +112,8 @@ export function sectionSettingInUse(setting: TrackSectionState): boolean {
     setting.overrides.gainDb !== null ||
     setting.overrides.pan !== null ||
     setting.overrides.width !== null ||
-    setting.processing.nodes.length > 0
+    setting.processing.nodes.length > 0 ||
+    setting.processing.dynamics.length > 0
   );
 }
 

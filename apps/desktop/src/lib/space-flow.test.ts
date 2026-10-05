@@ -160,7 +160,7 @@ describe("spatial monitor", () => {
       ...document,
       sectionTrackSettings: [
         ...document.sectionTrackSettings,
-        { trackId: "pad", sectionId: "drop", userIntent: null, prominence: null, overrides: { gainDb: null, pan: 0.3, width: 1.25 }, processing: { schemaVersion: 1 as const, nodes: [] } },
+        { trackId: "pad", sectionId: "drop", userIntent: null, prominence: null, overrides: { gainDb: null, pan: 0.3, width: 1.25 }, processing: { schemaVersion: 2 as const, nodes: [], dynamics: [] } },
       ],
     };
     useAppStore.getState().openDocument(withSection, "/tmp/space-flow/project.amix", []);

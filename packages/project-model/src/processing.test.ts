@@ -44,7 +44,7 @@ describe("processing graph", () => {
       delete track.width;
     }
     const migrated = deserializeProject(JSON.stringify(v1));
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.tracks.every((track) => track.processing.nodes.length === 0)).toBe(true);
   });
 
@@ -97,7 +97,7 @@ describe("processing graph", () => {
     expect(() =>
       projectDocumentSchema.parse({
         ...song(),
-        tracks: song().tracks.map((track) => ({ ...track, processing: { schemaVersion: 1, nodes: [node("x", 30_000, 0)] } })),
+        tracks: song().tracks.map((track) => ({ ...track, processing: { schemaVersion: 2, nodes: [node("x", 30_000, 0)], dynamics: [] } })),
       }),
     ).toThrow();
   });

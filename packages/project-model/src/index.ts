@@ -1,4 +1,15 @@
 export {
+  DYNAMICS_LIMITS,
+  DYNAMICS_NODE_LABELS,
+  DYNAMICS_NODE_TYPES,
+  KEY_DETECTORS,
+  MAX_SECTION_DYNAMICS,
+  MAX_TRACK_DYNAMICS,
+  compressorNodeSchema,
+  duckingNodeSchema,
+  dynamicEqNodeSchema,
+  dynamicsNodeSchema,
+  transientNodeSchema,
   EQ_FILTER_KINDS,
   EQ_FILTER_LABELS,
   EQ_LIMITS,
@@ -26,6 +37,13 @@ export {
   uiStateSchema,
 } from "./schema";
 export type {
+  CompressorNode,
+  DuckingNode,
+  DynamicEqNode,
+  DynamicsNode,
+  DynamicsNodeType,
+  KeyDetector,
+  TransientNode,
   EqFilter,
   EqFilterKind,
   EqNode,
@@ -68,6 +86,25 @@ export {
   setTrackEqNodes,
   trackEqNodes,
 } from "./processing";
+export {
+  DYNAMICS_STAGE_ORDER,
+  describeDynamicsNode,
+  dynamicsChainAt,
+  dynamicsChainForSection,
+  dynamicsIdentity,
+  dynamicsNodeLabel,
+  dynamicsNodeRunnable,
+  hasSavedDynamics,
+  keyOf,
+  keyRoutingIssues,
+  normalizeDynamicsNode,
+  orderDynamics,
+  sectionDynamicsNodes,
+  setSectionDynamicsNodes,
+  setTrackDynamicsNodes,
+  trackDynamicsNodes,
+} from "./dynamics";
+export type { KeyRoutingIssue } from "./dynamics";
 export {
   NEUTRAL_SPATIAL,
   hasSavedSpatial,

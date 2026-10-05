@@ -13,6 +13,7 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 
+use crate::dynamics::{DynSpec, DynamicsMeters, DynamicsNodeSpec, DynamicsRuntime, DynamicsTable, PublishedDynamics, TrackDynamicsInput, METER_CHANNELS};
 use crate::eq::{EqRuntime, EqTable, FilterSpec, PublishedEq, TrackEqInput};
 use crate::mix::{
     linear_gain, scheduled_linear_gain, GainRegion, MixSnapshot, PublishedGainSchedule, PublishedMix,
@@ -73,6 +74,32 @@ pub struct TrackSpatialRegion {
     pub width: f32,
 }
 
+/// Dynamics for one track: whole-song nodes, then extra nodes inside each section window.
+#[derive(Clone, Debug)]
+pub struct TrackDynamics {
+    pub track_id: String,
+    pub nodes: Vec<DynamicsNodeSpec>,
+    pub regions: Vec<TrackDynamicsRegion>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrackDynamicsRegion {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub nodes: Vec<DynamicsNodeSpec>,
+}
+
+/// What the dynamics on one track are doing right now, in dB: reductions are ≥ 0, transient is |gain|.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DynamicsMeter {
+    pub track_id: String,
+    pub compressor_db: f32,
+    pub ducking_db: f32,
+    pub dynamic_eq_db: f32,
+    pub transient_db: f32,
+}
+
 #[derive(Clone)]
 pub struct LoadedTrack {
     pub id: String,
@@ -130,6 +157,8 @@ struct SharedRings {
     eq: UnsafeCell<EqRuntime>,
     /// Pan and width ramps and section assignment. Same owner rule as the ring consumers.
     spatial: UnsafeCell<SpatialRuntime>,
+    /// Detector, gain, and filter memory of every dynamics node. Same owner rule as the ring consumers.
+    dynamics: UnsafeCell<DynamicsRuntime>,
 }
 
 impl SharedRings {
@@ -139,7 +168,13 @@ impl SharedRings {
             device: UnsafeCell::new(None),
             eq: UnsafeCell::new(EqRuntime::new()),
             spatial: UnsafeCell::new(SpatialRuntime::new()),
+            dynamics: UnsafeCell::new(DynamicsRuntime::new()),
         }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    fn dynamics(&self) -> &mut DynamicsRuntime {
+        unsafe { &mut *self.dynamics.get() }
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -231,6 +266,8 @@ struct Realtime {
     gain_schedule: PublishedGainSchedule,
     eq: PublishedEq,
     spatial: PublishedSpatial,
+    dynamics: PublishedDynamics,
+    dynamics_meters: DynamicsMeters,
     gains: [AtomicU32; MAX_TRACKS],
     produced: [AtomicU64; MAX_TRACKS],
     consumed: [AtomicU64; MAX_TRACKS],
@@ -276,6 +313,8 @@ impl Realtime {
             gain_schedule: PublishedGainSchedule::empty(),
             eq: PublishedEq::empty(),
             spatial: PublishedSpatial::empty(),
+            dynamics: PublishedDynamics::empty(),
+            dynamics_meters: DynamicsMeters::new(),
             gains: std::array::from_fn(|_| AtomicU32::new(1.0_f32.to_bits())),
             produced: std::array::from_fn(|_| AtomicU64::new(0)),
             consumed: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -343,6 +382,7 @@ enum Command {
     SetGainRegions(Vec<TrackGainRegion>),
     SetEq(Vec<TrackEq>),
     SetSpatial(Vec<TrackSpatial>),
+    SetDynamics(Vec<TrackDynamics>),
     ProxyReady {
         load_id: u64,
         index: usize,
@@ -516,8 +556,27 @@ impl Engine {
         let _ = self.send(Command::SetSpatial(tracks));
     }
 
+    /// Replaces every track's dynamics. Tracks that are not listed run without. Nodes fade in and out over
+    /// 30 ms; edits apply at the next control step. A node whose key track is not loaded is skipped.
+    pub fn set_dynamics(&self, tracks: Vec<TrackDynamics>) {
+        let _ = self.send(Command::SetDynamics(tracks));
+    }
+
     pub fn status(&self) -> EngineStatus {
         status_from(&self.rt)
+    }
+
+    /// Gain reduction per loaded track as the audio thread last reported it. Read off the audio thread.
+    pub fn dynamics_meter(&self) -> Vec<DynamicsMeter> {
+        let ids = self.rt.ids.lock().map(|ids| ids.clone()).unwrap_or_default();
+        ids.into_iter()
+            .enumerate()
+            .take(MAX_TRACKS)
+            .map(|(index, track_id)| {
+                let reading: [f32; METER_CHANNELS] = self.rt.dynamics_meters.read(index);
+                DynamicsMeter { track_id, compressor_db: reading[0], ducking_db: reading[1], dynamic_eq_db: reading[2], transient_db: reading[3] }
+            })
+            .collect()
     }
 
     pub fn render_block(&self, out: &mut [f32]) {
@@ -636,6 +695,10 @@ impl Control {
                 self.set_spatial(tracks);
                 false
             }
+            Command::SetDynamics(tracks) => {
+                self.publish_dynamics(tracks);
+                false
+            }
             Command::ProxyReady {
                 load_id,
                 index,
@@ -668,6 +731,7 @@ impl Control {
             *self.rt.rings.device() = None;
             self.rt.rings.eq().reset();
             self.rt.rings.spatial().reset();
+            self.rt.rings.dynamics().reset();
         }
         self.rt.track_count.store(0, Ordering::Release);
         self.rt.proxy_ready.store(0, Ordering::Release);
@@ -678,6 +742,8 @@ impl Control {
         self.rt.presented.store(0, Ordering::Release);
         self.rt.gain_schedule.publish(&[]);
         self.rt.eq.publish(&EqTable::empty());
+        self.rt.dynamics.publish(&DynamicsTable::empty());
+        self.rt.dynamics_meters.clear();
         self.spatial_regions.clear();
         for index in 0..MAX_TRACKS {
             self.rt.produced[index].store(0, Ordering::Relaxed);
@@ -883,8 +949,9 @@ impl Control {
         }
         self.pause_workers();
         self.rt.wait_audio_idle();
-        // The output is silent until the rings refill, so pan and width start at their new values.
+        // The output is silent until the rings refill, so pan, width, and dynamics start at their new values.
         self.rt.rings.spatial().snap();
+        self.rt.rings.dynamics().snap();
         let frame = seconds_to_frame(seconds);
         self.apply_loop_atomics();
         {
@@ -1131,6 +1198,37 @@ impl Control {
         self.rt.eq.publish(&EqTable::design(&inputs));
     }
 
+    fn publish_dynamics(&self, tracks: Vec<TrackDynamics>) {
+        let ids = self.rt.ids.lock().expect("ids");
+        let index_of = |id: &str| ids.iter().position(|item| item == id).filter(|index| *index < MAX_TRACKS);
+        let mut owned: Vec<(usize, Vec<DynSpec>, Vec<(u64, u64, Vec<DynSpec>)>)> = Vec::new();
+        for track in tracks {
+            let Some(index) = index_of(&track.track_id) else {
+                continue;
+            };
+            let resolve = |nodes: &[DynamicsNodeSpec]| -> Vec<DynSpec> { nodes.iter().filter_map(|node| node.resolve(index, index_of)).collect() };
+            let nodes = resolve(&track.nodes);
+            let regions = track
+                .regions
+                .iter()
+                .map(|region| (seconds_to_frame(region.start_seconds), seconds_to_frame(region.end_seconds), resolve(&region.nodes)))
+                .filter(|(start, end, nodes)| end > start && !nodes.is_empty())
+                .collect();
+            owned.push((index, nodes, regions));
+        }
+        drop(ids);
+        let borrowed: Vec<Vec<(u64, u64, &[DynSpec])>> = owned
+            .iter()
+            .map(|(_, _, regions)| regions.iter().map(|(start, end, nodes)| (*start, *end, nodes.as_slice())).collect())
+            .collect();
+        let inputs: Vec<TrackDynamicsInput<'_>> = owned
+            .iter()
+            .zip(borrowed.iter())
+            .map(|((index, nodes, _), regions)| TrackDynamicsInput { track_index: *index, nodes, regions })
+            .collect();
+        self.rt.dynamics.publish(&DynamicsTable::build(&inputs));
+    }
+
     fn publish_from_tracks(&self) {
         let tracks = self.tracks.read().expect("tracks");
         let mut snap = MixSnapshot::silent();
@@ -1194,6 +1292,10 @@ impl Control {
             }
             Ok(Command::SetSpatial(tracks)) => {
                 self.set_spatial(tracks);
+                Ok(Poll::Continue)
+            }
+            Ok(Command::SetDynamics(tracks)) => {
+                self.publish_dynamics(tracks);
                 Ok(Poll::Continue)
             }
             Ok(Command::ProxyReady {
@@ -1492,6 +1594,8 @@ fn mix_consumers(
     eq.refresh(&rt.eq);
     let spatial = rt.rings.spatial();
     spatial.refresh(&rt.spatial);
+    let dynamics = rt.rings.dynamics();
+    dynamics.refresh(&rt.dynamics);
     let origin = rt
         .prime_frame
         .load(Ordering::Relaxed)
@@ -1501,6 +1605,7 @@ fn mix_consumers(
     let eof_bits = rt.eof_bits.load(Ordering::Relaxed);
     let step = 1.0 / (0.01 * PLAYBACK_RATE as f32);
     let frames = out.len() / 2;
+    let count = mix.count.min(consumers.len()).min(MAX_TRACKS);
     let mut underruns = 0_u64;
     let mut underrun_track = None;
     let mut counted = [false; MAX_TRACKS];
@@ -1511,44 +1616,32 @@ fn mix_consumers(
         let first = playback_frame(origin, 0, loop_start, loop_end);
         let last = playback_frame(origin, frames as u64 - 1, loop_start, loop_end);
         if last >= first && last - first == frames as u64 - 1 {
-            for (track_index, slot) in constant.iter_mut().enumerate().take(mix.count.min(consumers.len()).min(MAX_TRACKS)) {
+            for (track_index, slot) in constant.iter_mut().enumerate().take(count) {
                 *slot = spatial.block_constant(track_index, first, last);
             }
         }
     }
+    let mut raw = [[0.0_f32; 2]; MAX_TRACKS];
+    let mut got = [false; MAX_TRACKS];
+    let mut keys = [0.0_f32; MAX_TRACKS];
     for frame in 0..frames {
-        let mut left = 0.0;
-        let mut right = 0.0;
-        for track_index in 0..mix.count.min(consumers.len()).min(MAX_TRACKS) {
+        let file_frame = playback_frame(origin, frame as u64, loop_start, loop_end);
+        // Every track's frame is pulled before any track is processed, so a sidechain key (the key track's own
+        // source, mono) exists for this frame whatever the track order.
+        for track_index in 0..count {
+            got[track_index] = false;
+            keys[track_index] = 0.0;
             let track = mix.tracks[track_index];
             if !track.active {
                 continue;
             }
-            let audible = !track.mute && (!mix.any_solo || track.solo);
-            let file_frame = playback_frame(origin, frame as u64, loop_start, loop_end);
-            let mut target = if audible { track.gain } else { 0.0 };
-            if audible {
-                if let Some(gain) = scheduled_linear_gain(&schedule, track_index, file_frame) {
-                    target = gain;
-                }
-            }
-            let delta = target - gains[track_index];
-            gains[track_index] += delta.clamp(-step, step);
             let channels = (track.channels as usize).clamp(1, 2);
             let mut sample = [0.0_f32; 2];
             if pull_frame(&mut consumers[track_index], channels, &mut sample) {
                 pulled[track_index] += 1;
-                // Per-track process stage: static EQ, then width and pan/balance, then the fader.
-                if eq.track_live(track_index) {
-                    eq.process(track_index, file_frame, channels, &mut sample);
-                }
-                let (placed_left, placed_right) = match constant[track_index] {
-                    Some((width, coefs)) => spatial_frame(channels, sample, width, coefs),
-                    None => spatial.process(track_index, file_frame, channels, sample),
-                };
-                let gain = gains[track_index];
-                left += placed_left * gain;
-                right += placed_right * gain;
+                got[track_index] = true;
+                raw[track_index] = sample;
+                keys[track_index] = if channels > 1 { 0.5 * (sample[0] + sample[1]) } else { sample[0] };
             } else if eof_bits & (1 << track_index) == 0 && !counted[track_index] {
                 counted[track_index] = true;
                 underruns += 1;
@@ -1557,9 +1650,47 @@ fn mix_consumers(
                 }
             }
         }
+        let mut left = 0.0;
+        let mut right = 0.0;
+        for track_index in 0..count {
+            let track = mix.tracks[track_index];
+            if !track.active {
+                continue;
+            }
+            let audible = !track.mute && (!mix.any_solo || track.solo);
+            let mut target = if audible { track.gain } else { 0.0 };
+            if audible {
+                if let Some(gain) = scheduled_linear_gain(&schedule, track_index, file_frame) {
+                    target = gain;
+                }
+            }
+            let delta = target - gains[track_index];
+            gains[track_index] += delta.clamp(-step, step);
+            if !got[track_index] {
+                continue;
+            }
+            let channels = (track.channels as usize).clamp(1, 2);
+            let mut sample = raw[track_index];
+            // Per-track process stage: static EQ, dynamics (dynamic EQ, compressor, transient, ducking),
+            // then width and pan/balance, then the fader.
+            if eq.track_live(track_index) {
+                eq.process(track_index, file_frame, channels, &mut sample);
+            }
+            if dynamics.track_live(track_index) {
+                dynamics.process(track_index, file_frame, channels, &mut sample, &keys[..count]);
+            }
+            let (placed_left, placed_right) = match constant[track_index] {
+                Some((width, coefs)) => spatial_frame(channels, sample, width, coefs),
+                None => spatial.process(track_index, file_frame, channels, sample),
+            };
+            let gain = gains[track_index];
+            left += placed_left * gain;
+            right += placed_right * gain;
+        }
         out[frame * 2] = left;
         out[frame * 2 + 1] = right;
     }
+    dynamics.end_block(&rt.dynamics_meters, count);
     for track_index in 0..mix.count.min(MAX_TRACKS) {
         if pulled[track_index] > 0 {
             rt.consumed[track_index].fetch_add(pulled[track_index], Ordering::Relaxed);
@@ -3132,6 +3263,301 @@ mod tests {
                 let budget = 512.0 / f64::from(PLAYBACK_RATE) * 1_000.0;
                 eprintln!(
                     "spatial-stress stereo tracks={tracks} load={load} callback avg={average:.3}ms max={:.3}ms budget={budget:.2}ms ({:.1}% avg) underruns={}",
+                    worst as f64 / 1_000_000.0,
+                    average / budget * 100.0,
+                    status.underruns
+                );
+                assert!(block.iter().all(|sample| sample.is_finite()));
+                assert_eq!(status.underruns, 0, "{tracks} tracks with {load} underran");
+                assert!(average < budget * 0.5, "{tracks} tracks with {load} used {average:.3} ms of {budget:.2} ms");
+                engine.shutdown();
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn kick_wave(frame: usize) -> f32 {
+        let local = (frame % 24_000) as f32 / 48_000.0;
+        (-local / 0.08).exp() * (2.0 * std::f32::consts::PI * 60.0 * local).sin() * 0.8
+    }
+
+    fn bass_wave(frame: usize) -> f32 {
+        0.3 * (2.0 * std::f32::consts::PI * 80.0 * frame as f32 / 48_000.0).sin()
+    }
+
+    fn duck_from(key: &str) -> crate::dynamics::DynamicsNodeSpec {
+        crate::dynamics::DynamicsNodeSpec::Ducking {
+            key_track_id: key.into(),
+            key_detector: crate::dynamics::KeyDetectorKind::Transient,
+            threshold_db: -14.0,
+            range_db: -3.0,
+            attack_ms: 5.0,
+            release_ms: 80.0,
+        }
+    }
+
+    fn channel_db(block: &[f32], channel: usize) -> f32 {
+        let samples: Vec<f32> = block.iter().skip(channel).step_by(2).copied().collect();
+        let power = samples.iter().map(|value| value * value).sum::<f32>() / samples.len().max(1) as f32;
+        10.0 * (power + 1e-20).log10()
+    }
+
+    /// Bass ducks from the kick through the real engine. The key is the kick's own source, so the result is the
+    /// same with the tracks in either order, and a muted kick still ducks the bass (like a pre-fader send).
+    #[test]
+    fn sidechain_ducking_plays_through_the_mix_whatever_the_track_order() {
+        let dir = env::temp_dir().join(format!("audiosous-duck-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let frames = 48_000 * 3;
+        let bass = track(&dir, "bass", frames, bass_wave);
+        let kick = track(&dir, "kick", frames, kick_wave);
+        let play_order = |tracks: Vec<LoadedTrack>, mute_kick: bool| {
+            let engine = Engine::offline();
+            engine.load(tracks).unwrap();
+            engine.set_track("bass", Some(0.0), Some(-1.0), Some(false), Some(false));
+            engine.set_track("kick", Some(0.0), Some(1.0), Some(mute_kick), Some(false));
+            engine.set_dynamics(vec![TrackDynamics { track_id: "bass".into(), nodes: vec![duck_from("kick")], regions: vec![] }]);
+            engine.play(0.0).unwrap();
+            let out = render(&engine, 2.0);
+            engine.shutdown();
+            out
+        };
+        let first = play_order(vec![bass.clone(), kick.clone()], false);
+        let second = play_order(vec![kick.clone(), bass.clone()], false);
+        let left = |block: &[f32]| block.iter().step_by(2).copied().collect::<Vec<f32>>();
+        let difference = left(&first).iter().zip(left(&second).iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        assert!(difference < 1e-6, "track order changed the ducked bass by {difference}");
+        // Hit at 1.0 s: 20–50 ms in, the bass (hard left) is down about 3 dB from its level 400 ms after the hit.
+        let at = |seconds: f64| (seconds * 48_000.0) as usize * 2;
+        let ducked = channel_db(&first[at(1.02)..at(1.05)], 0);
+        let open = channel_db(&first[at(1.40)..at(1.48)], 0);
+        assert!((open - ducked - 3.0).abs() < 0.5, "duck depth {}", open - ducked);
+        let muted = play_order(vec![bass, kick], true);
+        let muted_ducked = channel_db(&muted[at(1.02)..at(1.05)], 0);
+        assert!((muted_ducked - ducked).abs() < 0.05, "a muted key still ducks: {muted_ducked} vs {ducked}");
+        assert!(channel_db(&muted[at(1.02)..at(1.05)], 1) < -90.0, "and the kick itself is silent");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A section compressor applies inside its window only, a seek into the window starts at full effect, and
+    /// an unrelated stem is never touched.
+    #[test]
+    fn section_dynamics_and_a_seek_into_them_play_through_the_mix() {
+        let dir = env::temp_dir().join(format!("audiosous-dyn-section-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let tone = |frame: usize| 0.5 * (2.0 * std::f32::consts::PI * 220.0 * frame as f32 / 48_000.0).sin();
+        let lead = track(&dir, "lead", 48_000 * 6, tone);
+        let other = track(&dir, "other", 48_000 * 6, tone);
+        let engine = Engine::offline();
+        engine.load(vec![lead, other]).unwrap();
+        engine.set_track("lead", Some(0.0), Some(-1.0), Some(false), Some(false));
+        engine.set_track("other", Some(0.0), Some(1.0), Some(false), Some(false));
+        let comp = crate::dynamics::DynamicsNodeSpec::Compressor { threshold_db: -21.0, ratio: 3.0, attack_ms: 5.0, release_ms: 50.0, knee_db: 0.0, makeup_db: 0.0 };
+        engine.set_dynamics(vec![
+            TrackDynamics { track_id: "lead".into(), nodes: vec![], regions: vec![TrackDynamicsRegion { start_seconds: 2.0, end_seconds: 4.0, nodes: vec![comp.clone()] }] },
+            TrackDynamics { track_id: "missing".into(), nodes: vec![comp], regions: vec![] },
+        ]);
+        engine.play(0.0).unwrap();
+        let out = render(&engine, 3.0);
+        let at = |seconds: f64| (seconds * 48_000.0) as usize * 2;
+        let before = channel_db(&out[at(1.0)..at(1.9)], 0);
+        let inside = channel_db(&out[at(2.5)..at(2.9)], 0);
+        assert!((before - inside - 8.0).abs() < 0.4, "section compression {}", before - inside);
+        assert!((channel_db(&out[at(2.5)..at(2.9)], 1) - before).abs() < 0.01, "the other stem is untouched");
+        engine.seek(3.0);
+        thread::sleep(Duration::from_millis(80));
+        let sought = render(&engine, 0.3);
+        let early = channel_db(&sought[at(0.02)..at(0.25)], 0);
+        assert!((before - early - 8.0).abs() < 0.4, "after a seek into the section {}", before - early);
+        assert_eq!(engine.status().underruns, 0);
+        let meter = engine.dynamics_meter();
+        assert_eq!(meter.len(), 2);
+        assert!(meter[0].compressor_db > 6.0, "meter {:?}", meter[0]);
+        assert_eq!(meter[1].compressor_db, 0.0);
+        engine.shutdown();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn full_dynamics(index: usize, key: &str) -> Vec<crate::dynamics::DynamicsNodeSpec> {
+        use crate::dynamics::{DynamicsNodeSpec, KeyDetectorKind};
+        let mut nodes = vec![
+            DynamicsNodeSpec::DynamicEq {
+                frequency_hz: 2_400.0,
+                q: 1.1,
+                key_track_id: Some(key.into()),
+                key_detector: KeyDetectorKind::Smooth,
+                threshold_db: -40.0,
+                range_db: -2.0,
+                attack_ms: 20.0,
+                release_ms: 250.0,
+            },
+            DynamicsNodeSpec::Compressor { threshold_db: -24.0, ratio: 2.2, attack_ms: 35.0, release_ms: 140.0, knee_db: 6.0, makeup_db: 0.0 },
+            DynamicsNodeSpec::Transient { attack: 0.1, sustain: -0.05 },
+        ];
+        if index > 0 {
+            nodes.push(duck_from(key));
+        }
+        nodes
+    }
+
+    /// The callback with EQ, spatial, and every dynamics processor on, through a dynamics table change and
+    /// section edges: no allocation or free.
+    #[test]
+    fn callback_with_eq_spatial_and_dynamics_does_not_allocate() {
+        use crate::eq::{FilterKind, FilterSpec};
+        let dir = env::temp_dir().join(format!("audiosous-dyn-alloc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let tracks: Vec<LoadedTrack> = (0..8).map(|index| stereo_track(&dir, &format!("t{index}"), 48_000 * 3, noise_pair(index + 1))).collect();
+        let engine = Engine::offline();
+        engine.load(tracks).unwrap();
+        engine.set_eq(
+            (0..8)
+                .map(|index| TrackEq {
+                    track_id: format!("t{index}"),
+                    filters: vec![FilterSpec { kind: FilterKind::Bell, frequency_hz: 2_400.0, gain_db: -1.5, q: 1.0 }],
+                    regions: vec![],
+                })
+                .collect(),
+        );
+        engine.set_spatial(
+            (0..8)
+                .map(|index| TrackSpatial {
+                    track_id: format!("t{index}"),
+                    pan: index as f32 / 8.0 - 0.5,
+                    width: 1.2,
+                    regions: vec![TrackSpatialRegion { start_seconds: 0.3, end_seconds: 0.6, pan: 0.2, width: 1.4 }],
+                })
+                .collect(),
+        );
+        let dynamics = |ratio: f32| -> Vec<TrackDynamics> {
+            (0..8)
+                .map(|index| TrackDynamics {
+                    track_id: format!("t{index}"),
+                    nodes: full_dynamics(index, "t0"),
+                    regions: vec![TrackDynamicsRegion {
+                        start_seconds: 0.3,
+                        end_seconds: 0.6,
+                        nodes: vec![crate::dynamics::DynamicsNodeSpec::Compressor { threshold_db: -30.0, ratio, attack_ms: 10.0, release_ms: 100.0, knee_db: 6.0, makeup_db: 0.0 }],
+                    }],
+                })
+                .collect()
+        };
+        engine.set_dynamics(dynamics(1.5));
+        engine.play(0.0).unwrap();
+        let mut block = vec![0.0_f32; 1_024];
+        engine.render_block(&mut block);
+        let ((), first) = counting::watch(|| {
+            for _ in 0..40 {
+                engine.render_block(&mut block);
+            }
+        });
+        engine.set_dynamics(dynamics(3.0));
+        thread::sleep(Duration::from_millis(30));
+        let ((), second) = counting::watch(|| {
+            for _ in 0..20 {
+                engine.render_block(&mut block);
+            }
+        });
+        let ((), probe) = counting::watch(|| drop(std::hint::black_box(vec![0_u8; 16])));
+        assert!(probe >= 1, "the allocation counter is not counting");
+        assert_eq!(first, 0, "callback allocated {first} times");
+        assert_eq!(second, 0, "callback allocated {second} times after a dynamics update");
+        assert!(block.iter().all(|sample| sample.is_finite()));
+        engine.shutdown();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Full-mix DSP cost: 11, 32, and 64 stereo stems with no processing, with EQ + spatial (Milestones 4 and 5),
+    /// and with EQ + spatial + dynamics (Milestone 6: dynamic EQ keyed from track 0, a compressor, a transient
+    /// shaper, a duck keyed from track 0, and a section compressor on every stem). Paced in real time.
+    #[test]
+    #[ignore = "EQ + spatial + dynamics callback cost"]
+    fn stress_dynamics_callback_cost() {
+        use crate::eq::{FilterKind, FilterSpec};
+        let dir = env::temp_dir().join(format!("audiosous-dyn-stress-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let bell = |frequency_hz: f32, gain_db: f32| FilterSpec { kind: FilterKind::Bell, frequency_hz, gain_db, q: 1.0 };
+        let hpf = FilterSpec { kind: FilterKind::HighPass, frequency_hz: 70.0, gain_db: 0.0, q: 0.707 };
+        for tracks in [11_usize, 32, 64] {
+            let loaded: Vec<LoadedTrack> = (0..tracks)
+                .map(|index| stereo_track(&dir, &format!("s{tracks}-{index}"), 48_000 * 6, noise_pair(0x9e37_79b9_u32.wrapping_mul(index as u32 + 1))))
+                .map(|mut track| {
+                    track.gain_db = -12.0;
+                    track
+                })
+                .collect();
+            for load in ["none", "eq+spatial", "eq+spatial+dynamics"] {
+                let engine = Engine::offline();
+                engine.load(loaded.clone()).unwrap();
+                if load != "none" {
+                    engine.set_eq(
+                        loaded
+                            .iter()
+                            .map(|track| TrackEq {
+                                track_id: track.id.clone(),
+                                filters: vec![hpf, bell(250.0, -1.0), bell(2_400.0, -1.5)],
+                                regions: vec![TrackEqRegion { start_seconds: 1.0, end_seconds: 2.0, filters: vec![bell(1_800.0, -1.0)] }],
+                            })
+                            .collect(),
+                    );
+                    engine.set_spatial(
+                        loaded
+                            .iter()
+                            .enumerate()
+                            .map(|(index, track)| TrackSpatial {
+                                track_id: track.id.clone(),
+                                pan: (index as f32 / tracks as f32) - 0.5,
+                                width: 0.8 + (index % 5) as f32 * 0.1,
+                                regions: vec![TrackSpatialRegion { start_seconds: 1.0, end_seconds: 2.0, pan: 0.25, width: 1.35 }],
+                            })
+                            .collect(),
+                    );
+                }
+                if load == "eq+spatial+dynamics" {
+                    let key = loaded[0].id.clone();
+                    engine.set_dynamics(
+                        loaded
+                            .iter()
+                            .enumerate()
+                            .map(|(index, track)| TrackDynamics {
+                                track_id: track.id.clone(),
+                                nodes: full_dynamics(index, &key),
+                                regions: vec![TrackDynamicsRegion {
+                                    start_seconds: 1.0,
+                                    end_seconds: 2.0,
+                                    nodes: vec![crate::dynamics::DynamicsNodeSpec::Compressor { threshold_db: -30.0, ratio: 2.0, attack_ms: 10.0, release_ms: 100.0, knee_db: 6.0, makeup_db: 0.0 }],
+                                }],
+                            })
+                            .collect(),
+                    );
+                }
+                engine.play(0.0).unwrap();
+                let mut block = vec![0.0_f32; 1_024];
+                let block_duration = Duration::from_secs_f64(512.0 / f64::from(PLAYBACK_RATE));
+                let callbacks = 420_u32;
+                let mut total = 0_u128;
+                let mut worst = 0_u128;
+                let started = Instant::now();
+                for index in 0..callbacks {
+                    let tick = Instant::now();
+                    engine.render_block(&mut block);
+                    let spent = tick.elapsed().as_nanos();
+                    total += spent;
+                    worst = worst.max(spent);
+                    let due = started + block_duration.saturating_mul(index + 1);
+                    if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                        thread::sleep(wait);
+                    }
+                }
+                let status = engine.status();
+                let average = total as f64 / f64::from(callbacks) / 1_000_000.0;
+                let budget = 512.0 / f64::from(PLAYBACK_RATE) * 1_000.0;
+                eprintln!(
+                    "dynamics-stress stereo tracks={tracks} load={load} callback avg={average:.3}ms max={:.3}ms budget={budget:.2}ms ({:.1}% avg) underruns={}",
                     worst as f64 / 1_000_000.0,
                     average / budget * 100.0,
                     status.underruns

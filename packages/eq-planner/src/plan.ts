@@ -499,8 +499,8 @@ export function applyEqPlan(document: ProjectDocument, plan: EqPlan, mode: EqApp
   const trim = trimFor(plan, included);
   let next: ProjectDocument = document;
   const usedIds = new Set<string>();
-  for (const track of document.tracks) for (const node of track.processing.nodes) usedIds.add(node.id);
-  for (const row of document.sectionTrackSettings) for (const node of row.processing.nodes) usedIds.add(node.id);
+  for (const track of document.tracks) for (const node of [...track.processing.nodes, ...track.processing.dynamics]) usedIds.add(node.id);
+  for (const row of document.sectionTrackSettings) for (const node of [...row.processing.nodes, ...row.processing.dynamics]) usedIds.add(node.id);
   const nodeFor = (change: EqRecommendation): EqNode => {
     let id = `eq-${fnv1a(`${plan.stateIdentity}:${change.id}`)}`;
     let attempt = 1;
@@ -520,7 +520,7 @@ export function applyEqPlan(document: ProjectDocument, plan: EqPlan, mode: EqApp
   for (const change of chosen) {
     if (change.scope.type === "global") {
       const nodes = replace(trackEqNodes(next, change.trackId), change).slice(0, MAX_TRACK_EQ_NODES);
-      next = { ...next, tracks: next.tracks.map((track) => (track.id === change.trackId ? { ...track, processing: { schemaVersion: 1, nodes } } : track)) };
+      next = { ...next, tracks: next.tracks.map((track) => (track.id === change.trackId ? { ...track, processing: { ...track.processing, nodes } } : track)) };
     } else {
       const sectionId = change.scope.sectionId;
       const nodes = replace(sectionEqNodes(next, change.trackId, sectionId), change).slice(0, MAX_SECTION_EQ_NODES);

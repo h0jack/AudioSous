@@ -82,7 +82,7 @@ export function setTrackEqNodes(document: ProjectDocument, trackId: string, node
     document: {
       ...document,
       tracks: document.tracks.map((track) =>
-        track.id === trackId ? { ...track, processing: { schemaVersion: 1, nodes: checked.nodes } } : track,
+        track.id === trackId ? { ...track, processing: { ...track.processing, nodes: checked.nodes } } : track,
       ),
     },
   };

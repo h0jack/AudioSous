@@ -168,7 +168,7 @@ describe("monitor", () => {
       ...document,
       tracks: document.tracks.map((track) =>
         track.id === "pad"
-          ? { ...track, gainDb: -1.5, processing: { schemaVersion: 1 as const, nodes: [{ id: "n1", type: "eq" as const, enabled: true, filter: { kind: "high-pass" as const, frequencyHz: 70, gainDb: 0, q: 0.71 }, origin: "eq-plan" as const, note: "x" }] } }
+          ? { ...track, gainDb: -1.5, processing: { schemaVersion: 2 as const, dynamics: [], nodes: [{ id: "n1", type: "eq" as const, enabled: true, filter: { kind: "high-pass" as const, frequencyHz: 70, gainDb: 0, q: 0.71 }, origin: "eq-plan" as const, note: "x" }] } }
           : track,
       ),
     };

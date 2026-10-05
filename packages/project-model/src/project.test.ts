@@ -53,8 +53,8 @@ describe("project file", () => {
       }),
     ]);
 
-    expect(document.schemaVersion).toBe(3);
-    expect(document.tracks[0]?.processing).toEqual({ schemaVersion: 1, nodes: [] });
+    expect(document.schemaVersion).toBe(4);
+    expect(document.tracks[0]?.processing).toEqual({ schemaVersion: 2, nodes: [], dynamics: [] });
     expect(document.project.sampleRate).toBe(48_000);
     expect(document.project.durationSeconds).toBe(241.72);
     expect(document.mixVariants.map((variant) => variant.name)).toEqual(["Original", "Working Mix"]);
@@ -71,9 +71,9 @@ describe("project file", () => {
 
   it("rejects a newer schema and invalid JSON", () => {
     expect(() => deserializeProject("{")).toThrow(ProjectFileError);
-    expect(() => deserializeProject(JSON.stringify({ schemaVersion: 4 }))).toThrow(ProjectFileError);
+    expect(() => deserializeProject(JSON.stringify({ schemaVersion: 5 }))).toThrow(ProjectFileError);
     try {
-      deserializeProject(JSON.stringify({ schemaVersion: 4 }));
+      deserializeProject(JSON.stringify({ schemaVersion: 5 }));
     } catch (error) {
       expect(error).toMatchObject({ code: "unsupported-schema" });
     }

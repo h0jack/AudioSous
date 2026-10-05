@@ -161,20 +161,20 @@ impl SvfCoefs {
 }
 
 #[derive(Clone, Copy, Default)]
-struct SvfState {
+pub(crate) struct SvfState {
     ic1: f32,
     ic2: f32,
 }
 
 #[derive(Clone, Copy)]
-struct Taps {
+pub(crate) struct Taps {
     a1: f32,
     a2: f32,
     a3: f32,
 }
 
 impl Taps {
-    fn of(coefs: &SvfCoefs) -> Self {
+    pub(crate) fn of(coefs: &SvfCoefs) -> Self {
         let a1 = 1.0 / (1.0 + coefs.g * (coefs.g + coefs.k));
         let a2 = coefs.g * a1;
         Self {
@@ -186,7 +186,7 @@ impl Taps {
 }
 
 #[inline(always)]
-fn tick(state: &mut SvfState, taps: &Taps, coefs: &SvfCoefs, input: f32) -> f32 {
+pub(crate) fn tick(state: &mut SvfState, taps: &Taps, coefs: &SvfCoefs, input: f32) -> f32 {
     let v3 = input - state.ic2;
     let v1 = taps.a1 * state.ic1 + taps.a2 * v3;
     let v2 = state.ic2 + taps.a2 * state.ic1 + taps.a3 * v3;

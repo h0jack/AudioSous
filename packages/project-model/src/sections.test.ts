@@ -130,7 +130,7 @@ describe("manual sections", () => {
           userIntent: "Keep it dry",
           prominence: null,
           overrides: { gainDb: null, pan: null, width: null },
-          processing: { schemaVersion: 1 as const, nodes: [] },
+          processing: { schemaVersion: 2 as const, nodes: [], dynamics: [] },
         },
       ],
       uiState: {
