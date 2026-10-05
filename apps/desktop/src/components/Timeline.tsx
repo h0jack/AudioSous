@@ -24,7 +24,7 @@ import {
   type SongSection,
   type UiState,
 } from "@audiosous/project-model";
-import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { usePlayback } from "../lib/playback";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -340,11 +340,10 @@ export function Timeline({
           <StopIcon />
         </TipButton>
         <TipButton
-          label={playback.looping ? "Turn the loop off" : "Loop the selected range or section"}
-          aria-label="Loop"
+          label={loopLabel(document, range, playback.looping)}
           pressed={playback.looping}
           className={playback.looping ? `${ICON_BUTTON} border-accent text-accent` : ICON_BUTTON}
-          disabled={!range && !document.uiState.selectedSectionId && !playback.looping}
+          disabled={!range && !document.uiState.selectedSectionId && !document.uiState.loop}
           onClick={() => playback.setLoopEnabled(!playback.looping)}
         >
           <LoopIcon />
@@ -363,14 +362,14 @@ export function Timeline({
             commitNow({ timeRange: next }, "skip");
           }}
         >
-          Section at playhead
+          <MarkIcon />
         </TipButton>
         <TipButton
           label="Clear the selected section, range, and stem (Esc)"
           disabled={!range && !document.uiState.selectedSectionId && !document.uiState.selectedTrackId}
           onClick={clearSelection}
         >
-          Clear selection
+          <ClearSelectionIcon />
         </TipButton>
         <TipButton
           label="Add a section from the selected range"
@@ -380,7 +379,7 @@ export function Timeline({
             setSectionError(addSectionFromRange(range.start, range.end));
           }}
         >
-          Add section
+          <AddSectionIcon />
         </TipButton>
         <TipButton
           label="Suggest sections from the waveforms"
@@ -402,20 +401,20 @@ export function Timeline({
             setSectionError(message);
           }}
         >
-          Suggest sections
+          <SuggestIcon />
         </TipButton>
         <TipButton
           label="Remove suggestions that have not been edited"
           disabled={!document.sections.some((section) => section.source === "automatic")}
           onClick={() => setSectionError(rejectSectionSuggestions())}
         >
-          Clear suggestions
+          <ClearSuggestionsIcon />
         </TipButton>
-        <TipButton label="Zoom out" onClick={() => zoomAround(zoom / 1.25)}>
-          Zoom out
+        <TipButton label="Zoom out (Ctrl+wheel)" onClick={() => zoomAround(zoom / 1.25)}>
+          <ZoomIcon plus={false} />
         </TipButton>
-        <TipButton label="Zoom in" onClick={() => zoomAround(zoom * 1.25)}>
-          Zoom in
+        <TipButton label="Zoom in (Ctrl+wheel)" onClick={() => zoomAround(zoom * 1.25)}>
+          <ZoomIcon plus />
         </TipButton>
         <TipButton
           label="Fit the song to the timeline"
@@ -425,16 +424,16 @@ export function Timeline({
             scheduleCommit({ timelineZoom: 1, timelineScroll: 0 });
           }}
         >
-          Fit
+          <FitIcon />
         </TipButton>
         <TipButton label="Draw shorter waveforms" onClick={() => setAmplitude((current) => AMPLITUDES[Math.max(0, AMPLITUDES.indexOf(current) - 1)] ?? 0.5)}>
-          Shorter
+          <HeightIcon taller={false} />
         </TipButton>
         <TipButton
           label="Draw taller waveforms"
           onClick={() => setAmplitude((current) => AMPLITUDES[Math.min(AMPLITUDES.length - 1, AMPLITUDES.indexOf(current) + 1)] ?? 4)}
         >
-          Taller
+          <HeightIcon taller />
         </TipButton>
         <p className="font-mono text-xs text-muted">
           Playhead {formatClock(playhead)}
@@ -711,13 +710,13 @@ function SectionEditor({
           if (!message) onSelectRange(range);
         }}
       >
-        Use range
+        <UseRangeIcon />
       </TipButton>
       <TipButton label="Split this section at the playhead" disabled={!canSplit} onClick={() => onError(splitSectionAt(selected.id, playhead))}>
-        Split
+        <SplitIcon />
       </TipButton>
       <TipButton label={canMerge ? `Merge with ${following.name}` : "The next section has to start where this one ends"} disabled={!canMerge} onClick={() => onError(mergeSection(selected.id))}>
-        Merge
+        <MergeIcon />
       </TipButton>
       <TipButton
         label="Delete this section"
@@ -726,7 +725,7 @@ function SectionEditor({
           onError(null);
         }}
       >
-        Delete section
+        <DeleteIcon />
       </TipButton>
       <p className="font-mono text-xs text-muted">
         {formatClock(selected.startTime)}–{formatClock(selected.endTime)}
@@ -973,6 +972,134 @@ function LoopIcon() {
   );
 }
 
+function StrokeIcon({ children }: { children: ReactNode }) {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      {children}
+    </svg>
+  );
+}
+
+/** A playhead line with a flag: mark a section here. */
+function MarkIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M5 2v12" />
+      <path d="M5 2.5h7l-1.8 2.5L12 7.5H5" />
+    </StrokeIcon>
+  );
+}
+
+function ClearSelectionIcon() {
+  return (
+    <StrokeIcon>
+      <rect x="2" y="3" width="12" height="10" rx="1" strokeDasharray="2 1.6" />
+      <path d="M6 6l4 4M10 6l-4 4" />
+    </StrokeIcon>
+  );
+}
+
+/** Range brackets with a plus: a section from the selected range. */
+function AddSectionIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M4 3H2.5v10H4M12 3h1.5v10H12" />
+      <path d="M8 5.5v5M5.5 8h5" />
+    </StrokeIcon>
+  );
+}
+
+function SuggestIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M7 2.5l1.1 3.4 3.4 1.1-3.4 1.1L7 11.5 5.9 8.1 2.5 7l3.4-1.1z" />
+      <path d="M12.5 10.5v3M11 12h3" />
+    </StrokeIcon>
+  );
+}
+
+function ClearSuggestionsIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M6.5 2.5l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" />
+      <path d="M10.5 10.5l3 3M13.5 10.5l-3 3" />
+    </StrokeIcon>
+  );
+}
+
+function ZoomIcon({ plus }: { plus: boolean }) {
+  return (
+    <StrokeIcon>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M10.3 10.3L14 14M5 7h4" />
+      {plus ? <path d="M7 5v4" /> : null}
+    </StrokeIcon>
+  );
+}
+
+/** Arrows out to two edges: fit the song to the width. */
+function FitIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M2 3v10M14 3v10M4.5 8h7" />
+      <path d="M6.5 6l-2 2 2 2M9.5 6l2 2-2 2" />
+    </StrokeIcon>
+  );
+}
+
+function HeightIcon({ taller }: { taller: boolean }) {
+  return (
+    <StrokeIcon>
+      <path d="M3 8h10" />
+      {taller ? <path d="M8 6.5V2M6 4l2-2 2 2M8 9.5V14M6 12l2 2 2-2" /> : <path d="M8 2v4M6 4l2 2 2-2M8 14v-4M6 12l2-2 2 2" />}
+    </StrokeIcon>
+  );
+}
+
+/** A section box snapping to range brackets. */
+function UseRangeIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M3.5 3H2v10h1.5M12.5 3H14v10h-1.5" />
+      <rect x="5" y="5.5" width="6" height="5" rx="0.5" />
+    </StrokeIcon>
+  );
+}
+
+function SplitIcon() {
+  return (
+    <StrokeIcon>
+      <rect x="1.5" y="4" width="13" height="8" rx="1" />
+      <path d="M8 2v12" strokeDasharray="1.6 1.4" />
+    </StrokeIcon>
+  );
+}
+
+function MergeIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M1.5 4h3M1.5 12h3M11.5 4h3M11.5 12h3" />
+      <path d="M3 8h3.5M5 6l2 2-2 2M13 8H9.5M11 6l-2 2 2 2" />
+    </StrokeIcon>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <StrokeIcon>
+      <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5" />
+    </StrokeIcon>
+  );
+}
+
+function loopLabel(document: ProjectDocument, range: { start: number; end: number } | null, looping: boolean): string {
+  const loop = document.uiState.loop;
+  if (looping && loop) return `Loop on (${formatClock(loop.start)}–${formatClock(loop.end)}). Click to turn it off`;
+  if (range || document.uiState.selectedSectionId) return "Loop the selected range or section";
+  if (loop) return `Loop off. Click to loop ${formatClock(loop.start)}–${formatClock(loop.end)} again`;
+  return "Select a range or section to loop";
+}
+
 function sectionAtPlayheadLabel(document: ProjectDocument, time: number): string {
   const inside = document.sections.find((section) => time > section.startTime && time < section.endTime);
   if (inside) return `Split ${inside.name} at the playhead`;
@@ -996,10 +1123,11 @@ function TipButton({
     <HoverTip label={label} className={`inline-flex ${disabled ? "cursor-not-allowed" : ""}`}>
       <button
         type="button"
+        aria-label={label}
         {...props}
         disabled={disabled}
         aria-pressed={pressed}
-        className={`${className ?? "rounded-md border border-line bg-panel-2 px-2 py-1 text-xs"} ${disabled ? "pointer-events-none opacity-40" : ""}`}
+        className={`${className ?? ICON_BUTTON} ${disabled ? "pointer-events-none opacity-40" : ""}`}
       >
         {children}
       </button>

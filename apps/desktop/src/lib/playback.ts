@@ -300,13 +300,19 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     const sectionMatches =
       section !== undefined &&
       (!range || (Math.abs(range.start - section.startTime) < 0.001 && Math.abs(range.end - section.endTime) < 0.001));
+    // Turning the loop off keeps its bounds, so the same button turns it back on without a new selection.
+    const previous = current.uiState.loop;
     const loop = !enabled
-      ? null
+      ? previous
+        ? { ...previous, enabled: false }
+        : null
       : section && sectionMatches
         ? { enabled: true, start: section.startTime, end: section.endTime, sectionId: section.id }
         : range
           ? { enabled: true, start: range.start, end: range.end, sectionId: null }
-          : null;
+          : previous
+            ? { ...previous, enabled: true }
+            : null;
     if (enabled && !loop) return;
     useAppStore.getState().replaceDocument({ ...current, uiState: { ...current.uiState, loop } }, true);
   }
