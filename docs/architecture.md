@@ -15,7 +15,8 @@ Audiosous/
 │   ├── analysis-contract/ Versioned JSON DTOs for the analysis sidecar and the EQ band cache
 │   ├── balance-planner/   Deterministic gain-only AutoBalance. No DSP and no network.
 │   ├── eq-planner/        Frequency interaction analysis and deterministic static-EQ planning. No network.
-│   └── spatial-planner/   Stereo-field interaction analysis and deterministic pan/width planning. No network.
+│   ├── spatial-planner/   Stereo-field interaction analysis and deterministic pan/width planning. No network.
+│   └── dynamics-planner/  Time-domain dynamics analysis and deterministic compressor/duck/transient/dynamic-EQ planning. No network.
 ├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
 └── test-assets/           Reserved for generated stems in a later slice
@@ -34,10 +35,12 @@ apps/desktop
   → balance-planner
   → eq-planner
   → spatial-planner
+  → dynamics-planner
 
 balance-planner → project-model, analysis-contract
 eq-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom)
 spatial-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom), eq-planner (spectral model, pairs)
+dynamics-planner → project-model, analysis-contract, balance-planner (tiers, intent clauses), eq-planner (spectral model, pairs, responses)
 audio-engine → project-model
 services/analysis  has no dependency on the UI
 ```
@@ -59,12 +62,12 @@ There is no cloud client, account system, or upload step.
 
 ## Project schema
 
-The on-disk document is schema version 3. The shape is **song → sections → tracks → track × section**. Tracks, manual sections, section intent, and track × section intent can be edited.
+The on-disk document is schema version 4. The shape is **song → sections → tracks → track × section**. Tracks, manual sections, section intent, and track × section intent can be edited.
 
 Persisted now:
 
 - sections, including source, confidence, and `structuralGroupId`
-- a per-track processing graph of static EQ nodes (schema v2, see [Frequency interaction and EQ](#frequency-interaction-and-eq))
+- a per-track processing graph of static EQ nodes (schema v2, see [Frequency interaction and EQ](#frequency-interaction-and-eq)) and dynamics nodes (schema v4, see [Dynamics planning](#dynamics-planning))
 - per-track pan and stereo width (schema v3, see [Stereo and spatial planning](#stereo-and-spatial-planning))
 - track × section intent, optional prominence (`primary` / `focal` / `supporting`), gain/pan/width overrides, and a Track × Section EQ graph that adds to the track's own
 - mix variants (`Original`, `Working Mix`) and an A/B comparison record with three scopes: entire mix, soloed track, and one track inside the full mix
@@ -100,13 +103,13 @@ If the device is not 48 kHz float, a mixer thread outside the callback does the 
 
 Steady-state playback memory is the rings plus a small scratch buffer per reader. A 5-second stereo float ring is about 1.9 MB, so 11 stems are about 21 MB, 32 stems about 61 MB, and 64 stems about 123 MB. The proxy file stays on disk. The reader never loads it whole.
 
-The mix order is read, then the per-track process stage (static EQ since Milestone 4: track filters, then the filters of the section under the playhead; then width since Milestone 5), then pan or balance, gain, sum, then a mix-bus stage that is still identity. EQ sits before the fader so a fader move never changes what the filter sees, and before pan so both channels are filtered the same. Later dynamics and sidechain can sit in the same stage without replacing the clock. Tracks are pulled into the same callback block, so a later sidechain can read another stem.
+The mix order is read, then the per-track process stage (static EQ since Milestone 4: track filters, then the filters of the section under the playhead; dynamics since Milestone 6: dynamic EQ, compressor, transient, ducking; then width since Milestone 5), then pan or balance, gain, sum, then a mix-bus stage that is still identity. EQ sits before the fader so a fader move never changes what the filter sees, and before pan so both channels are filtered the same. Since Milestone 6 every track's frame is pulled before any track is processed, so a sidechain key exists for the frame whatever the track order.
 
 Loudness, RMS, correlation, width, onsets, and spectrum inside the audible band can later be measured from the 48 kHz proxy. True peak, crest factor, the source-mix sum, and anything above 20 kHz stay on the original file. Playback does not call Python.
 
 The project screen's Audio engine disclosure shows the engine kind, device format, output rate, callback size, proxy progress, buffer minimum and average, reader backlog, underruns, seek prime time, and callback time against the callback budget. A line in that panel notes when callback time exceeds 70% of the budget. It is not a user-facing alarm.
 
-`npm run stress:audio` runs the ignored release tests one at a time: synthetic 32×48 kHz, 32×96 kHz, 11×192 kHz, and 64×48 kHz mixes, the EQ and EQ + spatial callback cost, then a 5-minute offline soak of Generated 5 and Generated2 when those projects are on disk. Running them in parallel skews each other's timing, and the 64-stem stereo test writes about 450 MB of synthetic stems to the temp directory (set `TMPDIR` to put them elsewhere). CI runs `cargo test --workspace` and does not open a sound device. The soak and the synthetic stress tests are marked ignored so CI stays short. Compare a debug run with `cargo test -p audiosous-audio --lib -- --ignored --nocapture` only when investigating; acceptance numbers come from the release command.
+`npm run stress:audio` runs the ignored release tests one at a time: synthetic 32×48 kHz, 32×96 kHz, 11×192 kHz, and 64×48 kHz mixes, the EQ, EQ + spatial, and EQ + spatial + dynamics callback cost, then a 5-minute offline soak of Generated 5 and Generated2 when those projects are on disk. Running them in parallel skews each other's timing, and the 64-stem stereo test writes about 450 MB of synthetic stems to the temp directory (set `TMPDIR` to put them elsewhere). CI runs `cargo test --workspace` and does not open a sound device. The soak and the synthetic stress tests are marked ignored so CI stays short. Compare a debug run with `cargo test -p audiosous-audio --lib -- --ignored --nocapture` only when investigating; acceptance numbers come from the release command.
 
 ## Test assets
 
@@ -659,6 +662,171 @@ services/analysis/.venv/bin/python packages/spatial-planner/scripts/render-space
 
 The scenario edits roles, gains, pan, width, saved EQ, sections, prominence, notes, and section overrides in memory, and can script a review. The render script is an independent NumPy implementation of the spatial stage; it measures Current, Spatial Candidate, and the reviewed plan in stereo and folded to mono, cross-checks each row's predicted correlation and mono loss, and with `--wav` writes the bounces for listening.
 
+## Dynamics planning
+
+Milestone 6 plans the time-varying dynamics of the mix: compression, sidechain ducking, transient shaping, and dynamic EQ, only where a problem changes over time and only as far as the measurements support. It does not limit, maximize loudness, use multiband compression, add reverb, delay, saturation, or any effect, host plugins, match a reference, or call a model. Compression never adds makeup to win a comparison.
+
+```text
+playback proxy ──► envelope frames (Rust, 10 ms) ─┐
+playback proxy ──► EQ band frames (Rust) ─────────┼─► mix as heard ─► classify ─► choose the least invasive tool ─► size it on the envelopes
+analysis cache ───► measurements ─────────────────┤  (fader, section      (level, attack/body,        (do nothing, compression, transient,       (adjust once)
+project ──────────► faders, saved EQ, space, ─────┘   gain, saved EQ,       low-end collision,          duck, dynamic EQ; static EQ is
+                    saved dynamics, roles, intent      saved dynamics)      event vs persistent         named when it is the right tool)
+                                                                            masking)                               │
+                                                                                                                   ▼
+                                                                versioned plan ◄── regularization, global before section, confidence
+                                                                       │
+                                                                       ├─► proxy check (native dynamics on the proxies)
+                                                                       ├─► candidate overlay (level-matched) ─► native engine ─► A/B
+                                                                       └─► apply ─► dynamics nodes in the processing graphs (one undo step)
+```
+
+### Processing order
+
+```text
+source → static EQ (track, then section) → dynamic EQ → compressor → transient → ducking → width → pan / balance → gain → mix
+```
+
+The order is fixed by stage, never by a node's position in a list. Inside a stage the track's own nodes run before the section's. Dynamic EQ comes first so a band that only dips while a lead plays is gone before the compressor reacts to it; the compressor sees the stem after its EQ, as one would set it by ear; ducking is last, so a compressor never recovers gain underneath a duck.
+
+**Sidechain keys** are the key track's own source: the mono mid of its ring sample, before its EQ, dynamics, fader, mute, and solo. The callback pulls every track's frame first and processes any track only after that, so every key for a frame exists before a target reads it and nothing depends on track order (`sidechain_ducking_plays_through_the_mix_whatever_the_track_order` renders both orders and expects the same output to 1e-6). A muted kick still ducks the bass, the way a pre-fader send does, and a fader move on the key never changes when the target ducks. Routing is track → track; a node may not key its own track and keys may not form a loop.
+
+### Native dynamics
+
+`crates/audio-engine/src/dynamics.rs`. Each track has fixed slots per stage: 3 dynamic EQ, 1 compressor, 1 transient, 2 ducking for the whole song, and 2, 1, 1, 1 more for the section under the playhead. The control thread publishes a sequence-locked table of atomics (`PublishedDynamics`), like the EQ and spatial tables; the audio thread copies it only when the sequence moves, into memory allocated when the engine was created, and resolves the section only when the playhead leaves the current span.
+
+- **Compressor.** Stereo-linked RMS detector, `(L² + R²) / 2` through a 5 ms one-pole. The usual soft-knee static curve: nothing below `threshold − knee/2`, `(1 − 1/ratio)·over` above `threshold + knee/2`, the quadratic between. Attack and release act on the gain reduction in dB (smooth branching), so the detector itself never pumps. Reduction is capped at 30 dB. Makeup is added after and is 0 unless someone sets it.
+- **Ducking.** The key level is a peak follower (instant rise, 30 ms fall) for a transient key such as a kick, or a 50 ms RMS for a smooth key such as a lead. The duck reaches its full range when the key is 6 dB over threshold and grows in proportion from the threshold; attack and release smooth it in dB.
+- **Dynamic EQ.** A bell that dips by `range × activation`. The detector is the key track (or the track itself) through a constant-peak band-pass at the bell's frequency and Q, as an RMS (10 ms for a transient key, 50 ms for a smooth one), with the same 6 dB span and attack/release smoothing. It is the static EQ's SVF, so at 0 dB it is exactly the input.
+- **Transient shaper.** The level is `max(|L|, |R|)` held over the last 12 ms (1 ms block peaks in a ring), so a steady tone down to 40 Hz is a flat level and is left alone. Fast (0.5 ms rise, 20 ms fall), slow-rising (12 ms rise, 20 ms fall), and slow-falling (0.5 ms rise, 300 ms fall) envelopes follow it; fast over slow-rising is a hit's attack, slow-falling over fast its tail, each 0–12 dB and scaled by its amount. A −15% clap attack drops 1.7 dB while its body moves 0.24 dB.
+
+Gains and the dynamic bell's coefficients are computed every 16 frames (0.33 ms) and gains are interpolated per sample. A node that appears, disappears, or starts at a section edge fades its effect over 30 ms behind a cold detector; an edit applies at the next control step, smoothed by attack and release; a seek snaps (full effect, fresh detectors) because the output was silent. Per-track meters (compressor, duck, dynamic EQ reduction, |transient gain|) are written once per block, falling by at most 0.5 dB per block, and read with `Engine::dynamics_meter`.
+
+The callback still does not lock, allocate, free, read files, or call JavaScript, Tauri, or Python. `callback_with_eq_spatial_and_dynamics_does_not_allocate` runs 8 stereo stems with EQ, pan, width, section windows, and every dynamics processor (a dynamic EQ and a duck keyed from track 0, a compressor, a transient shaper, a section compressor) through a dynamics table change and expects 0 allocations.
+
+Tests (Rust): the static curve, steady signals at the curve, ratio and makeup, attack and release time constants, a transient through a slow attack, the threshold crossing, bypass bit-exactness (an untriggered dynamic EQ is the input), every legal setting finite and bounded, a key pulse ducking and the target recovering, a smooth key riding a phrase without pumping, a dynamic EQ dipping only its band and only while the key plays (and not for an off-band key), a self-keyed dynamic EQ, transient attack and sustain up and down and 0% as bypass, a steady tone left alone and a spike shaped without its body, a section node fading in and out, a seek into a section, the runtime reading its key and leaving other tracks alone, a missing key dropped, an edit in place and a removal fading out, meters, table round trip and stage placement, ducking through the real engine in both track orders with a muted key, section dynamics and a seek through the real engine, the allocation counter, and the offline bounce against the engine.
+
+### Envelope frames
+
+EQ band frames (about 0.4 s) suit phrase-level masking but not a kick against a bass. `crates/audio-engine/src/envelope.rs` reads each proxy once and keeps, every 10 ms, the stereo-linked RMS, the peak, and the RMS of the mono mid through a fourth-order Butterworth low-pass at 150 Hz. Values are quantized to 0.5 dB in one byte (`dB = byte / 2 − 100`) and stored base64, so a 141 s stem is 57 KB and a 6-minute song about 140 KB. The cache is `cache/analysis/<trackId>__envelope.json` with the band and stereo frames' identity rule (version 1). The 11 Generated 5 stems take 2.3 s from existing proxies.
+
+### The mix as heard
+
+`packages/dynamics-planner/src/envelope.ts` puts every unmuted stem on one 10 ms grid with per-segment offsets (each section and the time between sections): the fader or section gain, the saved EQ's change of the broadband level (weighted by the stem's own band spectrum) and of the 40–150 Hz level. Saved compressors and ducks are simulated on top (keys from the raw key envelopes). A compressor row is sized on the stem as its compressor would hear it (after EQ, before the fader); keyed rows are judged on the mix as heard. The second pass rebuilds this with the first pass's compressors in place, so a duck is sized on the compressed bass.
+
+### Problems and tools
+
+| Problem | Measured as | Tool |
+| --- | --- | --- |
+| level inconsistency | sustained level swings, irregularly, past the role's threshold | compressor |
+| transient excess | attacks far over their body and over the rest of the mix | transient shaping (attack down) |
+| transient weakness | a Focal drum whose soft attack sits under the mix | transient shaping (attack up) |
+| low-end collision | the bass's low band within 3 dB of the kick's on its hits | duck from the kick |
+| event masking | a supporting part masks a lead only while the lead plays | dynamic EQ (concentrated) or a smooth duck (broad) |
+| persistent masking | the same, but the lead plays nearly all the time | none: static EQ is the right class of tool, and the plan says so |
+
+The order of preference is: do nothing; let existing gain, EQ, space, or dynamics stand; compression for broad instability; transient shaping for attack/body; a duck for a cross-track, time-specific conflict; dynamic EQ for a frequency-specific, time-varying one. A consistently loud stem is AutoBalance's, a persistent frequency conflict is static EQ's, and a crowded center is space's; none of those are read as dynamics.
+
+**Level inconsistency.** The sustained level is the median 50 ms RMS inside each 400 ms window (windows where most cells play); its spread is p90 − p10 and its swing rate the share of neighbouring windows that jump more than 3 dB. A stem is unstable only when the spread passes its role's threshold (bass 5 dB; synth, pad 6; keys, guitar 6.5; brass, backing vocal, vocal, lead 7; strings 7.5; atmosphere, drum bus 8; FX 9), at least 20% of steps swing, and the swing does not repeat with the music. That last test is the one that matters on real music: the first already-good run proposed six compressors because stutters, gated or pumped pads, and sequenced bass lines swing by design. Self-similarity on the 400 ms moving average at 10 ms resolution compares the level with itself at lags of 0.4–8 s; the self-difference at the best lag over the self-difference at a typical lag is 0.37–0.67 on every Generated 5 stem and 0.72–0.85 for uneven playing, and 0.7 is the threshold. A Supporting or Background part must also rise ahead of the loudest Primary or Focal stem playing with it (within 2.5 or 9 dB) in at least 10% of windows: a swing that stays under the lead does not disturb the hierarchy. Single drums (kick, snare, hats, percussion) are not compressed for level; attack/body is the transient planner's.
+
+**Compressor settings** come from a bounded search on the envelope simulation: ratios 1.5–4 (capped by strength; 2 when a note asks for natural), thresholds from 6 dB under the detector's median sustained level to its 90th percentile. A candidate must narrow the spread by at least 1 dB, reduce the loudest passages within the strength's target (Normal 2–4 dB; down to 60% of the minimum), and not cut the crest by more than 3 dB. The score is the share of the spread removed minus costs for ratio, depth, distance from the target's middle, and level lost. Attack is 30 ms for sustained parts (a note's start passes), 15 ms for voices and leads, 25 ms for drum buses, 40 ms for atmospheres and FX, plus 10 ms when a note asks for natural; release is half the median time between onsets, 60–300 ms (200 ms for a sustained part); knee 6 dB; makeup 0.
+
+**Transients.** Onsets come from the 10 ms peak (9 dB over the quietest of the previous 30 ms, within 40 dB of the stem's loudest, 60 ms apart). At each: attack energy (the onset frame and the next) over body energy (40–140 ms), and the attack over the rest of the mix at that moment. Excess: a Supporting drum whose attacks sit ≥ 3 dB over the mix and ≥ 12 dB over their body, a Primary one at ≥ 6 and ≥ 14 dB, or a note asking for softer at ≥ 0 and ≥ 10 dB. Weakness: a Focal drum (or one asked to punch) whose attacks sit ≤ 8 dB over their body (10 with the note) and ≥ 2 dB under the mix. Amounts are 5–15% down or 5–20% up, scaled by how far past the line the stem is. A stem that gets a compressor does not also get a transient shaper.
+
+**Kick/bass collision.** For each kick and each low-end stem (role Bass, or a synth or keys part whose low band is within 3 dB of its level), the kick's onsets where the bass plays are compared over 80 ms: the bass's low band minus the kick's, as heard. A duck is considered when at least 40% of hits collide (within 3 dB or over; 30% when a note asks the kick to punch through) and the average is no worse than −4 dB; under 20% is "already separated". The threshold is the kick's median hit (its raw source) minus 10 dB, attack 5 ms, release about 1.2 × the kick's low-end decay inside 80–180 ms and inside 60% of the time between hits, depth enough to bring the bass about 3 dB under the kick on a typical hit within the strength's cap. Adjusted once: a shorter release if the bass is back at full level less than 60% of the time between hits or loses more than 0.6 dB there, a shallower duck if the bass's average level drops more than 1.5 dB. A requested pump allows up to 1.5 dB more and a 1.5× release, and goes to review past 3 dB.
+
+**Event masking.** From the EQ planner's pairs (the mix as heard, saved EQ included), a lead, vocal, or Focal melodic stem protected from a supporting part. Drum and bass stems are not part of this. Under the strength's severity it is left alone (and "solved" when saved EQ is why). If the lead plays during more than 65% of the part's time, the conflict is persistent: static EQ is the right tool and no dynamic move is planned. If the part already sits ≥ 6 dB under the lead in the region, or ≥ 8 dB under it across the lead's defining range while it plays, the competition is weak and nothing is planned. Otherwise: a dynamic EQ bell when one region carries at least half the masking and spans at most about three octaves (frequency at the region's center, Q from its width, 0.7–2), else a smooth duck. The depth aims for the part 6 dB under a Focal or lead stem (4 otherwise) and takes the strength's share (40/50/60%) of that, 1 dB to the cap. The threshold is the lead's median detector level while it plays minus 8 dB; attack 20 ms and release 250 ms for the bell, 40 and 300 ms for the duck. A move must pull the part at least 0.4 dB and 30% of its depth further under the lead.
+
+**Existing processing** is part of the mix as heard, and a saved node of the same kind is edited, never stacked: a saved compressor on the track is replaced by the row (or left alone, with a note, when it is already within 0.3 of the ratio and 1.5 dB of the threshold), a saved duck from the same key is replaced, and a saved dynamic EQ keyed from the same stem within half an octave is replaced.
+
+**Global or section.** A compressor is global when the problem covers at least two thirds of the stem's playing time, or when the song reads uneven and no section is clearly calm. A section compressor needs a section with severity ≥ 0.5, at least 15 windows, a spread 1 dB past the threshold, and another section clearly calm (1 dB under the threshold); never on top of a saved whole-song compressor. A duck is global when collisions cover two thirds of the hits; a section duck needs its section past the threshold and another section clearly not colliding. Keyed dynamic EQ and smooth ducks are whole-song: they only act while the key plays.
+
+### Regularization, limits, confidence
+
+Each processor has a base cost (compressor and transient 0.06, duck 0.08, dynamic EQ 0.10, section scope +0.04, plus depth) and a row survives only when its benefit (severity × how much of the problem it removes × the tier or pair priority) beats its cost. Automatic graphs stay small: one compressor, one transient shaper, one duck, and two dynamic EQs per track; a track that wants more keeps the strongest.
+
+| Strength | GR target | Max ratio | Max duck | Max dynamic EQ | Max transient | Spread allowance | Min severity |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Conservative | 1–2.5 dB | 2.5:1 | 1.5 dB | 1.5 dB | 12% | +1 dB | 0.45 |
+| Normal | 2–4 dB | 3:1 | 2.5 dB | 2.5 dB | 20% | 0 | 0.35 |
+| Strong | 2.5–6 dB | 4:1 | 4 dB | 4 dB | 30% | −1 dB | 0.28 |
+
+Automatic values stay within ratio 1.2–4, attack 3–80 ms, release 40–500 ms, knee ≤ 12 dB, makeup 0, duck and dynamic EQ 0.5–4 dB, Q 0.5–3, transient attack ±20% and sustain ±15%. A row goes to review, and stays out of Apply all until accepted, when its confidence is under 0.55, a duck is deeper than 3 dB, a dynamic dip deeper than 3 dB, a compressor reduces the loudest passages by more than 6 dB or 1.5 dB past its target, the ratio passes 4, makeup is set, attack or release leave the automatic range, Q leaves 0.5–3, a transient attack passes 20% or its sustain 15%, the stem's average level moves more than 3 dB, a requested pump passes 3 dB, or the proxy check disagrees. Editing a row into any of these sends it to review too.
+
+**Confidence** starts at 0.5 and adds for a labeled role, the amount of evidence (windows or hits), how repeatable the problem is (swing rate or collision share), how much the move removes, and an explicit note or prominence; it loses for section scope.
+
+### Intent
+
+Dynamics words are read by a fixed phrase table (`intent.ts`). A word only biases a decision the measurements already support.
+
+| Reading | Phrases | Effect |
+| --- | --- | --- |
+| control | controlled, control, even, consistent, steady, stable, smooth, glue, compress | spread threshold −1.5 dB, half the swing-rate requirement |
+| natural | natural, dynamic, expressive, breathe, open, alive, uncompressed, raw | spread threshold +3 dB, ratio ≤ 2:1, GR target −1 dB, attack +10 ms |
+| punch | punchy, punch, snappy, snap, crisp, attack, transients | a drum may count as weak with attacks ≤ 10 dB over body |
+| soften | soft, softer, gentle, tame, rounder, less spiky, less clicky | a drum may count as spiky at ≥ 0 dB over the mix and ≥ 10 dB over body |
+| duck | duck, sidechain, make room for, out of the way of, punch through, cut through, behind, under | a pair instruction: lowers the collision (or masking) threshold |
+| pump | pump, pumping | an audible duck is allowed, and reviewed |
+
+"Make the kick punch through the bass" names the key first; "Keep the pad behind the vocal" and "Duck the bass under the kick" name it second; on a Track × Section note the note's own stem is the target. Punchy alone never adds a duck. A negated clause, or one asking for both control and natural, is ignored, and a word that could mean two stems is not applied.
+
+### Evaluation
+
+There are at most two planning passes (each stem on its own, then relationships on the mix with the first pass in place), and every design adjusts once. Every row carries its evaluation, recomputed on every edit from the evidence stored with it (no planner, no audio):
+
+- compressor: reduction p50/p95/max where the stem plays, sustained-level spread and crest before and after, peak and average level change;
+- duck: reduction during the hits, the bass's low end against the kick at the hits before and after, share of hits that still collide, recovery between hits, the price between hits, average level change;
+- dynamic EQ or smooth duck: the dip while the key plays, the protected stem's masked share and gap before and after, the part's change while the key rests, average level change;
+- transient: attack over body and attack over the mix before and after, per-hit change, average level change;
+- a reduction timeline over the scope (largest per bucket, up to 400 points) for drawing.
+
+**Proxy check (desktop).** Each row's stem runs through its saved EQ and its scope's native dynamics, with and without the row, over up to 30 s of the windows where the problem happens (`crates/audio-engine/src/verify.rs`, Tauri `dynamics_check`): the sustained-level distribution, crest, attack over body at the unprocessed audio's onsets (1 ms resolution), the reduction the row actually applies (over key-on time for keyed rows), and for keyed rows the conflict band and level while the key plays and while it rests, and how much of key-off time the target is back at full level. A compressor that overshoots its target, barely engages, or does not narrow the spread; a duck that changes the target by less than 0.5 dB while the key plays or recovers less than half of key-off time; a dynamic EQ that dips less than 0.3 dB while the key plays or more than 0.75 dB while it rests; or a transient row that moves attack over body the wrong way or by less than 0.3 dB, goes to review with the numbers in its reasons.
+
+### Plan contract
+
+`packages/dynamics-planner/src/plan.ts`: `planVersion` 1, `plannerVersion` 6.0.0, `kind: "dynamics-balance"`, the same envelope as the other plans. Each recommendation has the track, the scope, the problem class, `processing` (the node's values: `compressor`, `ducking`, `transient`, or `dynamic-eq`), the values as planned, the saved node it edits, the target reduction (compressors), related stems and interactions, confidence, status, an edited flag, 1–6 reasons, warnings, the evaluation, and the evidence (base64 envelope series or per-step band levels, the check windows, and the conflict band). The plan also carries the dynamics interactions (key and target, onset overlap, low-band competition, level masking, free share, the recommended tool, confidence, outcome, explanation) and per-stem readings, for the review panel and for later planning. Everything is plain JSON validated with zod.
+
+**Stale identity** covers the project id, the analysis, EQ band, and envelope versions, the planner version, strength, every stem's id, name, label, role, gain, mute, duration, and file identity, sections (bounds, type, intent), Track × Section prominence, notes, and gain overrides, and every saved EQ node, pan and width, and dynamics node. Selecting a row or moving the playhead is not an edit.
+
+### Preview, A/B, apply, undo
+
+The candidate is an overlay through the shared monitor path: saved dynamics plus the included rows, as the engine plays them. **Current** plays the saved mix. **Dynamics Candidate** plays the proposed and accepted rows. **Bypassed / Recommended** on a row plays the whole mix with only that row switched. Starting any audition stops the others. An edit is heard on the next publish (the row's own audition starts unless the candidate already includes it); nothing reloads and the device does not restart.
+
+**Level match.** Compression makes a stem quieter, and louder usually sounds better, so the A/B is level-matched by default: each processed stem's fader is raised by the average level its row is predicted to remove (up to 3 dB), whole-song or inside the row's section, in the audition only. It is a simple, transparent match on the predicted average active level (an estimate of short-term loudness), not a peak match; the dynamics themselves are unchanged. The panel's "Level-match A/B" box turns it off. Nothing is level-matched when the plan is applied: makeup stays 0.
+
+**Apply all** writes proposed and accepted rows, **Apply accepted** accepted rows, as `dynamics-plan` nodes with their first reason, into the track or Track × Section graph, replacing the node a row edits. One `replaceDocument` with history, so Ctrl+Z restores the whole previous dynamics state. Source files, proxies, and caches are not touched.
+
+### Review UI
+
+Plans has four tabs: Gain, EQ, Space, and Dynamics. The Dynamics table shows Track, Scope, Processor, Key, Amount / GR (the compressor's predicted reduction range, a duck's or dip's maximum, a transient amount), and Confidence, with Accept / Reject / Edit / Bypassed / Recommended. The detail shows the problem, the predicted reduction over time against the target band, the predicted and proxy-measured numbers (labeled when an edit has changed the row since the check), the live reduction from the engine while it plays, and editors with safe bounds: threshold, ratio, attack, release, knee, and makeup for a compressor; key track, key detector, maximum reduction, threshold, attack, and release for a duck; frequency, Q, maximum dip, key track (or its own signal), threshold, and release for a dynamic EQ, with the bell at rest and fully dipped over the two stems' band levels; attack and sustain for a transient shaper. "Relationships and readings" lists every pair and stem that was read, including why nothing was done. A lane shows a DYN badge when the track has saved dynamics.
+
+### Legacy engine
+
+The browser preview and `AUDIOSOUS_AUDIO_ENGINE=legacy` do not play dynamics. The Dynamics panel says so. Planning and the proxy check need the desktop app.
+
+### Known limitations
+
+- Everything is read from 10 ms envelopes (and 0.25–0.4 s band frames for masking). Inside 10 ms nothing is resolved: a fast attack's effect on a hit's first milliseconds is predicted coarsely, and the transient model is a fit to the native envelopes, not a simulation of them.
+- The regularity test is a heuristic. On Generated 5 the patterned stems and uneven playing sit 0.05 apart around the threshold; a stem that is both patterned and uneven can read either way, and a level pattern that repeats with the music is always read as arrangement, even if a producer would call it a mistake.
+- Keyed detection reads the key's source, so a key's EQ and fader never change a duck. That is predictable, but it is not "duck from what you hear".
+- The kick/bass test does not know about ducking baked into the stems except through its measured effect (a pre-ducked bass reads as separated).
+- Event masking inherits the EQ planner's spectral model and its limits; a masking dynamic EQ is sized on band levels, not on audio.
+- No multiband compression, no de-essing, no lookahead (a 0.1 ms attack still lets the first samples through), no gain-reduction automation editor.
+- The legacy and browser engines ignore dynamics.
+- The proxy check measures each row on its own stem, on the proxy; it is not a listening result.
+
+### Acceptance harness
+
+```sh
+cargo run --release -p audiosous-audio --example eq_bands -- "test-assets/Generated 5"
+cargo run --release -p audiosous-audio --example envelope_frames -- "test-assets/Generated 5"
+npx vite-node packages/dynamics-planner/scripts/plan-dynamics-project.ts -- scenario.json
+cargo run --release -p audiosous-audio --example bounce_mix -- OUT_DIR [--wav]
+services/analysis/.venv/bin/python packages/dynamics-planner/scripts/make-problem-mix.py "test-assets/Generated 5" "target/acceptance/Generated 5 Dynamics"
+```
+
+The scenario edits roles, gains, saved EQ and dynamics, sections, prominence, and notes in memory and can script a review; it writes the plan, the proxy-check requests, and engine settings for Current, Dynamics Candidate, the level-matched candidate, and the reviewed plan. `bounce_mix` runs every row's proxy check and bounces each variant through an offline mixer that drives the engine's own runtimes (`bounce.rs`, tested equal to the engine within 1e-4), so the bounces are the playback DSP. `make-problem-mix.py` builds the deliberately problematic project from the Generated 5 proxies.
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
@@ -672,7 +840,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`, and `dynamicsplan.start`, `dynamicsplan.complete`, `dynamicsplan.verify`, `dynamicsplan.preview`, `dynamicsplan.apply`, `dynamicsplan.cancel`, and `dynamicsplan.stale`. `dynamicsplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the other plans. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, envelopes, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 

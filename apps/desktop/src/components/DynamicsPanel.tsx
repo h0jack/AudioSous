@@ -416,14 +416,18 @@ function ReductionNumbers({ change }: { change: DynamicsRecommendation }) {
 /** The actual reduction on this track from the native engine, while playing. */
 function LiveMeter({ trackId, type, playback }: { trackId: string; type: DynamicsRecommendation["processing"]["type"]; playback: Playback }) {
   const [reading, setReading] = useState<DynamicsMeterReading | null>(null);
+  // The playback object is new on every render; poll through a ref so the interval is not restarted 30 times a second.
+  const meter = useRef(playback.dynamicsMeter);
+  meter.current = playback.dynamicsMeter;
+  const live = playback.playing && playback.engineKind === "native";
   useEffect(() => {
-    if (!playback.playing || playback.engineKind !== "native") {
+    if (!live) {
       setReading(null);
       return;
     }
     let stopped = false;
     const tick = () => {
-      void playback.dynamicsMeter().then((all) => {
+      void meter.current().then((all) => {
         if (!stopped) setReading(all.find((item) => item.trackId === trackId) ?? null);
       });
     };
@@ -433,7 +437,7 @@ function LiveMeter({ trackId, type, playback }: { trackId: string; type: Dynamic
       stopped = true;
       clearInterval(timer);
     };
-  }, [playback, trackId]);
+  }, [live, trackId]);
   if (!reading) return <p className="mt-1 text-[10px] text-faint">Live reduction shows here while the native engine plays.</p>;
   const value = type === "compressor" ? reading.compressorDb : type === "ducking" ? reading.duckingDb : type === "dynamic-eq" ? reading.dynamicEqDb : reading.transientDb;
   const widthPercent = Math.min(100, (value / 6) * 100);

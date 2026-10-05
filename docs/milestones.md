@@ -285,6 +285,101 @@ Every run had 0 underruns. Run-to-run variance is larger than the cost of the sp
 - a GUI walk-through in the desktop app: Plan space, the conflicts, a row's field and focus, Current / Spatial Candidate, Bypassed / Recommended, editing pan and width (drag, Shift-drag, wheel, sliders), Accept, Reject, Apply accepted, Ctrl+Z, regenerate, a stale plan after an EQ or fader change, Cancel, the lane SPACE badge and width slider, and Analysis → Spatial interaction;
 - GitHub Actions on these changes.
 
+## Milestone 6
+
+Milestone 6 is dynamics planning: compression for broad level instability, transient shaping for attack/body imbalance, sidechain ducking for a kick/bass collision or a lead that a supporting part covers only while it plays, and dynamic EQ for frequency-specific, time-varying masking. It previews on the existing clock, level-matched, and applies as one undo step. It does not limit, maximize loudness, use multiband compression, add reverb, delay, chorus, or saturation, host plugins, match a reference, or call a model. See [Dynamics planning](architecture.md#dynamics-planning).
+
+| Slice | Status |
+| --- | --- |
+| 1. Dynamics contract | Done. Schema v4 with a v3 migration: graph v2 keeps the EQ nodes and gains a typed `dynamics` list (compressor, ducking, transient, dynamic EQ), fixed stage order, per-graph limits, key routing rules (no self-keys, no loops, a missing key is inert), dynamics identity, versioned `dynamics-balance` plan |
+| 2. Native compressor | Done. Stereo-linked 5 ms RMS detector, soft knee, attack/release on the reduction in dB, 30 dB cap, makeup, 30 ms fades for nodes and section edges, snap on seek, lock-free table, meters, no allocation in the callback (tested) |
+| 3. Sidechain architecture | Done. Every track's frame is pulled before any is processed; keys are the key track's own source; transient (peak) and smooth (RMS) key detectors; order independence and a muted key tested through the real engine |
+| 4. Dynamic EQ and transient DSP | Done. Keyed or self-detected dynamic bell on the static EQ's SVF with a band-passed detector; transient shaper on a 12 ms held level (steady tones untouched, attack shaped without its body) |
+| 5. Dynamics analysis | Done. 10 ms envelope frames (RMS, peak, low band) from the proxies, sustained-level spread and swing, tempo-free self-similarity, hierarchy, onsets with attack over body and over the mix, kick/bass collision at the hits, event vs persistent masking from the EQ planner's pairs |
+| 6. Planner | Done. Classification, least-invasive tool, settings from measurement with an adjust-once loop, global before section, saved nodes edited instead of stacked, regularization, limits, confidence, review rules, intent |
+| 7. Candidate preview | Done. Current vs Dynamics Candidate, single-row Bypassed / Recommended, level matching in the audition only, editors heard immediately, reduction timeline, live engine meter, dynamic EQ curve, Accept / Reject, DYN badge |
+| 8. Evaluation | Done. Envelope simulation for every candidate and edit, two passes, and a proxy check through the native dynamics with the reduction, spread, transients, and keyed bands measured |
+| 9. Hardening | Partly. Undo, stale plans, combined stress, real-music runs with bounces, docs, and CI are done. The physical listening pass and the GUI walk-through need a person at the desktop app and are open |
+
+### Tests
+
+- `packages/dynamics-planner` (45). Fixtures A–H (unstable bass, healthy high-crest bass, kick/bass collision, a pre-ducked bass, lead/pad event masking, persistent masking, a spiky Supporting snare, a buried Focal snare), a saved compressor and a saved dynamic EQ and duck edited instead of stacked, a saved compressor that already does the job, Drop-only instability as a section row, the already-good mix at every strength, the acceptance demonstration, current gain and EQ removing the need for a duck, gain vs compression, section steps vs instability, no compression and transient shaping on one stem, intent (control, natural, punch through, punchy alone, an explicit pump), strength limits, determinism, a 32-stem timing check, unmeasured stems; the plan contract (round trip, edits re-checked from evidence, out-of-range edits to review, reset, inclusion rule, Current / Candidate / single-row audition with level matching, Apply all and Apply accepted, node replacement, stale identity, proxy-check merge); the phrase table; the envelope simulation against the native formulas.
+- `packages/project-model` (47, 9 new). v3 → v4 migration that keeps the EQ, fixed stage order, per-graph limits, clamping and rounding, self-keys, missing keys, two- and three-track loops, ids unique across EQ and dynamics, dynamics-only Track × Section rows, dynamics identity, descriptions.
+- `packages/analysis-contract` (9, 1 new). Envelope series encoding and decoding, cross-checked against the Rust encoder.
+- `apps/desktop` (61, 14 new). The Dynamics review flow with the real functions: the acceptance plan, whole-plan and single-row A/B through the monitor (nodes and level matching), one comparison at a time across Gain, EQ, Space, and Dynamics, edits heard right away, the milestone's demonstration (reject Snare, the duck edited to −1.3 dB, Apply accepted, one undo step), stale refusal after a fader or EQ change, no staleness on selection, cancel, the proxy-check request, saved dynamics reaching the native engine and not the legacy one; render smoke tests of the panel, a duck's and a dynamic EQ's detail, and the legacy warning.
+- `crates/audio-engine` (Rust, 29 new; 82 in all). See [Native dynamics](architecture.md#native-dynamics) for the list; also envelope frames, the dynamics proxy check (compressor spread and reduction, keyed band while the key plays and recovery, transient attack over body), and the bounce against the engine.
+- `npm run stress:audio` adds `stress_dynamics_callback_cost`.
+
+### Acceptance run
+
+Planned from the cached analysis, EQ band frames, and envelope frames with `plan-dynamics-project.ts`; checked and bounced through the native DSP with `bounce_mix`. Planning took 100–130 ms for 11 stems and 6 sections; envelope frames 2.3 s for 11 stems from existing proxies; each proxy check 30–80 ms; each 141 s bounce about 1 s.
+
+**Already-good mix (the producer's Generated 5 stems).** Same sections and roles as Milestones 3–5, all faders at 0 dB.
+
+| Strength | Rows | Change |
+| --- | --- | --- |
+| Conservative | 1 | Bass Bus ducked 1.5 dB from PunchBox (5 / 140 ms), confidence 0.74 |
+| Normal | 1 | the same, 2.5 dB, confidence 0.77 |
+| Strong | 1 | the same, 4 dB, 100 ms release, review |
+
+Bass Bus's low end sits +2.7 dB over the kick's on 63% of PunchBox's hits, which is a measured collision; on the proxy the Normal duck lowered the bass's low end by 1.9 dB while the kick plays and 0.6 dB between hits, and the bass was back at full level 55% of the kick-off time. Nothing was compressed: Stutter Expression, MasterEQ, Bleeps Bus, Bass Bus, and Subway all swing 6–21 dB in their sustained level, but every one of them repeats with the music (self-similarity 0.37–0.67), and the masking between Bleeps Bus and four supporting parts is persistent, so static EQ is named as the tool.
+
+The first calibration run on this mix proposed six rows at every strength, five of them compressors. Two faults caused that, and both are fixed and covered by tests:
+- rhythmic parts (stutters, gated or pumped pads, sequenced synths and bass) read as unstable because their sustained level swings by design;
+- a Supporting part's internal swing counted even when it stayed under the stems it supports.
+Two more were found on the problematic mix below: a dynamic EQ on an atmosphere already 10 dB under the lead, and a self-similarity test on the 50 ms level that let a strong rhythm hide uneven note levels (now read on the 400 ms sustained level).
+
+**Deliberately problematic mix.** `make-problem-mix.py` derives six stems from the Generated 5 proxies: Bass Bus 4 dB louder in the drops with irregular note-level jumps (0 to −8 dB, never repeating), MasterEQ with a +7 dB presence bell at 2.5 kHz baked in, Bleeps Bus gated into 6-second phrases in the drops (Focal there), a synthetic off-beat clap with a 3 ms spike 18 dB over its body, and PunchBox and Skimming Air as they are.
+
+| Row | Problem detected | Settings | Confidence |
+| --- | --- | --- | --- |
+| Bass, Global | level swings 10.8 dB without repeating | compressor 1.5:1 at −23 dB, 30 / 200 ms, knee 6, makeup 0 | 0.83 |
+| Bass, Global | low end on top of the kick on 59% of hits | duck from Kick, up to −2 dB, 5 / 140 ms | 0.75 |
+| Pad, Global | covers the Lead's 1.1–3.6 kHz while it plays, Lead silent 43% of the time | dynamic EQ 2.1 kHz, Q 0.8, up to −2.5 dB, keyed from Lead | 0.70 |
+| Clap, Global | attacks 19.6 dB over body, +10.1 dB over the mix | transient attack −15% | 0.76 |
+
+No row was added for anything that was not put in: Kick, Lead, and Atmosphere got nothing.
+
+**Prediction vs audio** (native dynamics on the proxies, up to 30 s of each row's windows):
+
+| Row | Predicted | Measured |
+| --- | --- | --- |
+| Bass compressor | GR 1.3 / 3.0 dB (p50/p95), level −2.12 dB, spread −2.1 dB | GR 0.6 / 2.8 dB, level −1.82 dB, spread −2.0 dB |
+| Bass duck | 2.0 dB at the hits, level −0.69 dB | 1.9 / 2.0 dB while the kick plays, low band −1.63 dB then and −0.39 dB otherwise, level −0.67 dB |
+| Pad dynamic EQ | 2.5 dB while the lead plays, 0 dB otherwise | 2.4 / 2.5 dB, band −1.33 dB while the lead plays and −0.24 dB while it rests |
+| Clap transient | attack over body −1.1 dB | −1.4 dB (1 ms resolution: 23.0 → 21.6 dB) |
+| Bass Bus duck (already-good mix) | 2.5 dB at the hits, level −0.80 dB | 2.5 dB, low band −1.94 dB while the kick plays and −0.58 dB otherwise, level −0.72 dB |
+
+The clap's first proxy check measured almost no change (−0.1 dB): the transient shaper's 40 ms release carried attack gain into the body, and steady tones got a constant 0.6 dB offset. The shaper now follows a 12 ms held level with 20 ms releases (tested on tones and on that clap).
+
+**Bounces** (141 s, native DSP from the proxies; `bounce_mix --wav` writes them):
+
+| Mix | Variant | Peak | RMS | 400 ms level spread |
+| --- | --- | --- | --- | --- |
+| Problematic | Current | +0.72 dBFS | −22.44 dB | 12.9 dB |
+| Problematic | Dynamics Candidate | −0.79 dBFS | −23.76 dB | 11.5 dB |
+| Problematic | Candidate, level-matched | +0.83 dBFS | −22.30 dB | 11.5 dB |
+| Problematic | Reviewed (Clap rejected, duck −1.3 dB), level-matched | +0.37 dBFS | −22.30 dB | 11.5 dB |
+| Already good | Current | −2.95 dBFS | −22.04 dB | 9.2 dB |
+| Already good | Dynamics Candidate | −2.95 dBFS | −22.37 dB | 8.9 dB |
+| Already good | Candidate, level-matched | −2.48 dBFS | −22.00 dB | 9.3 dB |
+
+The level-matched candidate sits within 0.15 dB RMS of Current in both mixes, so an A/B is not won by loudness. The problematic mix's stems clip together before and after (the derived bass is loud); the candidate's dynamics remove 1.3 dB of level, which matching puts back for the comparison only.
+
+**Audio engine.** Release build, stereo noise stems paced in real time, 512-frame callbacks (10.67 ms budget), tests run one at a time. EQ + spatial is high-pass + 2 bells + a section bell and pan/width with a section window on every stem; dynamics adds a dynamic EQ keyed from stem 0, a compressor, a transient shaper, a duck keyed from stem 0, and a section compressor on every stem (more than any plan proposes):
+
+| Stems | None | EQ + spatial | EQ + spatial + dynamics |
+| --- | --- | --- | --- |
+| 11 | 0.07 ms (worst 0.16) | 0.14 ms (worst 0.35) | 0.32 ms (worst 0.58), 3.0% |
+| 32 | 0.14 ms (worst 0.32) | 0.44 ms (worst 0.63) | 0.99 ms (worst 1.29), 9.3% |
+| 64 | 0.26 ms (worst 0.46) | 0.61 ms (worst 1.19) | 1.88 ms (worst 2.79), 17.7% |
+
+Every run had 0 underruns. The rest of `npm run stress:audio` was unchanged in kind: the plain-mix throughput test (256 frames) measured 32×48 kHz 0.059 ms, 32×96 kHz 0.059 ms, 11×192 kHz 0.018 ms, and 64×48 kHz 0.145 ms of 5.33 ms; the Generated 5 and Generated2 soaks played 141 s each with seeks, a loop, and gain moves, 0 underruns, callback 0.27 and 0.19 ms.
+
+**Still open before Milestone 6 is complete:**
+- a physical listening pass on Current, the Dynamics Candidate, and the reviewed plan for both mixes (the `bounce_mix --wav` bounces, and the desktop app), listening for pumping, lost transients, over-compression, release behavior, low-end stability, and lead clarity;
+- a GUI walk-through in the desktop app: Plan dynamics, a row's detail, Current / Dynamics Candidate, Bypassed / Recommended, editing a compressor, a duck, and a dynamic EQ, Accept, Reject, Apply accepted, Ctrl+Z, regenerate, a stale plan after an EQ or fader change, Cancel, the DYN badge, and the live meter.
+
 ## Explicitly later
 
-Dynamic EQ, compression, sidechain, multiband, transient shaping, de-essing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.
+Multiband compression, de-essing, lookahead, gain-reduction automation editing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.

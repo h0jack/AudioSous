@@ -202,14 +202,15 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
   const balance = useAppStore((state) => state.balance);
   const eq = useAppStore((state) => state.eq);
   const space = useAppStore((state) => state.space);
+  const dynamics = useAppStore((state) => state.dynamics);
 
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !document) return;
     publish(engine, document, nativeRef.current);
-  }, [document, balance, eq, space]);
+  }, [document, balance, eq, space, dynamics]);
 
-  /** Sends gain, section gain, EQ, and pan/width only when what the engine would hear changed. */
+  /** Sends gain, section gain, EQ, pan/width, and dynamics only when what the engine would hear changed. */
   function publish(engine: RunningEngine, song: ProjectDocument, native: boolean): void {
     const state = useAppStore.getState();
     const monitor = monitorState(song, state.balance, state.eq, state.space, state.dynamics);
