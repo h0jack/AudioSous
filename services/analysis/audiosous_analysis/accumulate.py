@@ -28,6 +28,8 @@ SPECTROGRAM_PIECE = 8192
 ONSET_RISE_DB = 6.0
 ONSET_FLOOR_DB = -40.0
 ACTIVE_FLOOR_DB = -60.0
+SILENCE_FLOOR_DB = -120.0
+MAX_DYNAMIC_RANGE_DB = 120.0
 SILENCE_LINEAR = 1e-10
 
 
@@ -330,11 +332,13 @@ class Accumulator:
         }
 
     def _dynamics(self, duration: float) -> dict:
-        finite = [float(point["rmsDbfs"]) for point in self.timeline if isinstance(point["rmsDbfs"], float)]
+        # Windows of digital silence (a part resting) are not dynamic range; leave them out. The contract caps the
+        # figure at 120 dB, so a file can never fail validation on it.
+        finite = [float(point["rmsDbfs"]) for point in self.timeline if isinstance(point["rmsDbfs"], float) and point["rmsDbfs"] > SILENCE_FLOOR_DB]
         dynamic = None
         if len(finite) >= 2:
             low, high = np.percentile(finite, [10, 95])
-            dynamic = round(max(0.0, float(high - low)), 2)
+            dynamic = round(min(MAX_DYNAMIC_RANGE_DB, max(0.0, float(high - low))), 2)
         active = 0
         for point in self.timeline:
             level = point["rmsDbfs"]

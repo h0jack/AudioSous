@@ -359,3 +359,17 @@ def pytest_approx(expected: float, abs: float):  # noqa: A002 — mirrors pytest
     import pytest
 
     return pytest.approx(expected, abs=abs)
+
+
+def test_dynamic_range_ignores_rests_and_stays_inside_the_contract(tmp_path: Path):
+    # A part that plays for 3 s, then rests for 4 s at a -150 dBFS noise floor (as a rendered stem can).
+    rng = np.random.default_rng(1)
+    playing = _tone(440.0, seconds=3.0) * np.linspace(1.0, 0.25, int(SAMPLE_RATE * 3.0), dtype=np.float32)
+    resting = (rng.standard_normal(int(SAMPLE_RATE * 4.0)) * 10 ** (-150 / 20)).astype(np.float32)
+    path = tmp_path / "rests.wav"
+    _write(path, np.concatenate([playing, resting]))
+    dynamics = measure_file(path)["dynamics"]
+    assert dynamics["dynamicRangeDb"] is not None
+    assert 0.0 <= dynamics["dynamicRangeDb"] <= 120.0
+    # The figure describes the playing part (a 12 dB fade), not the gap to the noise floor.
+    assert dynamics["dynamicRangeDb"] < 20.0

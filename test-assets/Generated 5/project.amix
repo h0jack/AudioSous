@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "project": {
     "id": "5bf8e22e-c501-4266-a067-da0154c77017",
     "name": "Generated 5",
     "createdAt": "2026-10-04T04:55:48.775Z",
-    "updatedAt": "2026-10-05T04:55:16.402Z",
+    "updatedAt": "2026-10-05T21:41:24.913Z",
     "sampleRate": 192000,
     "durationSeconds": 141.428421875
   },
@@ -32,8 +32,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -59,8 +60,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -86,8 +88,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -113,8 +116,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -134,14 +138,15 @@
         "durationSeconds": 141.428421875,
         "fileSizeBytes": 217234790
       },
-      "gainDb": 4,
+      "gainDb": 8,
       "pan": 0,
       "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -167,8 +172,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -188,14 +194,15 @@
         "durationSeconds": 141.428421875,
         "fileSizeBytes": 217234790
       },
-      "gainDb": 4,
+      "gainDb": 8,
       "pan": 0,
       "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -221,8 +228,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -248,8 +256,23 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": [
+          {
+            "id": "dyn-4a94e169",
+            "enabled": true,
+            "origin": "dynamics-plan",
+            "note": "Ducks Sub Operator V4.23 Bass Bus by up to 2.5 dB from the Sub Operator V4.23 PunchBox because their low end (under 150 Hz) overlaps around each Sub Operator V4.23 PunchBox hit: on 56% of the hits Sub Operator V4.23 Bass Bus sits within 3 dB of the Sub Operator V4.23 PunchBox or over it (+0.2 dB on average). With the duck it sits -2.0 dB against the Sub Operator V4.23 PunchBox on those hits, and 5",
+            "type": "ducking",
+            "keyTrackId": "b294208b-42b4-471d-8493-baea7b4e91ca",
+            "keyDetector": "transient",
+            "thresholdDb": -24,
+            "rangeDb": -2.5,
+            "attackMs": 5,
+            "releaseMs": 140
+          }
+        ]
       }
     },
     {
@@ -275,8 +298,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     },
     {
@@ -302,8 +326,9 @@
       "muted": false,
       "solo": false,
       "processing": {
-        "schemaVersion": 1,
-        "nodes": []
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
       }
     }
   ],
@@ -379,7 +404,7 @@
       "end": 116.65145067108716,
       "sectionId": null
     },
-    "playheadSeconds": 141.39733333333334,
+    "playheadSeconds": 141.412,
     "timelineZoom": 1,
     "timelineScroll": 0
   }

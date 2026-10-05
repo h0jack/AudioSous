@@ -1,0 +1,355 @@
+{
+  "schemaVersion": 4,
+  "project": {
+    "id": "e858fe67-13d4-4db3-9048-ec2efec72b32",
+    "name": "Work 1",
+    "createdAt": "2026-10-05T21:44:57.203Z",
+    "updatedAt": "2026-10-05T21:51:59.625Z",
+    "sampleRate": 192000,
+    "durationSeconds": 241.40609895833333
+  },
+  "tracks": [
+    {
+      "id": "99401dd5-d1ec-4259-9ec1-5a5a6daa4249",
+      "name": "Generated From Generated From Notes V.0.29 Tin Horn",
+      "role": "brass",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/99401dd5-d1ec-4259-9ec1-5a5a6daa4249__Generated From Generated From Notes v.0.29 - Tin Horn.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Tin Horn.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "4fe85234-9683-445c-9b6e-3250e9211345",
+      "name": "Generated From Generated From Notes V.0.29 Serum.64 2",
+      "role": "strings",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/4fe85234-9683-445c-9b6e-3250e9211345__Generated From Generated From Notes v.0.29 - Serum.64 2.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Serum.64 2.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "20b1c4ef-7011-4bf3-8d5b-c3b33555465a",
+      "name": "Generated From Generated From Notes V.0.29 Mid High Arps",
+      "role": "keys",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/20b1c4ef-7011-4bf3-8d5b-c3b33555465a__Generated From Generated From Notes v.0.29 - Mid_High Arps.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Mid_High Arps.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "deeb0377-52a4-4e38-91b5-83f2743f72d1",
+      "name": "Generated From Generated From Notes V.0.29 Melodic Gnat",
+      "role": "lead",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/deeb0377-52a4-4e38-91b5-83f2743f72d1__Generated From Generated From Notes v.0.29 - Melodic Gnat.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Melodic Gnat.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "07f04987-e722-4fdf-aa7e-02fd9da59be1",
+      "name": "Generated From Generated From Notes V.0.29 Melodic Fly",
+      "role": "lead",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/07f04987-e722-4fdf-aa7e-02fd9da59be1__Generated From Generated From Notes v.0.29 - Melodic Fly.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Melodic Fly.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "31af267d-a3e8-4b9d-b672-5d0765d38d50",
+      "name": "Generated From Generated From Notes V.0.29 Fly Gnat Automation",
+      "role": "lead",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/31af267d-a3e8-4b9d-b672-5d0765d38d50__Generated From Generated From Notes v.0.29 - Fly_Gnat Automation.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Fly_Gnat Automation.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "cb1f6ef9-6e57-43e9-b32c-0f6d3a499027",
+      "name": "Generated From Generated From Notes V.0.29 Deadish Air",
+      "role": "other",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/cb1f6ef9-6e57-43e9-b32c-0f6d3a499027__Generated From Generated From Notes v.0.29 - Deadish Air.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Deadish Air.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "ded2bad2-9462-4faa-92f2-a169d87e43ae",
+      "name": "Generated From Generated From Notes V.0.29 Brilliant Pad",
+      "role": "pad",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/ded2bad2-9462-4faa-92f2-a169d87e43ae__Generated From Generated From Notes v.0.29 - Brilliant Pad.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Brilliant Pad.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "63e913be-4cc1-4594-b99f-108ff6f08450",
+      "name": "Generated From Generated From Notes V.0.29 BD 2",
+      "role": "kick",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/63e913be-4cc1-4594-b99f-108ff6f08450__Generated From Generated From Notes v.0.29 - BD 2.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - BD 2.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "34d70ff1-f7f4-447d-9f0e-851ae5a75985",
+      "name": "Generated From Generated From Notes V.0.29 BD 1",
+      "role": "kick",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/34d70ff1-f7f4-447d-9f0e-851ae5a75985__Generated From Generated From Notes v.0.29 - BD 1.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - BD 1.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    },
+    {
+      "id": "3c294e65-a944-4129-9af9-e9c709b621f0",
+      "name": "Generated From Generated From Notes V.0.29 Bass Arps",
+      "role": "bass",
+      "customLabel": null,
+      "file": {
+        "relativePath": "media/3c294e65-a944-4129-9af9-e9c709b621f0__Generated From Generated From Notes v.0.29 - Bass Arps.wav",
+        "filename": "Generated From Generated From Notes v.0.29 - Bass Arps.wav"
+      },
+      "metadata": {
+        "format": "wav",
+        "sampleRate": 192000,
+        "channelCount": 2,
+        "bitDepth": 32,
+        "durationSeconds": 241.40609895833333,
+        "fileSizeBytes": 370800502
+      },
+      "gainDb": 0,
+      "pan": 0,
+      "width": 1,
+      "muted": false,
+      "solo": false,
+      "processing": {
+        "schemaVersion": 2,
+        "nodes": [],
+        "dynamics": []
+      }
+    }
+  ],
+  "sections": [],
+  "sectionTrackSettings": [],
+  "mixVariants": [
+    {
+      "id": "variant-original",
+      "name": "Original",
+      "description": "The imported stems, without Audiosous processing.",
+      "createdAt": "2026-10-05T21:44:57.203Z",
+      "kind": "original"
+    },
+    {
+      "id": "variant-working",
+      "name": "Working Mix",
+      "description": "The mix you are auditioning.",
+      "createdAt": "2026-10-05T21:44:57.203Z",
+      "kind": "working"
+    }
+  ],
+  "activeMixVariantId": "variant-working",
+  "comparison": {
+    "scope": "entire-mix",
+    "aVariantId": "variant-original",
+    "bVariantId": "variant-working",
+    "trackId": null
+  },
+  "uiState": {
+    "selectedTrackId": null,
+    "selectedSectionId": null,
+    "timeRange": null,
+    "loop": null,
+    "playheadSeconds": 0,
+    "timelineZoom": 1,
+    "timelineScroll": 0
+  }
+}
