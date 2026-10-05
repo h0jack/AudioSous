@@ -256,7 +256,8 @@ pub struct LevelStats {
 pub struct DynamicsCheck {
     pub before: LevelStats,
     pub after: LevelStats,
-    /// Reduction from nodes of the checked kind in the processed audio, sampled every control step, dB.
+    /// Reduction from nodes of the checked kind in the processed audio, sampled every control step, dB. For a keyed
+    /// check, p50 and p95 are over the time the key plays (what the row is for); the maximum is over everything.
     pub reduction_p50_db: f64,
     pub reduction_p95_db: f64,
     pub reduction_max_db: f64,
@@ -322,7 +323,8 @@ pub fn check_dynamics(input: &DynamicsCheckInput<'_>) -> Result<DynamicsCheck, S
     // Per 1 ms: peak and power, unprocessed and processed. Per 10 ms: power, band power, key power, reduction.
     let mut ms = [Vec::new(), Vec::new()];
     let mut tens: Vec<[f64; 6]> = Vec::new();
-    let mut reductions: Vec<f32> = Vec::new();
+    // Each control-step reading, with the 10 ms row it falls in (to split key-on from key-off afterwards).
+    let mut reductions: Vec<(f32, usize)> = Vec::new();
     let mut counted = 0_usize;
     let mut buffer = Vec::with_capacity(CHUNK_FRAMES * channels);
     let mut key_buffer = Vec::with_capacity(CHUNK_FRAMES * 2);
@@ -414,7 +416,7 @@ pub fn check_dynamics(input: &DynamicsCheckInput<'_>) -> Result<DynamicsCheck, S
                 acc_ten[4] += f64::from(key_values[frame]).powi(2);
                 acc_ten[5] = acc_ten[5].max(f64::from(max_reduction[frame]));
                 if (local + 1) % CONTROL_STEP == 0 && local >= SETTLE_FRAMES {
-                    reductions.push(max_reduction[frame]);
+                    reductions.push((max_reduction[frame], tens.len()));
                 }
                 if (local + 1) % MS == 0 {
                     if local >= SETTLE_FRAMES {
@@ -490,7 +492,8 @@ pub fn check_dynamics(input: &DynamicsCheckInput<'_>) -> Result<DynamicsCheck, S
             level_off_db: split(slot, false),
         }
     };
-    let mut sorted = reductions.clone();
+    let largest = reductions.iter().map(|(value, _)| *value).fold(0.0_f32, f32::max);
+    let mut sorted: Vec<f32> = reductions.iter().filter(|(_, row)| !keyed || key_on.get(*row).copied().unwrap_or(false)).map(|(value, _)| *value).collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let pick = |share: f64| if sorted.is_empty() { 0.0 } else { f64::from(sorted[((sorted.len() - 1) as f64 * share).round() as usize]) };
     let off: Vec<f64> = tens.iter().zip(key_on.iter()).filter(|(_, key)| !**key).map(|(row, _)| row[5]).collect();
@@ -499,7 +502,7 @@ pub fn check_dynamics(input: &DynamicsCheckInput<'_>) -> Result<DynamicsCheck, S
         after: stats(1),
         reduction_p50_db: pick(0.5),
         reduction_p95_db: pick(0.95),
-        reduction_max_db: sorted.last().copied().map(f64::from).unwrap_or(0.0),
+        reduction_max_db: f64::from(largest),
         key_on_share: keyed.then(|| key_on.iter().filter(|on| **on).count() as f64 / key_on.len() as f64),
         recovered_share: (keyed && !off.is_empty()).then(|| off.iter().filter(|value| **value < 0.5).count() as f64 / off.len() as f64),
         seconds: counted as f64 / f64::from(PLAYBACK_RATE),

@@ -43,6 +43,7 @@ describe("envelope simulation", () => {
     expect(transientGainDb(20, -0.1, 0).attackDb).toBeCloseTo(-0.9, 6);
     expect(transientGainDb(9, 0.2, 0).attackDb).toBeCloseTo(0.81, 6);
     expect(transientGainDb(20, 0, 0.1).bodyDb).toBeCloseTo(1, 6);
+    expect(transientGainDb(20, -0.1, 0).bodyDb).toBeCloseTo(-0.15, 6);
     expect(downsampleMax([0, 1, 0, 3, 0, 2], 3)).toEqual([1, 3, 2]);
   });
 });

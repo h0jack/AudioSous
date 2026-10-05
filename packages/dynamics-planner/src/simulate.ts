@@ -111,14 +111,15 @@ export function simulateDynamicEq(detectorBandDb: readonly number[], params: Dyn
 /**
  * How much a transient shaper changes one hit, from the hit's rise (its 10 ms peak over the quietest of the
  * previous 30 ms), as average gain over the attack (first 10 ms) and the body (40–140 ms). From the native
- * envelopes: a hit rising 20 dB or more gets about 9 dB of attack reading over its first 10 ms, a 9 dB rise
- * about 4 dB; the body carries little attack reading and, after a sharp hit, a large sustain reading.
+ * envelopes on their 12 ms held level: a hit rising 20 dB or more gets about 9–11 dB of attack reading over its
+ * first 10 ms, a 9 dB rise about 4 dB; the body carries about 1.5 dB per unit of attack amount (a −15% clap body
+ * measured −0.24 dB) and, after a sharp hit, a large sustain reading.
  */
 export function transientGainDb(riseDb: number, attack: number, sustain: number): { attackDb: number; bodyDb: number } {
   const rise = Math.max(0, riseDb);
   const attackReading = Math.min(9, 0.45 * rise);
   const sustainReading = Math.min(10, 0.5 * rise);
-  return { attackDb: attack * attackReading, bodyDb: attack * 0.5 + sustain * sustainReading };
+  return { attackDb: attack * attackReading, bodyDb: attack * 1.5 + sustain * sustainReading };
 }
 
 /** Largest value per bucket, for drawing a reduction over time with at most `points` points. */

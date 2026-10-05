@@ -1109,124 +1109,24 @@ impl Control {
             })
             .collect();
         drop(tracks);
-        let regions: Vec<SpatialRegionInput> = self
-            .spatial_regions
-            .iter()
-            .filter_map(|(id, region)| {
-                let index = ids.iter().position(|item| item == id)?;
-                Some(SpatialRegionInput {
-                    track_index: index,
-                    start_frame: seconds_to_frame(region.start_seconds),
-                    end_frame: seconds_to_frame(region.end_seconds),
-                    params: SpatialParams { pan: region.pan, width: region.width },
-                })
-            })
-            .collect();
+        let regions = spatial_regions_for(&ids, &self.spatial_regions);
         drop(ids);
         self.rt.spatial.publish(&SpatialTable::build(&base, &regions));
     }
 
     fn publish_gain_regions(&self, regions: Vec<TrackGainRegion>) {
-        let ids = self.rt.ids.lock().expect("ids");
-        let mut scheduled = Vec::new();
-        for region in regions {
-            let Some(index) = ids.iter().position(|id| id == &region.track_id) else {
-                continue;
-            };
-            if index >= MAX_TRACKS || scheduled.len() >= MAX_GAIN_REGIONS {
-                continue;
-            }
-            let start = seconds_to_frame(region.start_seconds);
-            let end = seconds_to_frame(region.end_seconds);
-            if end <= start {
-                continue;
-            }
-            scheduled.push(GainRegion {
-                track_index: index as u8,
-                start_frame: start,
-                end_frame: end,
-                gain: linear_gain(region.gain_db),
-            });
-        }
-        drop(ids);
-        self.rt.gain_schedule.publish(&scheduled);
+        let ids = self.rt.ids.lock().expect("ids").clone();
+        self.rt.gain_schedule.publish(&gain_schedule_for(&ids, regions));
     }
 
     fn publish_eq(&self, tracks: Vec<TrackEq>) {
-        let ids = self.rt.ids.lock().expect("ids");
-        let mut owned: Vec<(usize, Vec<FilterSpec>, Vec<(u64, u64, Vec<FilterSpec>)>)> = Vec::new();
-        for track in tracks {
-            let Some(index) = ids.iter().position(|id| id == &track.track_id) else {
-                continue;
-            };
-            if index >= MAX_TRACKS {
-                continue;
-            }
-            let regions = track
-                .regions
-                .into_iter()
-                .map(|region| {
-                    (
-                        seconds_to_frame(region.start_seconds),
-                        seconds_to_frame(region.end_seconds),
-                        region.filters,
-                    )
-                })
-                .filter(|(start, end, _)| end > start)
-                .collect();
-            owned.push((index, track.filters, regions));
-        }
-        drop(ids);
-        let borrowed: Vec<Vec<(u64, u64, &[FilterSpec])>> = owned
-            .iter()
-            .map(|(_, _, regions)| {
-                regions
-                    .iter()
-                    .map(|(start, end, filters)| (*start, *end, filters.as_slice()))
-                    .collect()
-            })
-            .collect();
-        let inputs: Vec<TrackEqInput<'_>> = owned
-            .iter()
-            .zip(borrowed.iter())
-            .map(|((index, filters, _), regions)| TrackEqInput {
-                track_index: *index,
-                filters,
-                regions,
-            })
-            .collect();
-        self.rt.eq.publish(&EqTable::design(&inputs));
+        let ids = self.rt.ids.lock().expect("ids").clone();
+        self.rt.eq.publish(&eq_table_for(&ids, tracks));
     }
 
     fn publish_dynamics(&self, tracks: Vec<TrackDynamics>) {
-        let ids = self.rt.ids.lock().expect("ids");
-        let index_of = |id: &str| ids.iter().position(|item| item == id).filter(|index| *index < MAX_TRACKS);
-        let mut owned: Vec<(usize, Vec<DynSpec>, Vec<(u64, u64, Vec<DynSpec>)>)> = Vec::new();
-        for track in tracks {
-            let Some(index) = index_of(&track.track_id) else {
-                continue;
-            };
-            let resolve = |nodes: &[DynamicsNodeSpec]| -> Vec<DynSpec> { nodes.iter().filter_map(|node| node.resolve(index, index_of)).collect() };
-            let nodes = resolve(&track.nodes);
-            let regions = track
-                .regions
-                .iter()
-                .map(|region| (seconds_to_frame(region.start_seconds), seconds_to_frame(region.end_seconds), resolve(&region.nodes)))
-                .filter(|(start, end, nodes)| end > start && !nodes.is_empty())
-                .collect();
-            owned.push((index, nodes, regions));
-        }
-        drop(ids);
-        let borrowed: Vec<Vec<(u64, u64, &[DynSpec])>> = owned
-            .iter()
-            .map(|(_, _, regions)| regions.iter().map(|(start, end, nodes)| (*start, *end, nodes.as_slice())).collect())
-            .collect();
-        let inputs: Vec<TrackDynamicsInput<'_>> = owned
-            .iter()
-            .zip(borrowed.iter())
-            .map(|((index, nodes, _), regions)| TrackDynamicsInput { track_index: *index, nodes, regions })
-            .collect();
-        self.rt.dynamics.publish(&DynamicsTable::build(&inputs));
+        let ids = self.rt.ids.lock().expect("ids").clone();
+        self.rt.dynamics.publish(&dynamics_table_for(&ids, tracks));
     }
 
     fn publish_from_tracks(&self) {
@@ -1344,6 +1244,102 @@ impl Control {
     fn set_message(&self, message: &str) {
         *self.rt.message.lock().expect("message") = message.to_string();
     }
+}
+
+/// Section gain windows for the loaded tracks, by track id. Unknown tracks and empty windows are dropped.
+pub(crate) fn gain_schedule_for(ids: &[String], regions: Vec<TrackGainRegion>) -> Vec<GainRegion> {
+    let mut scheduled = Vec::new();
+    for region in regions {
+        let Some(index) = ids.iter().position(|id| id == &region.track_id) else {
+            continue;
+        };
+        if index >= MAX_TRACKS || scheduled.len() >= MAX_GAIN_REGIONS {
+            continue;
+        }
+        let start = seconds_to_frame(region.start_seconds);
+        let end = seconds_to_frame(region.end_seconds);
+        if end <= start {
+            continue;
+        }
+        scheduled.push(GainRegion { track_index: index as u8, start_frame: start, end_frame: end, gain: linear_gain(region.gain_db) });
+    }
+    scheduled
+}
+
+/// The EQ table for the loaded tracks, by track id.
+pub(crate) fn eq_table_for(ids: &[String], tracks: Vec<TrackEq>) -> EqTable {
+    let mut owned: Vec<(usize, Vec<FilterSpec>, Vec<(u64, u64, Vec<FilterSpec>)>)> = Vec::new();
+    for track in tracks {
+        let Some(index) = ids.iter().position(|id| id == &track.track_id) else {
+            continue;
+        };
+        if index >= MAX_TRACKS {
+            continue;
+        }
+        let regions = track
+            .regions
+            .into_iter()
+            .map(|region| (seconds_to_frame(region.start_seconds), seconds_to_frame(region.end_seconds), region.filters))
+            .filter(|(start, end, _)| end > start)
+            .collect();
+        owned.push((index, track.filters, regions));
+    }
+    let borrowed: Vec<Vec<(u64, u64, &[FilterSpec])>> = owned
+        .iter()
+        .map(|(_, _, regions)| regions.iter().map(|(start, end, filters)| (*start, *end, filters.as_slice())).collect())
+        .collect();
+    let inputs: Vec<TrackEqInput<'_>> = owned
+        .iter()
+        .zip(borrowed.iter())
+        .map(|((index, filters, _), regions)| TrackEqInput { track_index: *index, filters, regions })
+        .collect();
+    EqTable::design(&inputs)
+}
+
+/// The dynamics table for the loaded tracks, by track id. Keys resolve to track indices; a missing key drops the node.
+pub(crate) fn dynamics_table_for(ids: &[String], tracks: Vec<TrackDynamics>) -> DynamicsTable {
+    let index_of = |id: &str| ids.iter().position(|item| item == id).filter(|index| *index < MAX_TRACKS);
+    let mut owned: Vec<(usize, Vec<DynSpec>, Vec<(u64, u64, Vec<DynSpec>)>)> = Vec::new();
+    for track in tracks {
+        let Some(index) = index_of(&track.track_id) else {
+            continue;
+        };
+        let resolve = |nodes: &[DynamicsNodeSpec]| -> Vec<DynSpec> { nodes.iter().filter_map(|node| node.resolve(index, index_of)).collect() };
+        let nodes = resolve(&track.nodes);
+        let regions = track
+            .regions
+            .iter()
+            .map(|region| (seconds_to_frame(region.start_seconds), seconds_to_frame(region.end_seconds), resolve(&region.nodes)))
+            .filter(|(start, end, nodes)| end > start && !nodes.is_empty())
+            .collect();
+        owned.push((index, nodes, regions));
+    }
+    let borrowed: Vec<Vec<(u64, u64, &[DynSpec])>> = owned
+        .iter()
+        .map(|(_, _, regions)| regions.iter().map(|(start, end, nodes)| (*start, *end, nodes.as_slice())).collect())
+        .collect();
+    let inputs: Vec<TrackDynamicsInput<'_>> = owned
+        .iter()
+        .zip(borrowed.iter())
+        .map(|((index, nodes, _), regions)| TrackDynamicsInput { track_index: *index, nodes, regions })
+        .collect();
+    DynamicsTable::build(&inputs)
+}
+
+/// Section pan/width windows for the loaded tracks, by track id.
+pub(crate) fn spatial_regions_for(ids: &[String], regions: &[(String, TrackSpatialRegion)]) -> Vec<SpatialRegionInput> {
+    regions
+        .iter()
+        .filter_map(|(id, region)| {
+            let index = ids.iter().position(|item| item == id)?;
+            Some(SpatialRegionInput {
+                track_index: index,
+                start_frame: seconds_to_frame(region.start_seconds),
+                end_frame: seconds_to_frame(region.end_seconds),
+                params: SpatialParams { pan: region.pan, width: region.width },
+            })
+        })
+        .collect()
 }
 
 fn worker_loop(id: usize, rt: Arc<Realtime>, tracks: Arc<RwLock<Vec<Mutex<TrackState>>>>) {
@@ -1996,7 +1992,7 @@ fn frame_region(region: Option<(f64, f64)>) -> Option<(u64, u64)> {
     })
 }
 
-fn seconds_to_frame(seconds: f64) -> u64 {
+pub(crate) fn seconds_to_frame(seconds: f64) -> u64 {
     if !seconds.is_finite() || seconds <= 0.0 {
         0
     } else {

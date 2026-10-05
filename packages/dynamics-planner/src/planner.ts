@@ -357,13 +357,17 @@ function toScope(scope: AnalysisScope): DynamicsScope {
   return scope.sectionId ? { type: "section", sectionId: scope.sectionId } : { type: "global" };
 }
 
-/** Windows (seconds) for the proxy check: the scope, trimmed to where the stem plays, at most 24 pieces. */
+/**
+ * Windows (seconds) for the proxy check: the scope, trimmed to where the stem plays, at most 24 pieces. A 500 ms block
+ * counts as playing when any frame in it plays, so a sparse part (a clap on the off-beats) still has windows.
+ */
 function windowsOf(start: number, end: number, playing: (frame: number) => boolean): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   let open: number | null = null;
   const step = 50;
   for (let frame = start; frame < end; frame += step) {
-    const on = playing(frame);
+    let on = false;
+    for (let at = frame; at < Math.min(end, frame + step) && !on; at += 1) on = playing(at);
     if (on && open === null) open = frame;
     if ((!on || frame + step >= end) && open !== null) {
       const close = on ? Math.min(end, frame + step) : frame;

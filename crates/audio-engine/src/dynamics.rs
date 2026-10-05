@@ -29,9 +29,10 @@
 //!   and Q, as an RMS with a 10 ms (transient key) or 50 ms (smooth key) time constant. The bell dips by
 //!   `range × activation`, activation 0…1 over the same 6 dB span, smoothed by attack and release. The bell is
 //!   the static EQ's SVF, so at 0 dB it is exactly the input.
-//! - Transient shaper: three peak envelopes of `max(|L|, |R|)`: fast (0.5 ms rise, 40 ms fall), slow-rising
-//!   (12 ms rise, 40 ms fall), and slow-falling (0.5 ms rise, 300 ms fall). Fast over slow-rising is the attack
-//!   part of a hit; slow-falling over fast is its tail. Each is read in dB, clamped to 0…12 dB, and scaled by its
+//! - Transient shaper: the level is `max(|L|, |R|)` held over the last 12 ms (1 ms block peaks in a 12-block ring),
+//!   so a steady tone down to 40 Hz reads as a flat level and the shaper leaves it alone. Three envelopes follow that
+//!   level: fast (0.5 ms rise, 20 ms fall), slow-rising (12 ms rise, 20 ms fall), and slow-falling (0.5 ms rise,
+//!   300 ms fall). Fast over slow-rising is the attack part of a hit; slow-falling over fast is its tail. Each is read in dB, clamped to 0…12 dB, and scaled by its
 //!   amount (±0.3 attack, ±0.2 sustain at most in the schema), so +30% attack is at most +3.6 dB on a hit's onset.
 //!   Silence (below −100 dBFS) is left alone.
 //!
@@ -68,10 +69,13 @@ const KEY_PEAK_RELEASE_MS: f32 = 30.0;
 const KEY_SMOOTH_MS: f32 = 50.0;
 const BAND_TRANSIENT_MS: f32 = 10.0;
 const TRANSIENT_FAST_ATTACK_MS: f32 = 0.5;
-const TRANSIENT_RELEASE_MS: f32 = 40.0;
+const TRANSIENT_RELEASE_MS: f32 = 20.0;
 const TRANSIENT_SLOW_ATTACK_MS: f32 = 12.0;
 const TRANSIENT_HOLD_RELEASE_MS: f32 = 300.0;
 const TRANSIENT_SILENCE: f32 = 1e-5;
+/// The transient level is held over HOLD_BLOCKS blocks of HOLD_BLOCK frames: 12 × 1 ms.
+const HOLD_BLOCK: u32 = 48;
+const HOLD_BLOCKS: usize = 12;
 const FLOOR: f32 = 1e-12;
 const SPEC_WORDS: usize = 7;
 const METER_FALL_DB: f32 = 0.5;
@@ -358,6 +362,12 @@ struct Slot {
     t_fast_rel: f32,
     t_slow_att: f32,
     t_hold_rel: f32,
+    /// Peak of each of the last 1 ms blocks, the running block, and the held level they give.
+    held: [f32; HOLD_BLOCKS],
+    held_at: usize,
+    block_peak: f32,
+    block_count: u32,
+    level: f32,
 }
 
 impl Slot {
@@ -388,6 +398,11 @@ impl Slot {
             t_fast_rel: 1.0,
             t_slow_att: 1.0,
             t_hold_rel: 1.0,
+            held: [0.0; HOLD_BLOCKS],
+            held_at: 0,
+            block_peak: 0.0,
+            block_count: 0,
+            level: 0.0,
         }
     }
 
@@ -435,6 +450,11 @@ impl Slot {
         self.reading = 0.0;
         self.state = [SvfState::default(); 2];
         self.key_state = SvfState::default();
+        self.held = [0.0; HOLD_BLOCKS];
+        self.held_at = 0;
+        self.block_peak = 0.0;
+        self.block_count = 0;
+        self.level = 0.0;
     }
 
     /// Moves toward `next`. A node that appears fades in from no effect; one that goes away fades out.
@@ -581,7 +601,18 @@ impl Slot {
                 }
             }
             DynKind::Transient => {
-                let level = if channels > 1 { sample[0].abs().max(sample[1].abs()) } else { sample[0].abs() };
+                let peak = if channels > 1 { sample[0].abs().max(sample[1].abs()) } else { sample[0].abs() };
+                self.block_peak = self.block_peak.max(peak);
+                self.block_count += 1;
+                if self.block_count == HOLD_BLOCK {
+                    self.held[self.held_at] = self.block_peak;
+                    self.held_at = (self.held_at + 1) % HOLD_BLOCKS;
+                    self.level = self.held.iter().copied().fold(0.0, f32::max);
+                    self.block_peak = 0.0;
+                    self.block_count = 0;
+                }
+                // A rise shows at once; a fall waits for the hold.
+                let level = self.level.max(self.block_peak);
                 self.env += if level > self.env { self.t_fast_att } else { self.t_fast_rel } * (level - self.env);
                 self.env2 += if level > self.env2 { self.t_slow_att } else { self.t_fast_rel } * (level - self.env2);
                 self.env3 += if level > self.env3 { self.t_fast_att } else { self.t_hold_rel } * (level - self.env3);
@@ -1443,6 +1474,36 @@ mod tests {
         assert!(none.abs() < 1e-4 && none_tail.abs() < 1e-4, "0% is a bypass");
     }
 
+    #[test]
+    fn a_steady_tone_is_left_alone_and_a_spike_is_shaped_without_its_body() {
+        for hz in [40.0_f32, 100.0, 1_000.0] {
+            let tone = sine(hz, 0.5, 96_000);
+            let (_, readings) = run(&[DynSpec::transient(-0.3, 0.0)], &tone, None);
+            let largest = readings[48_000..].iter().map(|reading| reading[3]).fold(0.0_f32, f32::max);
+            assert!(largest < 0.05, "{hz} Hz tone moved by {largest} dB");
+        }
+        // A clap: a 3 ms spike 18 dB over a 60 ms noise body, every 0.5 s.
+        let mut noise = 0x1234_5678_u32;
+        let clap: Vec<f32> = (0..96_000)
+            .map(|frame| {
+                noise ^= noise << 13;
+                noise ^= noise >> 17;
+                noise ^= noise << 5;
+                let value = (noise as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                let local = (frame % 24_000) as f32 / RATE;
+                0.5 * value * if local < 0.003 { 1.0 } else { 0.12 * (-(local - 0.003) / 0.06).exp() }
+            })
+            .collect();
+        let (out, _) = run(&[DynSpec::transient(-0.15, 0.0)], &clap, None);
+        for hit in 1..4 {
+            let at = hit * 24_000;
+            let attack = rms_db(&out[at..at + 480]) - rms_db(&clap[at..at + 480]);
+            let body = rms_db(&out[at + 1_920..at + 6_720]) - rms_db(&clap[at + 1_920..at + 6_720]);
+            assert!(attack < -1.0, "attack {attack}");
+            assert!(body > -0.5, "the body is left mostly alone: {body}");
+        }
+    }
+
     fn table_with(nodes: &[DynSpec], regions: &[(u64, u64, &[DynSpec])]) -> PublishedDynamics {
         let published = PublishedDynamics::empty();
         published.publish(&DynamicsTable::build(&[TrackDynamicsInput { track_index: 0, nodes, regions }]));
@@ -1584,3 +1645,4 @@ mod tests {
         assert_eq!(table.regions[0].specs[4].key, 5);
     }
 }
+
