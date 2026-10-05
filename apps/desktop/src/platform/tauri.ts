@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AnalyzeAudioRequest, CopyProgress, DesktopPlatform, EqCheckResponse, ListedFile, MediaStatus, SpatialCheckResponse, TrackAnalysisBridgeResult } from "./types";
+import type { AnalyzeAudioRequest, CopyProgress, DesktopPlatform, DynamicsCheckResponse, EqCheckResponse, ListedFile, MediaStatus, SpatialCheckResponse, TrackAnalysisBridgeResult } from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -132,6 +132,12 @@ export const tauriPlatform: DesktopPlatform = {
   },
   checkSpatial(projectFile, requests) {
     return invoke<SpatialCheckResponse[]>("spatial_check", { projectFile, requests });
+  },
+  envelopeFrames(projectFile, tracks) {
+    return invoke<Array<{ trackId: string; json: string | null; error: string | null }>>("envelope_frames", { projectFile, tracks });
+  },
+  checkDynamics(projectFile, requests) {
+    return invoke<DynamicsCheckResponse[]>("dynamics_check", { projectFile, requests });
   },
   cancelAnalysis(jobId) {
     return invoke("cancel_analysis", { jobId });

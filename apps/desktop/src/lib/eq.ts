@@ -195,6 +195,7 @@ export function setEqPreview(preview: boolean): void {
   if (preview) {
     useAppStore.getState().setBalance({ preview: false, auditionId: null });
     useAppStore.getState().setSpace({ preview: false, auditionId: null });
+    useAppStore.getState().setDynamics({ preview: false, auditionId: null });
   }
   void logEvent(getPlatform(), "info", "eqplan.preview", preview ? "Playing the EQ candidate." : "Playing the current mix.", { mode: preview ? "candidate" : "current" });
 }
@@ -207,6 +208,7 @@ export function auditionEq(id: string, side: "bypassed" | "recommended"): void {
   if (!same) {
     useAppStore.getState().setBalance({ preview: false, auditionId: null });
     useAppStore.getState().setSpace({ preview: false, auditionId: null });
+    useAppStore.getState().setDynamics({ preview: false, auditionId: null });
   }
   void logEvent(getPlatform(), "info", "eqplan.preview", "Auditioned one EQ filter.", { id, side: same ? "off" : side });
 }
@@ -221,6 +223,7 @@ export function hearEqRow(id: string): void {
   useAppStore.getState().setEq({ auditionId: id, auditionSide: "recommended", preview: false });
   useAppStore.getState().setBalance({ preview: false, auditionId: null });
   useAppStore.getState().setSpace({ preview: false, auditionId: null });
+  useAppStore.getState().setDynamics({ preview: false, auditionId: null });
 }
 
 /** What the EQ panel is playing right now, in words. */

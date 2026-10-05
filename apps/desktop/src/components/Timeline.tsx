@@ -16,11 +16,14 @@ import {
   SECTION_TYPES,
   TRACK_ROLE_LABELS,
   channelLabel,
+  describeDynamicsNode,
   formatBitDepth,
   formatClock,
   formatSampleRate,
+  hasSavedDynamics,
   hasSavedSpatial,
   isMonoTrack,
+  trackDynamicsNodes,
   type ProjectDocument,
   type SectionType,
   type SongSection,
@@ -569,6 +572,7 @@ export function Timeline({
                     {proposed ? <span className="font-mono text-[10px] text-accent">{formatSignedDb(proposed.deltaDb)}</span> : null}
                     <SavedEqBadge document={document} trackId={track.id} />
                     <SavedSpaceBadge document={document} trackId={track.id} />
+                    <SavedDynamicsBadge document={document} trackId={track.id} />
                     <HoverTip className="block min-w-0 flex-1" label={`Gain ${formatDb(gain)}`}>
                       <input
                         type="range"
@@ -1414,6 +1418,24 @@ function SavedSpaceBadge({ document, trackId }: { document: ProjectDocument; tra
   return (
     <HoverTip label={`Saved space: ${parts.join(" · ")}`}>
       <span className="rounded bg-canvas px-1 py-0.5 text-[10px] text-ok">SPACE</span>
+    </HoverTip>
+  );
+}
+
+/** Shows that a track has saved dynamics (compressor, duck, transient, dynamic EQ), and lists them on hover. */
+function SavedDynamicsBadge({ document, trackId }: { document: ProjectDocument; trackId: string }) {
+  if (!hasSavedDynamics(document, trackId)) return null;
+  const own = trackDynamicsNodes(document, trackId).filter((node) => node.enabled);
+  const sections = document.sectionTrackSettings
+    .filter((row) => row.trackId === trackId)
+    .flatMap((row) => row.processing.dynamics.filter((node) => node.enabled).map((node) => ({ node, section: document.sections.find((item) => item.id === row.sectionId)?.name ?? "section" })));
+  const label = [
+    ...own.map((node) => describeDynamicsNode(node, document.tracks)),
+    ...sections.map((item) => `${item.section}: ${describeDynamicsNode(item.node, document.tracks)}`),
+  ].join(" · ");
+  return (
+    <HoverTip label={`Saved dynamics: ${label}`}>
+      <span className="rounded bg-canvas px-1 py-0.5 text-[10px] text-ok">DYN</span>
     </HoverTip>
   );
 }

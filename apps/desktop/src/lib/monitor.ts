@@ -1,9 +1,10 @@
-import type { AudioEngine, TrackEqSetting, TrackSpatialSetting } from "@audiosous/audio-engine";
+import type { AudioEngine, TrackDynamicsSetting, TrackEqSetting, TrackSpatialSetting } from "@audiosous/audio-engine";
+import { dynamicsAudition, dynamicsPlanIsStale, type DynamicsAudition } from "@audiosous/dynamics-planner";
 import { auditionMix, planIsStale } from "@audiosous/balance-planner";
 import { eqAudition, eqPlanIsStale, type EqAudition } from "@audiosous/eq-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
 import { spatialAudition, spatialAuditionAt, spatialPlanIsStale, type SpatialAudition } from "@audiosous/spatial-planner";
-import { idleSpace, type BalanceSession, type EqSession, type SpaceSession } from "../state/app-store";
+import { idleDynamics, idleSpace, type BalanceSession, type DynamicsSession, type EqSession, type SpaceSession } from "../state/app-store";
 
 /**
  * What the engine should play right now: the saved mix, plus whichever plan is being auditioned.
@@ -13,6 +14,8 @@ import { idleSpace, type BalanceSession, type EqSession, type SpaceSession } fro
  *   regions: saved Track × Section gain, then AutoBalance section rows replace theirs
  *   EQ:      saved track and section filters → EQ candidate filters (if any)
  *   spatial: saved pan, width, and section pan/width → Spatial candidate rows (if any)
+ *   dynamics: saved dynamics → Dynamics candidate rows (if any), with level-match offsets on the faders and section
+ *            gain windows of the processed stems while the candidate is auditioned (never saved)
  */
 export interface MonitorState {
   gains: Map<string, number>;
@@ -21,6 +24,8 @@ export interface MonitorState {
   eqAudition: EqAudition;
   spatial: TrackSpatialSetting[];
   spatialAudition: SpatialAudition;
+  dynamics: TrackDynamicsSetting[];
+  dynamicsAudition: DynamicsAudition;
 }
 
 export function balanceAudition(document: ProjectDocument, balance: BalanceSession) {
@@ -48,10 +53,24 @@ export function currentSpatialAudition(document: ProjectDocument, space: SpaceSe
   return spatialAudition(document, space.plan, { mode: space.preview ? "candidate" : "current", focusId: space.auditionId, focusSide: space.auditionSide });
 }
 
-export function monitorState(document: ProjectDocument, balance: BalanceSession, eq: EqSession, space: SpaceSession = idleSpace()): MonitorState {
+/** Saved dynamics always; candidate rows (and their level match) only while a fresh plan is previewed or one row is auditioned. */
+export function currentDynamicsAudition(document: ProjectDocument, dynamics: DynamicsSession): DynamicsAudition {
+  const live =
+    dynamics.plan && dynamics.phase === "ready" && (dynamics.preview || dynamics.auditionId) && !dynamicsPlanIsStale(dynamics.plan, document, dynamics.fingerprints, dynamics.settings);
+  if (!live) return dynamicsAudition(document, null, { mode: "current" });
+  return dynamicsAudition(document, dynamics.plan, {
+    mode: dynamics.preview ? "candidate" : "current",
+    focusId: dynamics.auditionId,
+    focusSide: dynamics.auditionSide,
+    levelMatch: dynamics.levelMatch,
+  });
+}
+
+export function monitorState(document: ProjectDocument, balance: BalanceSession, eq: EqSession, space: SpaceSession = idleSpace(), dynamicsSession: DynamicsSession = idleDynamics()): MonitorState {
   const gainPlan = balanceAudition(document, balance);
   const audition = currentEqAudition(document, eq);
   const spatial = currentSpatialAudition(document, space);
+  const dynamics = currentDynamicsAudition(document, dynamicsSession);
   const trim = audition.trimDb + spatial.trimDb;
   const gainTrim = gainPlan?.trimApplied ? gainPlan.trimDb : 0;
   const gains = new Map<string, number>();
@@ -79,6 +98,19 @@ export function monitorState(document: ProjectDocument, balance: BalanceSession,
       gainDb: region.gainDb + trim,
     });
   }
+  // Level match for the dynamics audition: a whole-song offset adds to the fader and to every section gain window of
+  // that stem (a window replaces the fader); a section offset adds to that section's window, created if needed.
+  const wholeSong = new Map<string, number>();
+  for (const item of dynamics.compensation) if (item.sectionId === null) wholeSong.set(item.trackId, (wholeSong.get(item.trackId) ?? 0) + item.gainDb);
+  for (const [key, region] of regions) regions.set(key, { ...region, gainDb: region.gainDb + (wholeSong.get(region.trackId) ?? 0) });
+  for (const item of dynamics.compensation) {
+    if (item.sectionId === null) continue;
+    const key = `${item.trackId}:${item.sectionId}`;
+    const region = regions.get(key);
+    const base = region ? region.gainDb : (gains.get(item.trackId) ?? 0) + (wholeSong.get(item.trackId) ?? 0);
+    regions.set(key, { trackId: item.trackId, startSeconds: item.startSeconds, endSeconds: item.endSeconds, gainDb: base + item.gainDb });
+  }
+  for (const [trackId, offset] of wholeSong) gains.set(trackId, (gains.get(trackId) ?? 0) + offset);
   const eqTracks: TrackEqSetting[] = document.tracks
     .map((track) => ({
       trackId: track.id,
@@ -96,7 +128,16 @@ export function monitorState(document: ProjectDocument, balance: BalanceSession,
       .filter((region) => region.trackId === track.trackId)
       .map((region) => ({ startSeconds: region.startSeconds, endSeconds: region.endSeconds, pan: region.pan, width: region.width })),
   }));
-  return { gains, gainRegions: [...regions.values()], eq: eqTracks, eqAudition: audition, spatial: spatialTracks, spatialAudition: spatial };
+  return {
+    gains,
+    gainRegions: [...regions.values()],
+    eq: eqTracks,
+    eqAudition: audition,
+    spatial: spatialTracks,
+    spatialAudition: spatial,
+    dynamics: dynamics.tracks,
+    dynamicsAudition: dynamics,
+  };
 }
 
 /** Gain at `seconds` for engines that cannot schedule section windows. */
@@ -123,9 +164,10 @@ export function publishMonitor(engine: AudioEngine, document: ProjectDocument, s
   engine.setGainRegions?.(native ? state.gainRegions : []);
   engine.setTrackEq?.(state.eq);
   if (spatial) engine.setTrackSpatial!(state.spatial);
+  if (native) engine.setTrackDynamics?.(state.dynamics);
 }
 
 /** A key that changes whenever anything the monitor sends would change. */
 export function monitorKey(state: MonitorState): string {
-  return JSON.stringify([[...state.gains.entries()], state.gainRegions, state.eq, state.spatial]);
+  return JSON.stringify([[...state.gains.entries()], state.gainRegions, state.eq, state.spatial, state.dynamics]);
 }

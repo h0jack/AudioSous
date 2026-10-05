@@ -1,6 +1,7 @@
 import type { AutoBalanceSettings, MixPlan, SourceFingerprint } from "@audiosous/balance-planner";
 import type { EqPlan, EqSettings } from "@audiosous/eq-planner";
 import type { SpatialPlan, SpatialSettings } from "@audiosous/spatial-planner";
+import type { DynamicsPlan, DynamicsSettings } from "@audiosous/dynamics-planner";
 import type { ImportWarning, ProjectDocument } from "@audiosous/project-model";
 import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
@@ -105,7 +106,44 @@ export function idleSpace(): SpaceSession {
   };
 }
 
-export type PlanTab = "gain" | "eq" | "space";
+export interface DynamicsSession {
+  open: boolean;
+  generation: number;
+  phase: "idle" | "analyzing" | "planning" | "verifying" | "ready" | "failed";
+  progress: string | null;
+  plan: DynamicsPlan | null;
+  settings: DynamicsSettings;
+  /** Whole-plan A/B: false plays Current, true plays the Dynamics Candidate. */
+  preview: boolean;
+  auditionId: string | null;
+  auditionSide: "bypassed" | "recommended";
+  /** Row whose detail and evidence are open. Selection is not an edit. */
+  selectedId: string | null;
+  /** Raise each processed stem by the level its processing is predicted to remove, in the audition only. */
+  levelMatch: boolean;
+  error: string | null;
+  fingerprints: SourceFingerprint[];
+}
+
+export function idleDynamics(): DynamicsSession {
+  return {
+    open: false,
+    generation: 0,
+    phase: "idle",
+    progress: null,
+    plan: null,
+    settings: { strength: "normal" },
+    preview: false,
+    auditionId: null,
+    auditionSide: "recommended",
+    selectedId: null,
+    levelMatch: true,
+    error: null,
+    fingerprints: [],
+  };
+}
+
+export type PlanTab = "gain" | "eq" | "space" | "dynamics";
 
 export type Screen = "welcome" | "import" | "project";
 export type Workspace = "mix" | "analysis";
@@ -129,6 +167,7 @@ interface AppState {
   balance: BalanceSession;
   eq: EqSession;
   space: SpaceSession;
+  dynamics: DynamicsSession;
   planTab: PlanTab;
   goWelcome: () => void;
   setWorkspace: (workspace: Workspace) => void;
@@ -145,6 +184,7 @@ interface AppState {
   setBalance: (patch: Partial<BalanceSession>) => void;
   setEq: (patch: Partial<EqSession>) => void;
   setSpace: (patch: Partial<SpaceSession>) => void;
+  setDynamics: (patch: Partial<DynamicsSession>) => void;
   setPlanTab: (tab: PlanTab) => void;
 }
 
@@ -162,8 +202,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   balance: idleBalance(),
   eq: idleEq(),
   space: idleSpace(),
+  dynamics: idleDynamics(),
   planTab: "gain",
-  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace() }),
+  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics() }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
@@ -181,6 +222,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       balance: idleBalance(),
       eq: idleEq(),
       space: idleSpace(),
+      dynamics: idleDynamics(),
       planTab: "gain",
     }),
   replaceDocument: (document, dirty, edit) => {
@@ -218,5 +260,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setBalance: (patch) => set({ balance: { ...get().balance, ...patch } }),
   setEq: (patch) => set({ eq: { ...get().eq, ...patch } }),
   setSpace: (patch) => set({ space: { ...get().space, ...patch } }),
+  setDynamics: (patch) => set({ dynamics: { ...get().dynamics, ...patch } }),
   setPlanTab: (planTab) => set({ planTab }),
 }));

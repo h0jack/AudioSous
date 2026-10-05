@@ -33,6 +33,7 @@ export {
   dynamicsWarnings,
   editDynamicsRecommendation,
   engineDynamics,
+  engineDynamicsNode,
   evaluateDynamics,
   formatHz,
   normalizeProcessing,

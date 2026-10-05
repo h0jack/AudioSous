@@ -41,6 +41,20 @@ export interface TrackSpatialSetting {
   regions: Array<{ startSeconds: number; endSeconds: number; pan: number; width: number }>;
 }
 
+/** A dynamics node as the native engine takes it. Keys name tracks; a key that is not loaded leaves the node inert. */
+export type EngineDynamicsNode =
+  | { type: "compressor"; thresholdDb: number; ratio: number; attackMs: number; releaseMs: number; kneeDb: number; makeupDb: number }
+  | { type: "ducking"; keyTrackId: string; keyDetector: "transient" | "smooth"; thresholdDb: number; rangeDb: number; attackMs: number; releaseMs: number }
+  | { type: "transient"; attack: number; sustain: number }
+  | { type: "dynamic-eq"; frequencyHz: number; q: number; keyTrackId: string | null; keyDetector: "transient" | "smooth"; thresholdDb: number; rangeDb: number; attackMs: number; releaseMs: number };
+
+/** Dynamics per track: whole-song nodes, then extra nodes inside section windows. */
+export interface TrackDynamicsSetting {
+  trackId: string;
+  nodes: EngineDynamicsNode[];
+  regions: Array<{ startSeconds: number; endSeconds: number; nodes: EngineDynamicsNode[] }>;
+}
+
 /**
  * One transport clock for every stem.
  * Pan is -1 (full left) through 0 (center) to +1 (right).
@@ -74,6 +88,11 @@ export interface AudioEngine {
    * and follow `setTrackPan` only.
    */
   setTrackSpatial?(tracks: TrackSpatialSetting[]): void;
+  /**
+   * Dynamics per track. Replaces every track's dynamics; a track not listed runs without. The native engine runs them
+   * after EQ and before width, pan, and gain, fading nodes in and out over 30 ms; other engines may ignore this.
+   */
+  setTrackDynamics?(tracks: TrackDynamicsSetting[]): void;
   getCurrentTime(): number;
   getDuration(): number;
   dispose(): void;

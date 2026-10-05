@@ -42,7 +42,14 @@ export type LogEvent =
   | "spatialplan.preview"
   | "spatialplan.apply"
   | "spatialplan.cancel"
-  | "spatialplan.stale";
+  | "spatialplan.stale"
+  | "dynamicsplan.start"
+  | "dynamicsplan.complete"
+  | "dynamicsplan.verify"
+  | "dynamicsplan.preview"
+  | "dynamicsplan.apply"
+  | "dynamicsplan.cancel"
+  | "dynamicsplan.stale";
 
 export async function logEvent(
   platform: DesktopPlatform,

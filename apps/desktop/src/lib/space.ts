@@ -202,6 +202,7 @@ export function setSpacePreview(preview: boolean): void {
   if (preview) {
     useAppStore.getState().setBalance({ preview: false, auditionId: null });
     useAppStore.getState().setEq({ preview: false, auditionId: null });
+    useAppStore.getState().setDynamics({ preview: false, auditionId: null });
   }
   void logEvent(getPlatform(), "info", "spatialplan.preview", preview ? "Playing the Spatial Candidate." : "Playing the current mix.", { mode: preview ? "candidate" : "current" });
 }
@@ -214,6 +215,7 @@ export function auditionSpace(id: string, side: "bypassed" | "recommended"): voi
   if (!same) {
     useAppStore.getState().setBalance({ preview: false, auditionId: null });
     useAppStore.getState().setEq({ preview: false, auditionId: null });
+    useAppStore.getState().setDynamics({ preview: false, auditionId: null });
   }
   void logEvent(getPlatform(), "info", "spatialplan.preview", "Auditioned one spatial row.", { id, side: same ? "off" : side });
 }
@@ -231,6 +233,7 @@ export function hearSpaceRow(id: string): void {
   useAppStore.getState().setSpace({ auditionId: id, auditionSide: "recommended", preview: false });
   useAppStore.getState().setBalance({ preview: false, auditionId: null });
   useAppStore.getState().setEq({ preview: false, auditionId: null });
+  useAppStore.getState().setDynamics({ preview: false, auditionId: null });
 }
 
 /** What the Space panel is playing right now, in words. */

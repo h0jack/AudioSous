@@ -127,6 +127,12 @@ export const browserPlatform: DesktopPlatform = {
   async checkSpatial() {
     return [];
   },
+  async envelopeFrames() {
+    return [];
+  },
+  async checkDynamics() {
+    return [];
+  },
   async measureWaveform() {
     throw new Error("Waveform measurement in the browser uses the JavaScript measurer.");
   },

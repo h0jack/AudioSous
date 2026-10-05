@@ -1,6 +1,7 @@
 mod analysis;
 mod audio_host;
 mod bundle;
+mod dynamics_check;
 mod eq_check;
 mod space_check;
 mod waveform;
@@ -359,6 +360,69 @@ fn audio_set_spatial(host: tauri::State<'_, audio_host::AudioHost>, tracks: Vec<
     );
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioDynamicsRegion {
+    start_seconds: f64,
+    end_seconds: f64,
+    nodes: Vec<audiosous_audio::DynamicsNodeSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioTrackDynamics {
+    track_id: String,
+    nodes: Vec<audiosous_audio::DynamicsNodeSpec>,
+    regions: Vec<AudioDynamicsRegion>,
+}
+
+#[tauri::command]
+fn audio_set_dynamics(host: tauri::State<'_, audio_host::AudioHost>, tracks: Vec<AudioTrackDynamics>) {
+    host.engine.set_dynamics(
+        tracks
+            .into_iter()
+            .map(|track| audiosous_audio::TrackDynamics {
+                track_id: track.track_id,
+                nodes: track.nodes,
+                regions: track
+                    .regions
+                    .into_iter()
+                    .map(|region| audiosous_audio::TrackDynamicsRegion {
+                        start_seconds: region.start_seconds,
+                        end_seconds: region.end_seconds,
+                        nodes: region.nodes,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    );
+}
+
+#[tauri::command]
+fn audio_dynamics_meter(host: tauri::State<'_, audio_host::AudioHost>) -> Vec<audiosous_audio::DynamicsMeter> {
+    host.engine.dynamics_meter()
+}
+
+#[tauri::command]
+async fn envelope_frames(
+    project_file: String,
+    tracks: Vec<dynamics_check::EnvelopeFramesRequest>,
+) -> Result<Vec<dynamics_check::EnvelopeFramesResponse>, String> {
+    tauri::async_runtime::spawn_blocking(move || dynamics_check::envelope_frames(&project_file, tracks))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn dynamics_check(
+    project_file: String,
+    requests: Vec<dynamics_check::DynamicsCheckRequest>,
+) -> Result<Vec<dynamics_check::DynamicsCheckResponse>, String> {
+    tauri::async_runtime::spawn_blocking(move || dynamics_check::check(&project_file, requests))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 async fn stereo_frames(
     project_file: String,
@@ -455,6 +519,10 @@ pub fn run() {
             audio_set_gain_regions,
             audio_set_eq,
             audio_set_spatial,
+            audio_set_dynamics,
+            audio_dynamics_meter,
+            envelope_frames,
+            dynamics_check,
             eq_check,
             eq_band_frames,
             stereo_frames,

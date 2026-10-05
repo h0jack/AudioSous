@@ -84,6 +84,55 @@ export interface SpatialCheckResponse {
   error: string | null;
 }
 
+export type DynamicsCheckNode =
+  | { type: "compressor"; thresholdDb: number; ratio: number; attackMs: number; releaseMs: number; kneeDb: number; makeupDb: number }
+  | { type: "ducking"; keyTrackId: string; keyDetector: "transient" | "smooth"; thresholdDb: number; rangeDb: number; attackMs: number; releaseMs: number }
+  | { type: "transient"; attack: number; sustain: number }
+  | { type: "dynamic-eq"; frequencyHz: number; q: number; keyTrackId: string | null; keyDetector: "transient" | "smooth"; thresholdDb: number; rangeDb: number; attackMs: number; releaseMs: number };
+
+export interface DynamicsCheckRequest {
+  id: string;
+  trackId: string;
+  relativePath: string;
+  keyTrackId: string | null;
+  keyRelativePath: string | null;
+  windows: Array<[number, number]>;
+  savedEq: EqCheckFilter[];
+  before: DynamicsCheckNode[];
+  after: DynamicsCheckNode[];
+  kind: "compressor" | "ducking" | "transient" | "dynamic-eq";
+  band: [number, number] | null;
+}
+
+export interface LevelStatsDto {
+  rmsDb: number;
+  peakDbfs: number;
+  crestDb: number;
+  p10Db: number;
+  p50Db: number;
+  p90Db: number;
+  transientDb: number | null;
+  bandOnDb: number | null;
+  bandOffDb: number | null;
+  levelOnDb: number | null;
+  levelOffDb: number | null;
+}
+
+export interface DynamicsCheckResponse {
+  id: string;
+  result: {
+    before: LevelStatsDto;
+    after: LevelStatsDto;
+    reductionP50Db: number;
+    reductionP95Db: number;
+    reductionMaxDb: number;
+    keyOnShare: number | null;
+    recoveredShare: number | null;
+    seconds: number;
+  } | null;
+  error: string | null;
+}
+
 export interface DesktopPlatform {
   kind: "tauri" | "browser";
   pickAudioFiles(): Promise<ListedFile[] | null>;
@@ -117,6 +166,10 @@ export interface DesktopPlatform {
   stereoFrames(projectFile: string, tracks: Array<{ trackId: string; relativePath: string }>): Promise<Array<{ trackId: string; json: string | null; error: string | null }>>;
   /** Runs candidate pan/width through the native spatial stage on the playback proxies and measures the result. Desktop only. */
   checkSpatial(projectFile: string, requests: SpatialCheckRequest[]): Promise<SpatialCheckResponse[]>;
+  /** Level envelopes (10 ms RMS, peak, low band) measured from the playback proxies for dynamics planning, cached per track. Desktop only. */
+  envelopeFrames(projectFile: string, tracks: Array<{ trackId: string; relativePath: string }>): Promise<Array<{ trackId: string; json: string | null; error: string | null }>>;
+  /** Runs candidate dynamics through the native processors on the playback proxies and measures the result. Desktop only. */
+  checkDynamics(projectFile: string, requests: DynamicsCheckRequest[]): Promise<DynamicsCheckResponse[]>;
   measureWaveform(projectFile: string, relativePath: string, trackId: string, onProgress: (ratio: number) => void): Promise<void>;
   cancelWaveform(): Promise<void>;
   hasPreview(): boolean;

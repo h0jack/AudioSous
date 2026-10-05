@@ -24,8 +24,18 @@ export interface NativeEngineStatus {
   message: string;
 }
 
+/** Gain reduction on one track right now, dB: reductions ≥ 0, transient as |gain|. */
+export interface DynamicsMeterReading {
+  trackId: string;
+  compressorDb: number;
+  duckingDb: number;
+  dynamicEqDb: number;
+  transientDb: number;
+}
+
 export interface NativeAudioEngine extends AudioEngine {
   poll(): Promise<NativeEngineStatus>;
+  dynamicsMeter(): Promise<DynamicsMeterReading[]>;
 }
 
 export function audioEngineKind(): Promise<"native" | "legacy"> {
@@ -112,6 +122,12 @@ export function createNativeAudioEngine(projectFile: string): NativeAudioEngine 
         console.warn("audio_set_spatial failed; falling back to pan only", error);
         for (const track of tracks) void invoke("audio_set_track", { track: { id: track.trackId, gainDb: null, pan: track.pan, muted: null, solo: null } });
       });
+    },
+    setTrackDynamics(tracks) {
+      void invoke("audio_set_dynamics", { tracks });
+    },
+    dynamicsMeter() {
+      return invoke<DynamicsMeterReading[]>("audio_dynamics_meter");
     },
     getCurrentTime() {
       return position;

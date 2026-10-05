@@ -373,9 +373,9 @@ export function setDynamicsRecommendationStatus(plan: DynamicsPlan, id: string, 
 
 /** A partial edit of one row's processing. The type and the key track cannot be changed into another kind. */
 export type DynamicsPatch = Partial<Omit<CompressorProcessing, "type">> &
-  Partial<Omit<DuckingProcessing, "type">> &
+  Partial<Omit<DuckingProcessing, "type" | "keyTrackId">> &
   Partial<Omit<TransientProcessing, "type">> &
-  Partial<Omit<DynamicEqProcessing, "type" | "filter">> & { frequencyHz?: number; q?: number };
+  Partial<Omit<DynamicEqProcessing, "type" | "filter" | "keyTrackId">> & { frequencyHz?: number; q?: number; keyTrackId?: string | null };
 
 /** Clamps a processing value to the stored bounds and rounds it the way the editor shows it. */
 export function normalizeProcessing(processing: DynamicsProcessing): DynamicsProcessing {
@@ -974,7 +974,7 @@ export function dynamicsAudition(document: ProjectDocument, plan: DynamicsPlan |
 export function engineDynamics(document: ProjectDocument): EngineTrackDynamics[] {
   const out: EngineTrackDynamics[] = [];
   for (const track of document.tracks) {
-    const runnable = (nodes: DynamicsNode[]) => orderDynamics(nodes.filter((node) => dynamicsNodeRunnable(document, track.id, node))).map(engineNode);
+    const runnable = (nodes: DynamicsNode[]) => orderDynamics(nodes.filter((node) => dynamicsNodeRunnable(document, track.id, node))).map(engineDynamicsNode);
     const nodes = runnable(trackDynamicsNodes(document, track.id));
     const regions = document.sections
       .map((section) => ({ startSeconds: section.startTime, endSeconds: section.endTime, nodes: runnable(sectionDynamicsNodes(document, track.id, section.id)) }))
@@ -984,7 +984,8 @@ export function engineDynamics(document: ProjectDocument): EngineTrackDynamics[]
   return out;
 }
 
-function engineNode(node: DynamicsNode): EngineDynamicsNode {
+/** One saved node in the engine's form. */
+export function engineDynamicsNode(node: DynamicsNode): EngineDynamicsNode {
   switch (node.type) {
     case "compressor":
       return { type: "compressor", thresholdDb: node.thresholdDb, ratio: node.ratio, attackMs: node.attackMs, releaseMs: node.releaseMs, kneeDb: node.kneeDb, makeupDb: node.makeupDb };

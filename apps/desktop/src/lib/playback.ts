@@ -7,7 +7,7 @@ import type { DesktopPlatform } from "../platform/types";
 import { refreshLegacyMonitor } from "./autobalance";
 import { monitorKey, monitorState, publishMonitor } from "./monitor";
 import { logEvent } from "./log";
-import { audioEngineKind, createNativeAudioEngine, type NativeEngineStatus } from "./native-playback";
+import { audioEngineKind, createNativeAudioEngine, type DynamicsMeterReading, type NativeEngineStatus } from "./native-playback";
 import { useAppStore } from "../state/app-store";
 import { createWebAudioOutput } from "./web-audio-output";
 
@@ -212,7 +212,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
   /** Sends gain, section gain, EQ, and pan/width only when what the engine would hear changed. */
   function publish(engine: RunningEngine, song: ProjectDocument, native: boolean): void {
     const state = useAppStore.getState();
-    const monitor = monitorState(song, state.balance, state.eq, state.space);
+    const monitor = monitorState(song, state.balance, state.eq, state.space, state.dynamics);
     const key = `${native}:${monitorKey(monitor)}:${song.tracks.map((track) => `${track.muted}:${track.solo}`).join("|")}`;
     if (key === publishedKey.current) return;
     publishedKey.current = key;
@@ -277,6 +277,12 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     setPlaying(false);
     setPlayhead(0);
     commitPlayhead(0);
+  }
+
+  /** Gain reduction per track from the native engine right now; empty on engines without dynamics. */
+  function dynamicsMeter(): Promise<DynamicsMeterReading[]> {
+    const engine = engineRef.current as (RunningEngine & { dynamicsMeter?: () => Promise<DynamicsMeterReading[]> }) | null;
+    return engine?.dynamicsMeter ? engine.dynamicsMeter().catch(() => []) : Promise.resolve([]);
   }
 
   function seek(seconds: number, options?: { log?: boolean }) {
@@ -360,5 +366,6 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     stop,
     seek,
     setLoopEnabled,
+    dynamicsMeter,
   };
 }
