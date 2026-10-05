@@ -232,6 +232,61 @@ export function spreadOf(levels: SustainedLevels, swingDb: number): SpreadReadin
   return { windows: levels.levels.length, p10, p50, p90, spreadDb: p90 - p10, swingRate: steps > 0 ? swings / steps : 0 };
 }
 
+export interface SelfSimilarity {
+  /**
+   * The level's mean difference from itself one lag earlier, at the lag that repeats best (0.4–8 s), divided by the
+   * same difference at a typical lag. Near 0: the level repeats exactly with the music (a stutter, a gated or pumped
+   * pad, a sequenced bass line). Near 1: it does not repeat at all, like uneven playing.
+   */
+  ratio: number;
+  /** The lag that repeats best, seconds. */
+  lagSeconds: number;
+}
+
+/** Half-width of the self-similarity smoothing: 20 frames each side, a 400 ms moving average. */
+const SMOOTH_HALF = 20;
+
+/**
+ * Self-similarity of a stem's sustained level over [start, end): its 400 ms moving average at 10 ms resolution,
+ * so a rhythmic texture inside a beat does not hide uneven level from note to note. Lags step
+ * 20 ms and every 4th frame is compared, which keeps a 6-minute song to a few million comparisons. Only frames where
+ * the stem plays (by `reference`) count. Tempo-free: a bar of any length shows up as its own lag.
+ */
+export function selfSimilarity(series: ArrayLike<number>, reference: ArrayLike<number>, loudestCellDb: number, start: number, end: number): SelfSimilarity {
+  const count = Math.max(0, end - start);
+  const level = new Float32Array(count);
+  const playing = new Uint8Array(count);
+  // Running sums give the 400 ms moving average (the sustained-level timescale) in one pass.
+  const power = new Float64Array(count + 1);
+  const referencePower = new Float64Array(count + 1);
+  for (let index = 0; index < count; index += 1) {
+    power[index + 1] = power[index]! + 10 ** (series[start + index]! / 10);
+    referencePower[index + 1] = referencePower[index]! + 10 ** (reference[start + index]! / 10);
+  }
+  for (let index = 0; index < count; index += 1) {
+    const low = Math.max(0, index - SMOOTH_HALF);
+    const high = Math.min(count, index + SMOOTH_HALF + 1);
+    level[index] = 10 * Math.log10(Math.max((power[high]! - power[low]!) / (high - low), 1e-20));
+    const referenceDb = 10 * Math.log10(Math.max((referencePower[high]! - referencePower[low]!) / (high - low), 1e-20));
+    playing[index] = referenceDb > -60 && referenceDb >= loudestCellDb - 30 ? 1 : 0;
+  }
+  const differences: Array<{ lag: number; value: number }> = [];
+  for (let lag = 40; lag <= Math.min(800, Math.floor(count / 3)); lag += 2) {
+    let total = 0;
+    let used = 0;
+    for (let index = lag; index < count; index += 4) {
+      if (playing[index] !== 1 || playing[index - lag] !== 1) continue;
+      total += Math.min(15, Math.abs(level[index]! - level[index - lag]!));
+      used += 1;
+    }
+    if (used >= 50) differences.push({ lag, value: total / used });
+  }
+  if (differences.length < 5) return { ratio: 1, lagSeconds: 0 };
+  const best = differences.reduce((left, right) => (right.value < left.value - 1e-9 ? right : left));
+  const typical = percentile(differences.map((item) => item.value), 0.5);
+  return { ratio: typical > 0 ? best.value / typical : 1, lagSeconds: best.lag * HOP_SECONDS };
+}
+
 /**
  * Onsets in a 10 ms peak series: a frame 9 dB over the quietest of the previous three, within 40 dB of the stem's
  * loudest peak and above −50 dBFS, at least 60 ms after the previous onset.

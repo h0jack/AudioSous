@@ -37,6 +37,8 @@ import {
   onsetsOf,
   percentile,
   segmentAt,
+  selfSimilarity,
+  type SelfSimilarity,
   spreadOf,
   sustainedLevels,
   transientRatioDb,
@@ -75,8 +77,10 @@ import {
   DYNAMICS_LIMITS_BY_STRENGTH,
   DYNAMICS_PLAN_VERSION,
   DYNAMICS_PLANNER_VERSION,
+  MIN_AHEAD_SHARE,
   MIN_COLLISION_SHARE,
   MIN_FREE_SHARE,
+  MIN_IRREGULARITY,
   MIN_SWING_RATE,
   MIN_WINDOWS,
   SPREAD_THRESHOLD_DB,
@@ -147,6 +151,8 @@ interface Context {
   interactions: DynamicsInteraction[];
   readings: DynamicsReading[];
   notes: string[];
+  /** Protected stem name → stems that mask it persistently (one note each, written after planning). */
+  staticMasking: Map<string, string[]>;
   trace: (stage: string, detail: unknown) => void;
 }
 
@@ -187,6 +193,7 @@ export function planDynamics(input: PlanDynamicsInput): DynamicsPlan {
     interactions: [],
     readings: [],
     notes: [],
+    staticMasking: new Map(),
     trace: input.trace ?? (() => {}),
   };
   for (const [trackId, envelope] of Object.entries(input.envelopes)) {
@@ -203,6 +210,10 @@ export function planDynamics(input: PlanDynamicsInput): DynamicsPlan {
   rebuildHeard(ctx, ctx.rows);
   planCollisions(ctx);
   planMasking(ctx);
+  for (const [protectedName, maskers] of ctx.staticMasking) {
+    const list = maskers.length === 1 ? maskers[0]! : `${maskers.slice(0, -1).join(", ")} and ${maskers[maskers.length - 1]}`;
+    ctx.notes.push(`${list} ${maskers.length === 1 ? "masks" : "mask"} ${protectedName} most of the time they play: static EQ (the EQ tab) is the right class of tool there, so no dynamic EQ was proposed.`);
+  }
   ctx.trace("pass2", ctx.rows.map(summaryOf));
   limitPerTrack(ctx);
 
@@ -369,6 +380,13 @@ interface LevelScope {
   scope: AnalysisScope;
   reading: SpreadReading;
   threshold: number;
+  minSwing: number;
+  /** The swing does not repeat with the music. */
+  irregular: boolean;
+  pattern: SelfSimilarity | null;
+  /** For a Supporting or Background part: share of windows its level rises ahead of the stem it should sit under. Null for Primary and Focal. */
+  aheadShare: number | null;
+  aheadOf: string | null;
   problem: boolean;
   severity: number;
   playingFrames: number;
@@ -376,6 +394,46 @@ interface LevelScope {
 
 /** Single drums: their sustained level is not what a compressor is for here; attack/body is the transient planner's. */
 const SINGLE_DRUMS = new Set(["kick", "snare-clap", "hi-hat", "percussion"]);
+
+/**
+ * Where a Supporting or Background stem's sustained level comes within its tier's margin of the loudest Primary or
+ * Focal stem playing at the same moment. Null when the stem leads, or nothing leads it.
+ */
+function aheadOfHierarchy(ctx: Context, env: EnvelopeTrack, scope: AnalysisScope, start: number, end: number): { share: number; leader: string } | null {
+  const tier = tierOf(ctx, env.track, scope).tier;
+  if (tier === "primary" || tier === "focal") return null;
+  const margin = tier === "background" ? 9 : 2.5;
+  const own = sustainedLevels(ctx.heard.get(env.track.id)!.rms, env.rms, env.loudestCellDb, start, end);
+  const leaders = [...ctx.model.tracks.values()].filter((other) => other !== env && ["primary", "focal"].includes(tierOf(ctx, other.track, scope).tier));
+  if (leaders.length === 0 || own.levels.length === 0) return null;
+  const leaderLevels = leaders.map((other) => {
+    const levels = sustainedLevels(ctx.heard.get(other.track.id)!.rms, other.rms, other.loudestCellDb, start, end);
+    return { name: other.track.name, at: new Map(levels.starts.map((at, index) => [at, levels.levels[index]!])) };
+  });
+  let ahead = 0;
+  let counted = 0;
+  const hits = new Map<string, number>();
+  own.starts.forEach((at, index) => {
+    let reference = -Infinity;
+    let leader = "";
+    for (const item of leaderLevels) {
+      const level = item.at.get(at);
+      if (level !== undefined && level > reference) {
+        reference = level;
+        leader = item.name;
+      }
+    }
+    if (!Number.isFinite(reference)) return;
+    counted += 1;
+    if (own.levels[index]! > reference - margin) {
+      ahead += 1;
+      hits.set(leader, (hits.get(leader) ?? 0) + 1);
+    }
+  });
+  if (counted === 0) return null;
+  const leader = [...hits.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? leaderLevels[0]!.name;
+  return { share: ahead / counted, leader };
+}
 
 function planLevel(ctx: Context, env: EnvelopeTrack): void {
   const heard = ctx.heard.get(env.track.id)!;
@@ -389,9 +447,17 @@ function planLevel(ctx: Context, env: EnvelopeTrack): void {
     if (words.has("control")) threshold -= 1.5;
     if (words.has("natural")) threshold += 3;
     const reading = spreadOf(sustainedLevels(heard.rms, env.rms, env.loudestCellDb, start, end), SWING_DB);
-    const problem = reading.windows >= MIN_WINDOWS && reading.spreadDb >= threshold && reading.swingRate >= MIN_SWING_RATE;
+    // Asked for control, phrase-like movement counts too: half the usual share of swings is enough.
+    const minSwing = words.has("control") ? MIN_SWING_RATE / 2 : MIN_SWING_RATE;
+    const swings = reading.windows >= MIN_WINDOWS && reading.spreadDb >= threshold && reading.swingRate >= minSwing;
+    // Self-similarity only for stems that swing: it is the expensive test.
+    const pattern = swings ? selfSimilarity(heard.rms, env.rms, env.loudestCellDb, start, end) : null;
+    const irregular = pattern !== null && pattern.ratio >= MIN_IRREGULARITY;
+    const unstable = swings && irregular;
+    const ahead = unstable ? aheadOfHierarchy(ctx, env, scope, start, end) : null;
+    const problem = unstable && (ahead === null || ahead.share >= MIN_AHEAD_SHARE);
     const severity = problem ? clamp((reading.spreadDb - threshold) / 4 + 0.45, 0, 1) * clamp(reading.swingRate / 0.4, 0.6, 1) : 0;
-    return { scope, reading, threshold, problem, severity, playingFrames: reading.windows * 40 };
+    return { scope, reading, threshold, minSwing, irregular, pattern, aheadShare: ahead?.share ?? null, aheadOf: ahead?.leader ?? null, problem, severity, playingFrames: reading.windows * 40 };
   };
   const song = read(ctx.scopes[0]!);
   const parts = ctx.partition.length > 1 || ctx.partition[0]!.key !== "song" ? ctx.partition.map(read) : [song];
@@ -408,10 +474,16 @@ function planLevel(ctx: Context, env: EnvelopeTrack): void {
       onsetsPerSecond: 0,
       classification: part.problem ? "level-inconsistency" : part.reading.spreadDb >= part.threshold ? "phrased" : "steady",
       explanation: part.problem
-        ? `Sustained level swings ${part.reading.spreadDb.toFixed(1)} dB, ${Math.round(part.reading.swingRate * 100)}% of neighbouring windows jumping more than ${SWING_DB} dB.`
-        : part.reading.spreadDb >= part.threshold
-          ? `Sustained level spreads ${part.reading.spreadDb.toFixed(1)} dB but moves like phrasing (${Math.round(part.reading.swingRate * 100)}% swings), so it is left dynamic.`
-          : `Sustained level holds within ${part.reading.spreadDb.toFixed(1)} dB.`,
+        ? `Sustained level swings ${part.reading.spreadDb.toFixed(1)} dB, ${Math.round(part.reading.swingRate * 100)}% of neighbouring windows jumping more than ${SWING_DB} dB, without a repeating pattern.`
+        : part.reading.spreadDb < part.threshold
+          ? `Sustained level holds within ${part.reading.spreadDb.toFixed(1)} dB.`
+          : part.reading.swingRate < part.minSwing || part.pattern === null
+            ? `Sustained level spreads ${part.reading.spreadDb.toFixed(1)} dB but moves like phrasing (${Math.round(part.reading.swingRate * 100)}% of neighbouring windows jump), so it is left dynamic.`
+          : !part.irregular
+            ? `Sustained level spreads ${part.reading.spreadDb.toFixed(1)} dB, but the level repeats itself every ${(part.pattern?.lagSeconds ?? 0).toFixed(2)} s (it differs from itself there only ${Math.round((part.pattern?.ratio ?? 0) * 100)}% as much as at other spacings): a pattern in the arrangement, left as it is.`
+            : part.aheadShare !== null && part.aheadShare < MIN_AHEAD_SHARE
+              ? `Sustained level swings ${part.reading.spreadDb.toFixed(1)} dB but stays under ${part.aheadOf ?? "the lead"} even at its loudest, so the hierarchy holds.`
+              : `Sustained level spreads ${part.reading.spreadDb.toFixed(1)} dB but moves like phrasing (${Math.round(part.reading.swingRate * 100)}% swings), so it is left dynamic.`,
     });
   }
   const savedGlobal = trackDynamicsNodes(ctx.document, env.track.id).find((node): node is CompressorNode => node.type === "compressor" && node.enabled) ?? null;
@@ -429,7 +501,8 @@ function planLevel(ctx: Context, env: EnvelopeTrack): void {
     .filter((part) => part.problem && part.scope.marked && part.severity >= 0.5 && part.reading.windows >= 15 && part.reading.spreadDb >= part.threshold + 1)
     .sort((left, right) => right.severity - left.severity);
   if (strong.length === 0 || calm.length === 0) {
-    if (song.problem && covered >= 0.5 * total) proposeCompressor(ctx, env, ctx.scopes[0]!, song, savedGlobal, problemNames);
+    // Uneven across the song with no section clearly calm: one compressor for the song, not a patchwork.
+    if (song.problem) proposeCompressor(ctx, env, ctx.scopes[0]!, song, savedGlobal, problemNames);
     return;
   }
   if (savedGlobal) {
@@ -550,6 +623,8 @@ function proposeCompressor(ctx: Context, env: EnvelopeTrack, scope: AnalysisScop
         `Attack ${processing.attackMs} ms lets each note's start through; release ${processing.releaseMs} ms ${intervals.length >= 8 ? "is about half the time between notes, so it recovers before the next" : "suits a sustained part"}. Makeup is 0 dB: the stem gets ${formatSignedDb(result.levelChangeDb)} dB quieter on average and the A/B is level-matched, so it does not win by being louder.`,
       ];
       if (calm.length > 0) reasons.push(`Only in the ${scope.name}: elsewhere it holds within ${Math.max(...calm.map((part) => part.reading.spreadDb)).toFixed(1)} dB.`);
+      if (level.aheadShare !== null && level.aheadOf) reasons.push(`At its loudest it rises ahead of ${level.aheadOf} in ${Math.round(level.aheadShare * 100)}% of the windows, which is where the swing disturbs the hierarchy.`);
+      reasons.push(`The swing does not repeat with the music (even at its best-matching spacing the level differs from itself ${Math.round((level.pattern?.ratio ?? 1) * 100)}% as much as at any other), so it reads as uneven level rather than a pattern.`);
       if (natural) reasons.push(`The note asks for a natural sound, so the ratio stays at or under ${maxRatio}:1 and the reduction lighter.`);
       if ((result.crestBeforeDb ?? 0) - (result.crestAfterDb ?? 0) > 0.5) reasons.push(`Its peak-to-average falls ${((result.crestBeforeDb ?? 0) - (result.crestAfterDb ?? 0)).toFixed(1)} dB; transients stay.`);
       return reasons;
@@ -990,11 +1065,22 @@ function planMaskingPair(ctx: Context, protectedId: string, yieldingId: string, 
       `${yieldingName} masks ${protectedName} whenever both play, and ${protectedName} plays during ${Math.round((1 - wholeFree.free) * 100)}% of ${yieldingName}'s time. The conflict is persistent, so static EQ is the right tool, not a dynamic one.`,
       wholeFree.free,
     );
-    ctx.notes.push(`${yieldingName} masks ${protectedName} most of the time they play: static EQ (the EQ tab) is the right class of tool there, so no dynamic EQ was proposed.`);
+    ctx.staticMasking.set(protectedName, [...(ctx.staticMasking.get(protectedName) ?? []), yieldingName]);
     return;
   }
   const region = direction(strongest).regions[0];
   if (!region) return;
+  // Already well under the protected stem where they compete: what masking remains is weak.
+  if (region.levelDifferenceDb <= -6) {
+    report(
+      strongest,
+      "already-separated",
+      "none",
+      `${yieldingName} sits ${(-region.levelDifferenceDb).toFixed(1)} dB under ${protectedName} in ${protectedName}'s ${formatHz(region.lowHz)}–${formatHz(region.highHz)}, so it competes only weakly; no dynamic move.`,
+      wholeFree.free,
+    );
+    return;
+  }
   // Concentrated in one region → dynamic EQ; spread over the protected stem's range → a smooth duck.
   const concentrated = region.maskedShare >= 0.5 * Math.max(1e-6, direction(strongest).maskedFraction) && Math.log2(region.highHz / region.lowHz) <= 3.2;
   const scope = ctx.scopes[0]!;
@@ -1065,8 +1151,22 @@ function planMaskingPair(ctx: Context, protectedId: string, yieldingId: string, 
     processing = build(depth);
     evaluation = evaluateDynamics(evidence, processing, { type: "global" });
   }
+  // Across the protected stem's defining range, while it plays, the target already sits this far under: weak masking.
+  if ((evaluation.conflictBeforeDb ?? 0) <= -8) {
+    report(
+      strongest,
+      "already-separated",
+      "none",
+      `Across ${protectedName}'s defining range ${yieldingName} already sits ${(-(evaluation.conflictBeforeDb ?? 0)).toFixed(1)} dB under it while it plays, so the competition is weak; no dynamic move.`,
+      wholeFree.free,
+    );
+    return;
+  }
   const relief = (evaluation.collisionBefore ?? 0) - (evaluation.collisionAfter ?? 0);
   const relative = relief / Math.max(1e-6, evaluation.collisionBefore ?? 0);
+  // Like the EQ planner: the move must pull the target at least 0.4 dB, and 30% of its own depth, further under.
+  const gapRelief = (evaluation.conflictBeforeDb ?? 0) - (evaluation.conflictAfterDb ?? 0);
+  const pulls = gapRelief >= Math.max(0.4, 0.3 * depth);
   const interactionId = report(
     strongest,
     "recommendation",
@@ -1074,12 +1174,13 @@ function planMaskingPair(ctx: Context, protectedId: string, yieldingId: string, 
     `${yieldingName} competes for ${protectedName}'s ${formatHz(region.lowHz)}–${formatHz(region.highHz)} while both play, but ${protectedName} is silent for ${Math.round(wholeFree.free * 100)}% of ${yieldingName}'s time, so a static cut would change ${yieldingName} where nothing needs it.`,
     wholeFree.free,
   );
-  if (relief < 0.03 && relative < 0.15) {
+  if (!pulls || (relief < 0.03 && relative < 0.15)) {
     ctx.interactions[ctx.interactions.length - 1] = { ...ctx.interactions[ctx.interactions.length - 1]!, outcome: "no-benefit", recommendedTool: "none" };
     ctx.notes.push(`A dynamic move on ${yieldingName} would barely relieve ${protectedName} (${Math.round(relief * 100)}% less competition), so none was added.`);
     return;
   }
-  const benefit = severity * clamp(relative * 2, 0, 1) * 1.5;
+  // The pair's priority (EQ planner: lead over support 1.0, a Background part under a Focal stem lower) weighs the relief.
+  const benefit = severity * strongest.priority * clamp(relative * 2, 0, 1) * 1.5;
   const cost = PROCESSOR_COST[processing.type] + 0.02 * depth;
   if (benefit < cost) return;
   let confidence = 0.5 + 0.1 * Number(SUPPORT_ROLES.has(nameRole(ctx, yieldingId))) + 0.1 * clamp(relative * 2, 0, 1) + 0.08 * clamp(wholeFree.free, 0, 1) + 0.05 * Number(song.coSeconds >= 8);

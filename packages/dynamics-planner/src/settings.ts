@@ -93,6 +93,20 @@ export const SPREAD_THRESHOLD_DB: Record<string, number> = {
 export const SWING_DB = 3;
 /** Share of window-to-window steps that must be swings for the spread to be instability rather than a swell. */
 export const MIN_SWING_RATE = 0.2;
+/**
+ * A swing is instability only when it does not repeat with the music: the level's self-difference at its best
+ * repeating lag must be at least this share of the self-difference at a typical lag (see `selfSimilarity`).
+ * Read on the 400 ms sustained level. Rhythmic gating, stutters, and sequenced parts repeat (0.37–0.67 on the
+ * Generated 5 stems); uneven playing does not (0.79–0.85 on the fixtures, 0.72 on the acceptance run's bass with
+ * irregular level jumps over its original pattern). The margin is thin; see the known limitations.
+ */
+export const MIN_IRREGULARITY = 0.7;
+/**
+ * A Supporting or Background part's swing matters only if its loud passages rise ahead of the stem it should sit
+ * under (the loudest Primary or Focal stem at the time): within 2.5 dB for Supporting, 9 dB for Background
+ * (AutoBalance's ceilings), in at least this share of the windows.
+ */
+export const MIN_AHEAD_SHARE = 0.1;
 /** A stem needs at least this many sustained-level windows (400 ms each) in a scope to be judged there. */
 export const MIN_WINDOWS = 12;
 

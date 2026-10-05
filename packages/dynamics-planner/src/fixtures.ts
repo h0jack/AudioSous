@@ -3,10 +3,19 @@ import { BASS, KICK, LEAD, PAD_MASKING, PAD_SEPARATED, base, bump, dipped, dynam
 
 /** The milestone's fixtures, shared by the planner, plan-contract, and desktop flow tests. */
 export const SNARE_SHAPE = sum(base(-50, -1), bump(200, 0.6, 20), bump(3_000, 1, 14));
-const UNEVEN = [0, -7, -2, -9, -1, -6, -3, -8];
+/** Note levels that never repeat: a deterministic pseudo-random sequence in 0…−9 dB, like uneven playing. */
+const UNEVEN = Array.from({ length: 512 }, (_, index) => {
+  let x = Math.imul(index + 1, 0x9e3779b1);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x85ebca6b);
+  x ^= x >>> 13;
+  return -9 * (((x >>> 0) % 1000) / 999);
+});
 
 export const kickTrack = (): DynamicsTrackInput => ({ id: "kick", name: "Kick", role: "kick", fixture: { shape: KICK, crest: 16, onsets: 2 }, envelope: hits({ peakDb: -6, period: 0.5, attackDb: 3, decayMs: 80, lowDb: -1 }) });
 export const unstableBass = (levelDb = -14) => notes({ levelDb, period: 0.5, offsets: UNEVEN, decayDb: 2, lowDb: -1 });
+/** The same uneven playing at 66% of the depth, one note per 400 ms window: a swing under the bass threshold without a note asking for control. */
+export const mildlyUnevenBass = (levelDb = -14) => notes({ levelDb, period: 0.4, offsets: UNEVEN.map((value) => value * 0.66), decayDb: 1, lowDb: -1 });
 export const steadyBass = (levelDb = -14) => notes({ levelDb, period: 0.5, decayDb: 2, lowDb: -1 });
 export const bassTrack = (envelope = unstableBass(), gainDb?: number): DynamicsTrackInput => ({ id: "bass", name: "Bass", role: "bass", gainDb, fixture: { shape: BASS }, envelope });
 const twoSections = [

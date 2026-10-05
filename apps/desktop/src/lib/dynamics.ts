@@ -3,16 +3,15 @@ import {
   applyDynamicsPlan,
   dynamicsPlanIsStale,
   dynamicsRecommendationIncluded,
-  engineDynamicsNode,
+  dynamicsCheckRequest as planCheckRequest,
   planDynamics,
   withDynamicsProxyChecks,
   type DynamicsApplyMode,
   type DynamicsPlan,
   type DynamicsProxyCheck,
   type DynamicsRecommendation,
-  type EngineDynamicsNode,
 } from "@audiosous/dynamics-planner";
-import { dynamicsChainForSection, dynamicsNodeRunnable, eqChainForSection, type DynamicsNode, type ProjectDocument } from "@audiosous/project-model";
+import type { ProjectDocument } from "@audiosous/project-model";
 import { getPlatform } from "../platform";
 import type { DesktopPlatform, DynamicsCheckRequest } from "../platform/types";
 import { useAppStore, type DynamicsSession } from "../state/app-store";
@@ -125,33 +124,9 @@ async function loadEnvelopeFrames(platform: DesktopPlatform, projectFile: string
   return out;
 }
 
-function processingNode(change: DynamicsRecommendation): EngineDynamicsNode {
-  return engineDynamicsNode({ ...change.processing, id: "candidate", enabled: true, origin: "dynamics-plan", note: null } as DynamicsNode);
-}
-
 /** The check request for one row: its track, its key, its scope's saved EQ and dynamics, before and with the row. */
 export function dynamicsCheckRequest(document: ProjectDocument, change: DynamicsRecommendation): DynamicsCheckRequest | null {
-  const track = document.tracks.find((item) => item.id === change.trackId);
-  if (!track) return null;
-  const sectionId = change.scope.type === "section" ? change.scope.sectionId : null;
-  const keyTrackId = change.processing.type === "ducking" || change.processing.type === "dynamic-eq" ? change.processing.keyTrackId : null;
-  const key = keyTrackId ? document.tracks.find((item) => item.id === keyTrackId) : null;
-  const saved = dynamicsChainForSection(document, track.id, sectionId).filter((node) => dynamicsNodeRunnable(document, track.id, node));
-  const before = saved.map(engineDynamicsNode);
-  const after = [...saved.filter((node) => node.id !== change.replacesNodeId).map(engineDynamicsNode), processingNode(change)];
-  return {
-    id: change.id,
-    trackId: track.id,
-    relativePath: track.file.relativePath,
-    keyTrackId: key?.id ?? null,
-    keyRelativePath: key?.file.relativePath ?? null,
-    windows: change.evidence.windows,
-    savedEq: eqChainForSection(document, track.id, sectionId),
-    before,
-    after,
-    kind: change.processing.type,
-    band: change.evidence.band,
-  };
+  return planCheckRequest(document, change);
 }
 
 /** Second evaluation tier: the native dynamics over the 48 kHz proxies, where the problem happens. */

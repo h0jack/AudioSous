@@ -5,7 +5,10 @@ import {
   DYNAMICS_LIMITS,
   GAIN_DB_MAX,
   GAIN_DB_MIN,
+  dynamicsChainForSection,
   dynamicsIdentity,
+  eqChainForSection,
+  type EqFilter,
   dynamicsNodeRunnable,
   normalizeDynamicsNode,
   orderDynamics,
@@ -1006,6 +1009,44 @@ export function engineDynamicsNode(node: DynamicsNode): EngineDynamicsNode {
         releaseMs: node.releaseMs,
       };
   }
+}
+
+export interface DynamicsCheckRequestDto {
+  id: string;
+  trackId: string;
+  relativePath: string;
+  keyTrackId: string | null;
+  keyRelativePath: string | null;
+  windows: Array<[number, number]>;
+  savedEq: EqFilter[];
+  before: EngineDynamicsNode[];
+  after: EngineDynamicsNode[];
+  kind: DynamicsProcessing["type"];
+  band: [number, number] | null;
+}
+
+/** The proxy check for one row: its track, its key, its scope's saved EQ and dynamics, now and with the row. */
+export function dynamicsCheckRequest(document: ProjectDocument, change: DynamicsRecommendation): DynamicsCheckRequestDto | null {
+  const track = document.tracks.find((item) => item.id === change.trackId);
+  if (!track) return null;
+  const sectionId = change.scope.type === "section" ? change.scope.sectionId : null;
+  const keyTrackId = change.processing.type === "ducking" || change.processing.type === "dynamic-eq" ? change.processing.keyTrackId : null;
+  const key = keyTrackId ? document.tracks.find((item) => item.id === keyTrackId) : null;
+  const saved = dynamicsChainForSection(document, track.id, sectionId).filter((node) => dynamicsNodeRunnable(document, track.id, node));
+  const candidate = engineDynamicsNode({ ...change.processing, id: "candidate", enabled: true, origin: "dynamics-plan", note: null } as DynamicsNode);
+  return {
+    id: change.id,
+    trackId: track.id,
+    relativePath: track.file.relativePath,
+    keyTrackId: key?.id ?? null,
+    keyRelativePath: key?.file.relativePath ?? null,
+    windows: change.evidence.windows,
+    savedEq: eqChainForSection(document, track.id, sectionId),
+    before: saved.map(engineDynamicsNode),
+    after: [...saved.filter((node) => node.id !== change.replacesNodeId).map(engineDynamicsNode), candidate],
+    kind: change.processing.type,
+    band: change.evidence.band,
+  };
 }
 
 /** Writes the chosen rows into the processing graphs as dynamics-plan nodes. One call is one undo step for the caller. */

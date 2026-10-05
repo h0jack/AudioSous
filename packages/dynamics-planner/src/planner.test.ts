@@ -15,6 +15,7 @@ import {
   fixtureG,
   fixtureH,
   kickTrack,
+  mildlyUnevenBass,
   sectionFixture,
   steadyBass,
 } from "./fixtures";
@@ -263,7 +264,7 @@ describe("existing processing, scope, and the already-good mix", () => {
 describe("intent", () => {
   it("reads a request for control as a lower spread threshold and a request for natural as a gentler one", () => {
     // A bass that swings a little: under the threshold without a note.
-    const mild = () => notes({ levelDb: -14, period: 0.5, offsets: [0, -3.5, -0.5, -4, 0, -3.5, -1, -4.5], decayDb: 1, lowDb: -1 });
+    const mild = () => mildlyUnevenBass();
     const base = { tracks: [bassTrack(mild())], sections: wholeSong() };
     expect(only(plan(dynamicsSong(base)), "compressor")).toEqual([]);
     const controlled = dynamicsSong({ ...base, prominence: [{ track: "bass", section: "all", prominence: "primary", intent: "Keep the bass controlled." }] });
