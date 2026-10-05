@@ -538,7 +538,8 @@ function proposeCompressor(ctx: Context, env: EnvelopeTrack, scope: AnalysisScop
   // Ducks and other stages after the compressor do not change what it hears, so the detector is the EQ'd stem.
   const offsets = env.segments
     .filter((segment) => segment.end > start && segment.start < end)
-    .map((segment) => ({ start: Math.max(0, segment.start - start), end: Math.min(end, segment.end) - start, db: round2(segment.gainDb) }));
+    .map((segment) => ({ start: Math.max(0, segment.start - start), end: Math.min(end, segment.end) - start, db: round2(segment.gainDb) }))
+    .slice(0, 64);
   const evidence: DynamicsEvidence = {
     detail: {
       kind: "level",
@@ -1267,15 +1268,19 @@ function limitPerTrack(ctx: Context): void {
     }
     keep.push(row);
   }
-  ctx.rows = ctx.rows.filter((row) => keep.includes(row));
+  // A plan holds at most 64 rows; a mix that wants more keeps the strongest and says so.
+  const strongest = new Set(keep.slice(0, 64));
+  if (keep.length > 64) ctx.notes.push(`${keep.length - 64} weaker dynamics changes were left out; a plan holds at most 64.`);
+  ctx.rows = ctx.rows.filter((row) => strongest.has(row));
 }
 
 function finish(row: Row): DynamicsRecommendation {
   const id = dynamicsRecommendationId(row.trackId, row.scope, row.processing.type, row.processing.type === "ducking" || row.processing.type === "dynamic-eq" ? row.processing.keyTrackId : null);
-  const reasons = row.explain(row.evaluation).map((text) => text.slice(0, 600)).slice(0, 6);
+  const explained = row.explain(row.evaluation).map((text) => text.slice(0, 600));
+  // The review note is kept even when the explanation is long.
+  const reasons = row.forceReview ? [...explained.slice(0, 5), row.forceReview] : explained.slice(0, 6);
   const warnings = dynamicsWarnings({ targetReductionDb: row.targetReductionDb }, row.processing, row.evaluation);
   const review = row.forceReview !== null || needsReview(row.processing, row.confidence, warnings);
-  if (row.forceReview) reasons.push(row.forceReview);
   return {
     id,
     trackId: row.trackId,
