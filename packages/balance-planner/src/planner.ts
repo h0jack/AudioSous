@@ -1,6 +1,7 @@
 import { ANALYSIS_ENGINE_VERSION, type TrackFileMeasurement } from "@audiosous/analysis-contract";
 import {
   TRACK_ROLE_LABELS,
+  formatClock,
   type ProjectDocument,
   type SongSection,
   type Track,
@@ -65,6 +66,10 @@ const ROLE_TIER: Record<TrackRole, Tier> = {
 };
 
 const ANCHOR_ORDER: TrackRole[] = ["kick", "vocal", "lead", "bass", "drums"];
+
+/** Time outside every section is still checked, as scopes that feed the track-wide decision only. */
+const UNMARKED_PREFIX = "__unmarked:";
+const UNMARKED_MIN_SECONDS = 1;
 
 /**
  * Where a scope's tier came from, highest precedence first:
@@ -132,7 +137,7 @@ export function planBalance(input: PlanBalanceInput): MixPlan {
   }
   const ordered = orderChanges(document, changes);
   const confidence = overallConfidence(ordered, anchor, unknownRoles, unmeasured);
-  const summary = summarize(ordered, anchor, unknownRoles, unmeasured, confidence, ambiguityNotes(document, intents));
+  const summary = summarize(ordered, anchor, unknownRoles, unmeasured, confidence, [...coverageNotes(document), ...ambiguityNotes(document, intents)]);
   const draft: MixPlan = {
     planVersion: 1,
     plannerVersion: PLANNER_VERSION,
@@ -167,7 +172,7 @@ function planTrack(
 ): GainRecommendation[] {
   const bag = measurements[track.id];
   const defaultTier = defaultTierFor(track, document.tracks);
-  const sections = document.sections;
+  const sections = planningScopes(document);
   const reads = sections.length
     ? sections.map((section) => readScope(document, track, bag, section, defaultTier, intents))
     : [readScope(document, track, bag, null, defaultTier, intents)];
@@ -331,7 +336,7 @@ function regularize(
     recs.push(toRecommendation(track, sample, { type: "global" }, plannedGlobal, globalDelta, document.sections.length > 1));
   }
   for (const wish of [...specials, ...regulars]) {
-    if (!wish.read.section) continue;
+    if (!wish.read.section || isUnmarked(wish.read.section)) continue;
     const absolute = roundDb(wish.read.currentGainDb + wish.delta);
     const offset = roundDb(absolute - plannedGlobal);
     const special = wish.read.tier !== wish.read.defaultTier;
@@ -599,6 +604,46 @@ function summarize(
     changeCount: changes.length,
     reviewCount,
   };
+}
+
+function planningScopes(document: ProjectDocument): SongSection[] {
+  if (document.sections.length === 0) return [];
+  const ordered = [...document.sections].sort((left, right) => left.startTime - right.startTime);
+  const gaps: SongSection[] = [];
+  let cursor = 0;
+  for (const section of [...ordered, null]) {
+    const end = section ? section.startTime : document.project.durationSeconds;
+    if (end - cursor >= UNMARKED_MIN_SECONDS) {
+      gaps.push({
+        id: `${UNMARKED_PREFIX}${cursor}`,
+        name: "unmarked time",
+        type: null,
+        startTime: cursor,
+        endTime: end,
+        userIntent: null,
+        source: "manual",
+        confidence: null,
+        structuralGroupId: null,
+      });
+    }
+    if (section) cursor = Math.max(cursor, section.endTime);
+  }
+  return [...ordered, ...gaps];
+}
+
+function isUnmarked(section: SongSection): boolean {
+  return section.id.startsWith(UNMARKED_PREFIX);
+}
+
+function coverageNotes(document: ProjectDocument): string[] {
+  const duration = document.project.durationSeconds;
+  if (document.sections.length === 0 || duration <= 0) return [];
+  const unmarked = planningScopes(document).filter(isUnmarked);
+  const uncovered = unmarked.reduce((sum, section) => sum + (section.endTime - section.startTime), 0);
+  if (uncovered / duration < 0.05) return [];
+  return [
+    `Sections cover ${formatClock(duration - uncovered)} of ${formatClock(duration)}. The unmarked time was checked for track-wide changes only.`,
+  ];
 }
 
 function ambiguityNotes(document: ProjectDocument, intents: SectionIntentIndex): string[] {

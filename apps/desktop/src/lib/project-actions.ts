@@ -9,6 +9,7 @@ import {
   mergeSectionWithNext,
   moveSectionBoundary,
   removeSection,
+  sectionAtTime,
   splitSection,
   setTrackSectionState,
   updateSection,
@@ -201,6 +202,16 @@ export function splitSectionAt(sectionId: string, time: number): string | null {
   if (!result.ok) return result.message;
   useAppStore.getState().replaceDocument(result.document, true);
   void logEvent(getPlatform(), "info", "section.update", "Split a section.", { sectionId, time });
+  return null;
+}
+
+export function markSectionAt(time: number): string | null {
+  const document = useAppStore.getState().document;
+  if (!document) return "No project is open.";
+  const result = sectionAtTime(document, time);
+  if (!result.ok) return result.message;
+  useAppStore.getState().replaceDocument(result.document, true);
+  void logEvent(getPlatform(), "info", "section.create", "Marked a section at the playhead.", { time });
   return null;
 }
 

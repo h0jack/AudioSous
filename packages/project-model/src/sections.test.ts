@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createProject } from "./create-project";
 import { projectDocumentSchema } from "./schema";
-import { addManualSection, applyAutomaticSections, clearSuggestedSections, mergeSectionWithNext, moveSectionBoundary, removeSection, setTrackSectionState, splitSection, updateSection } from "./sections";
+import { addManualSection, applyAutomaticSections, clearSuggestedSections, mergeSectionWithNext, moveSectionBoundary, removeSection, sectionAtTime, setTrackSectionState, splitSection, updateSection } from "./sections";
 
 function document() {
   return createProject({
@@ -26,6 +26,47 @@ function document() {
     ],
   });
 }
+
+describe("section at the playhead", () => {
+  it("starts at the song start, then at the end of the previous section, and splits inside a section", () => {
+    const first = sectionAtTime(document(), 16);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.document.sections.map((section) => [section.startTime, section.endTime])).toEqual([[0, 16]]);
+
+    const second = sectionAtTime(first.document, 48);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.document.sections.map((section) => [section.startTime, section.endTime])).toEqual([[0, 16], [16, 48]]);
+    const added = second.document.sections[1]!;
+    expect(second.document.uiState.selectedSectionId).toBe(added.id);
+
+    const split = sectionAtTime(second.document, 30);
+    expect(split.ok).toBe(true);
+    if (!split.ok) return;
+    expect(split.document.sections.map((section) => [section.startTime, section.endTime])).toEqual([[0, 16], [16, 30], [30, 48]]);
+    expect(split.document.uiState.selectedSectionId).toBe(split.document.sections[2]!.id);
+  });
+
+  it("fills the gap after the nearest earlier section without touching a later one", () => {
+    const later = addManualSection(document(), { startTime: 60, endTime: 90 });
+    if (!later.ok) throw new Error(later.message);
+    const early = addManualSection(later.document, { startTime: 0, endTime: 10 });
+    if (!early.ok) throw new Error(early.message);
+    const result = sectionAtTime(early.document, 40);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.document.sections.map((section) => [section.startTime, section.endTime])).toEqual([[0, 10], [10, 40], [60, 90]]);
+  });
+
+  it("refuses a section shorter than a quarter second and a split at a boundary", () => {
+    expect(sectionAtTime(document(), 0.1).ok).toBe(false);
+    const first = sectionAtTime(document(), 16);
+    if (!first.ok) throw new Error(first.message);
+    expect(sectionAtTime(first.document, 16.1).ok).toBe(false);
+    expect(sectionAtTime(first.document, 15.9).ok).toBe(false);
+  });
+});
 
 describe("manual sections", () => {
   it("stores a new section in start-time order and selects it", () => {

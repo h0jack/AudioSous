@@ -113,6 +113,13 @@ The first run of the already-good case proposed 5 to 6 rows of up to 4 dB. Five 
 
 The native preview path was checked by reading it. Section windows are published to a lock-free schedule and set the target of the existing 10 ms gain slew. Proxies are not rebuilt and the device is not restarted.
 
+**Review fixes after the first hands-on run.** Generated 5 as saved reported no changes. Its three sections cover only the first 24 s, and the planner used to skip time outside sections, so the drops were never checked. Unmarked time is now planned, and the panel states the scope. The timeline also gained:
+- icon Play/Pause, Stop, and Loop buttons;
+- Clear selection, also on Esc;
+- Section at playhead, which splits the section under the playhead, or else adds one from the end of the previous section (or the song start) to the playhead.
+
+The Generated 5 stems are still mostly marked Bass. The import role guess reads "Sub" in "Sub Operator" as bass.
+
 **Still open before Milestone 3 is complete:**
 - a listening pass on the Current and AutoBalance bounces;
 - a manual walk-through of the review panel in the desktop app: row click selection and seek, the A/B buttons, Apply accepted, Ctrl+Z, and stale and cancel.

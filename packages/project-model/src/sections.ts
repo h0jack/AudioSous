@@ -185,6 +185,26 @@ export function splitSection(document: ProjectDocument, sectionId: string, time:
   return { ok: true, document: { ...document, sections: insertByStart(insertByStart(rest, left), right), uiState } };
 }
 
+/**
+ * One action for "mark a section here". Inside a section it splits that section at the time.
+ * Otherwise it adds a section from the end of the previous section, or the song start, up to the time.
+ */
+export function sectionAtTime(document: ProjectDocument, time: number): SectionEditResult {
+  const at = roundSeconds(time);
+  const inside = document.sections.find((section) => at > section.startTime && at < section.endTime);
+  if (inside) {
+    const split = splitSection(document, inside.id, at);
+    if (!split.ok) return split;
+    const right = split.document.sections.find((section) => Math.abs(section.startTime - at) < 0.0005);
+    return { ok: true, document: { ...split.document, uiState: { ...split.document.uiState, selectedSectionId: right?.id ?? inside.id } } };
+  }
+  const start = document.sections.reduce((latest, section) => (section.endTime <= at + 0.0005 ? Math.max(latest, section.endTime) : latest), 0);
+  if (at - start < MIN_SECTION_SECONDS) {
+    return { ok: false, message: "Move the playhead at least a quarter second past the start of the song or the previous section." };
+  }
+  return addManualSection(document, { startTime: start, endTime: at });
+}
+
 export function mergeSectionWithNext(document: ProjectDocument, sectionId: string): SectionEditResult {
   const ordered = [...document.sections].sort((left, right) => left.startTime - right.startTime || left.endTime - right.endTime);
   const index = ordered.findIndex((section) => section.id === sectionId);

@@ -28,7 +28,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes
 import type { usePlayback } from "../lib/playback";
 
 type Playback = ReturnType<typeof usePlayback>;
-import { acceptSectionSuggestions, addSectionFromRange, deleteSection, dragSectionBoundary, editSection, editTrack, editTrackSection, finishBoundaryDrag, mergeSection, rejectSectionSuggestions, splitSectionAt } from "../lib/project-actions";
+import { acceptSectionSuggestions, addSectionFromRange, deleteSection, markSectionAt, dragSectionBoundary, editSection, editTrack, editTrackSection, finishBoundaryDrag, mergeSection, rejectSectionSuggestions, splitSectionAt } from "../lib/project-actions";
 import { logEvent } from "../lib/log";
 import { getPlatform } from "../platform";
 import type { LoadedWaveform } from "../lib/waveforms";
@@ -236,6 +236,28 @@ export function Timeline({
     commitNow({ timeRange: next, selectedTrackId: current.trackId });
   }
 
+  function clearSelection() {
+    setRange(null);
+    setSectionError(null);
+    commitNow({ selectedSectionId: null, timeRange: null, selectedTrackId: null });
+  }
+
+  const clearRef = useRef(clearSelection);
+  clearRef.current = clearSelection;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("input, textarea, select, [role=dialog]")) return;
+      const ui = useAppStore.getState().document?.uiState;
+      if (!ui || (!ui.timeRange && !ui.selectedSectionId && !ui.selectedTrackId)) return;
+      event.preventDefault();
+      clearRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   function commitNow(patch: Partial<UiState>, mode: "record" | "skip" = "record") {
     if (mode === "skip" && Object.keys(pending.current).length > 0) flush();
     pending.current = { ...pending.current, ...patch };
@@ -306,18 +328,49 @@ export function Timeline({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-        <TipButton label={playing ? "Pause playback" : "Play from the playhead"} onClick={() => void playback.toggle()}>
-          {playback.preparing ? "Preparing…" : playing ? "Pause" : "Play"}
+        <TipButton
+          label={playback.preparing ? "Preparing playback" : playing ? "Pause (Space)" : "Play from the playhead (Space)"}
+          aria-label={playing ? "Pause" : "Play"}
+          className={ICON_BUTTON}
+          onClick={() => void playback.toggle()}
+        >
+          {playback.preparing ? <span className="text-xs">…</span> : playing ? <PauseIcon /> : <PlayIcon />}
         </TipButton>
-        <TipButton label="Stop and return to the start" onClick={() => playback.stop()}>
-          Stop
+        <TipButton label="Stop and return to the start" aria-label="Stop" className={ICON_BUTTON} onClick={() => playback.stop()}>
+          <StopIcon />
         </TipButton>
         <TipButton
           label={playback.looping ? "Turn the loop off" : "Loop the selected range or section"}
+          aria-label="Loop"
+          pressed={playback.looping}
+          className={playback.looping ? `${ICON_BUTTON} border-accent text-accent` : ICON_BUTTON}
           disabled={!range && !document.uiState.selectedSectionId && !playback.looping}
           onClick={() => playback.setLoopEnabled(!playback.looping)}
         >
-          {playback.looping ? "Looping" : "Loop"}
+          <LoopIcon />
+        </TipButton>
+        <TipButton
+          label={sectionAtPlayheadLabel(document, playhead)}
+          onClick={() => {
+            const message = markSectionAt(playhead);
+            setSectionError(message);
+            if (message) return;
+            const current = useAppStore.getState().document;
+            const marked = current?.sections.find((section) => section.id === current.uiState.selectedSectionId);
+            if (!marked) return;
+            const next = { start: marked.startTime, end: marked.endTime };
+            setRange(next);
+            commitNow({ timeRange: next }, "skip");
+          }}
+        >
+          Section at playhead
+        </TipButton>
+        <TipButton
+          label="Clear the selected section, range, and stem (Esc)"
+          disabled={!range && !document.uiState.selectedSectionId && !document.uiState.selectedTrackId}
+          onClick={clearSelection}
+        >
+          Clear selection
         </TipButton>
         <TipButton
           label="Add a section from the selected range"
@@ -880,6 +933,55 @@ function SectionNameField({
       className="w-40 rounded-md border border-line bg-canvas px-2 py-1 text-xs"
     />
   );
+}
+
+const ICON_BUTTON = "inline-flex h-7 w-8 items-center justify-center rounded-md border border-line bg-panel-2 text-ink";
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+      <path d="M4 2.5v11l9-5.5z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+      <rect x="3.5" y="2.5" width="3" height="11" rx="0.5" />
+      <rect x="9.5" y="2.5" width="3" height="11" rx="0.5" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor">
+      <rect x="3" y="3" width="10" height="10" rx="1" />
+    </svg>
+  );
+}
+
+function LoopIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 7V6a2 2 0 0 1 2-2h8" />
+      <path d="M10.5 2l2 2-2 2" />
+      <path d="M13.5 9v1a2 2 0 0 1-2 2h-8" />
+      <path d="M5.5 14l-2-2 2-2" />
+    </svg>
+  );
+}
+
+function sectionAtPlayheadLabel(document: ProjectDocument, time: number): string {
+  const inside = document.sections.find((section) => time > section.startTime && time < section.endTime);
+  if (inside) return `Split ${inside.name} at the playhead`;
+  const previous = document.sections
+    .filter((section) => section.endTime <= time + 0.0005)
+    .sort((left, right) => right.endTime - left.endTime)[0];
+  return previous
+    ? `Add a section from the end of ${previous.name} to the playhead`
+    : "Add a section from the start of the song to the playhead";
 }
 
 function TipButton({

@@ -532,6 +532,35 @@ describe("planBalance on finished mixes", () => {
   });
 });
 
+describe("planBalance section coverage", () => {
+  it("checks time outside every section instead of ignoring it", () => {
+    const document = song(
+      [
+        ["kick", "Kick", "kick"],
+        ["lead", "Lead", "lead"],
+      ],
+      [section("intro", "Intro", "intro", 0, 10)],
+    );
+    // The kick only plays after the intro, so the intro alone gives no primary opinion.
+    const timeline = (intro: number, rest: number) =>
+      Array.from({ length: 60 }, (_, index) => ({ timeSeconds: index + 0.5, rmsDbfs: index < 10 ? intro : rest }));
+    const plan = planBalance({
+      document,
+      measurements: {
+        kick: { track: measurement(-18, 80, { timeline: timeline(-120, -18) }) },
+        lead: { track: measurement(-24, 90, { timeline: timeline(-24, -24) }) },
+      },
+      now: NOW,
+    });
+    const lead = change(plan, "lead");
+    expect(lead?.scope.type).toBe("global");
+    expect(lead?.deltaDb).toBeGreaterThan(2);
+    expect(lead?.reasons.join(" ")).not.toMatch(/unmarked/);
+    expect(plan.trackChanges.every((item) => item.scope.type === "global" || !item.scope.sectionId.startsWith("__"))).toBe(true);
+    expect(plan.summary.notes.join(" ")).toMatch(/Sections cover 0:10\.000 of 1:00\.000/);
+  });
+});
+
 describe("planBalance intent", () => {
   const roster: Array<[string, string, TrackRole]> = [
     ["kick", "Kick", "kick"],

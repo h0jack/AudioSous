@@ -220,6 +220,8 @@ That timeline is unweighted RMS. Unweighted RMS ranks a sub-heavy bass far above
 - Supporting elements are kept about 2.5 dB under the reference, and Background elements about 9 dB under it. These are ceilings, not targets. A quiet supporting stem is not raised to the ceiling.
 - Focal elements are lifted to about 1 dB over the reference.
 
+The plan always covers the whole song. The timeline selection does not narrow it, and the AutoBalance panel says so along with how much of the song the sections cover. Time outside every section (gaps of 1 s or more) is still measured. It feeds the track-wide decision only and never gets a section row of its own. When sections cover less than 95% of the song, the plan summary says how much they cover.
+
 One follow-up pass checks supporting and background rows against the same reference and deepens a cut by up to 1 dB if the first pass left the stem too loud. Global changes are preferred. A section row is added when that section's tier differs from the track's default, or when one section disagrees with the others by more than the section residual.
 
 ### Intent

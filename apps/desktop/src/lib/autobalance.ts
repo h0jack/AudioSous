@@ -9,11 +9,37 @@ import {
   type TrackMeasurements,
 } from "@audiosous/balance-planner";
 import type { AudioEngine } from "@audiosous/audio-engine";
-import type { ProjectDocument } from "@audiosous/project-model";
+import { formatClock, type ProjectDocument } from "@audiosous/project-model";
 import { loadTrackAnalysis } from "./track-analysis";
 import { logEvent } from "./log";
 import { getPlatform } from "../platform";
 import { useAppStore, type BalanceSession } from "../state/app-store";
+
+/** What AutoBalance will look at. The timeline selection never narrows it. */
+export function autoBalanceScope(document: ProjectDocument): string {
+  const duration = document.project.durationSeconds;
+  const count = document.sections.length;
+  if (count === 0) return "Plans the whole song as one part. The selection does not limit it.";
+  const covered = coveredSeconds(document.sections, duration);
+  const parts = `${count} ${count === 1 ? "section" : "sections"}`;
+  if (duration - covered < Math.max(1, duration * 0.05)) {
+    return `Plans the whole song, section by section (${parts}). The selection does not limit it.`;
+  }
+  return `Plans the whole song. ${parts} ${count === 1 ? "covers" : "cover"} ${formatClock(covered)} of ${formatClock(duration)}; the rest is checked for track-wide changes only. The selection does not limit it.`;
+}
+
+function coveredSeconds(sections: ProjectDocument["sections"], duration: number): number {
+  const ordered = [...sections].sort((left, right) => left.startTime - right.startTime);
+  let covered = 0;
+  let cursor = 0;
+  for (const section of ordered) {
+    const start = Math.max(cursor, section.startTime);
+    const end = Math.min(duration, section.endTime);
+    if (end > start) covered += end - start;
+    cursor = Math.max(cursor, end);
+  }
+  return covered;
+}
 
 export function currentAudition(document: ProjectDocument, balance: BalanceSession): AuditionMix | null {
   if (!balance.plan || balance.phase !== "ready") return null;

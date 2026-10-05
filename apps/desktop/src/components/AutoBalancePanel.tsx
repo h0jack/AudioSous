@@ -10,7 +10,7 @@ import {
 import type { ProjectDocument } from "@audiosous/project-model";
 import { useEffect, useRef } from "react";
 import type { usePlayback } from "../lib/playback";
-import { applyAutoBalance, cancelAutoBalance, currentAudition, runAutoBalance } from "../lib/autobalance";
+import { applyAutoBalance, autoBalanceScope, cancelAutoBalance, currentAudition, runAutoBalance } from "../lib/autobalance";
 import { logEvent } from "../lib/log";
 import { getPlatform } from "../platform";
 import { useAppStore } from "../state/app-store";
@@ -35,7 +35,9 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
         <Button title="Plan gain changes from the current analysis" tone="accent" className="px-3 py-1.5 text-xs" onClick={() => void runAutoBalance()}>
           AutoBalance
         </Button>
-        <p className="text-xs text-faint">Gain-only level plan. It does not change EQ, compression, or the source files.</p>
+        <p className="text-xs text-faint">
+          Gain-only level plan. It does not change EQ, compression, or the source files. {autoBalanceScope(document)}
+        </p>
       </div>
     );
   }
@@ -100,6 +102,7 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+        <p className="mb-2 max-w-3xl text-xs text-faint">{autoBalanceScope(document)}</p>
         {balance.progress ? (
           <p className="text-sm text-muted" role="status">
             {balance.progress}

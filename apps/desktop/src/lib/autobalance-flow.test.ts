@@ -3,7 +3,7 @@ import { auditionGainAt, editRecommendation, planBalance, planIsStale, setRecomm
 import { createProject, type ProjectDocument, type TrackRole } from "@audiosous/project-model";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useAppStore } from "../state/app-store";
-import { applyAutoBalance, cancelAutoBalance, currentAudition } from "./autobalance";
+import { applyAutoBalance, autoBalanceScope, cancelAutoBalance, currentAudition } from "./autobalance";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
@@ -96,6 +96,17 @@ describe("AutoBalance review flow", () => {
     expect(useAppStore.getState().balance.plan).toBeNull();
     expect(useAppStore.getState().balance.preview).toBe(false);
     expect(useAppStore.getState().dirty).toBe(false);
+  });
+});
+
+describe("AutoBalance scope text", () => {
+  it("says the whole song is planned and how much the sections cover", () => {
+    const document = fixture();
+    expect(autoBalanceScope(document)).toMatch(/whole song, section by section \(2 sections\)/);
+    const partial = { ...document, sections: document.sections.slice(0, 1) };
+    expect(autoBalanceScope(partial)).toMatch(/1 section covers 0:30\.000 of 1:00\.000; the rest is checked for track-wide changes only/);
+    expect(autoBalanceScope({ ...document, sections: [] })).toMatch(/whole song as one part/);
+    expect(autoBalanceScope(document)).toMatch(/selection does not limit it/);
   });
 });
 
