@@ -272,13 +272,26 @@ fn main() {
         let mut levels: Vec<f64> = audio.chunks(window).map(|chunk| 10.0 * (chunk.iter().map(|value| f64::from(*value).powi(2)).sum::<f64>() / chunk.len() as f64).max(1e-20).log10()).filter(|db| *db > -60.0).collect();
         levels.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let pick = |share: f64| levels.get(((levels.len().max(1) - 1) as f64 * share).round() as usize).copied().unwrap_or(-100.0);
+        // Mono fold-down: stereo power against the power of (L + R) / 2, and the channel correlation.
+        let (mut l2, mut r2, mut lr, mut m2) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
+        for pair in audio.chunks_exact(2) {
+            let (l, r) = (f64::from(pair[0]), f64::from(pair[1]));
+            l2 += l * l;
+            r2 += r * r;
+            lr += l * r;
+            m2 += 0.25 * (l + r) * (l + r);
+        }
+        let mono_loss = 10.0 * (0.5 * (l2 + r2)).max(1e-20).log10() - 10.0 * m2.max(1e-20).log10();
+        let correlation = if l2 > 0.0 && r2 > 0.0 { lr / (l2 * r2).sqrt() } else { 1.0 };
         println!(
-            "  {:<18} peak {:+.2} dBFS, RMS {:.2} dB, crest {:.1} dB, 400 ms level spread {:.1} dB ({:?})",
+            "  {:<22} peak {:+.2} dBFS, RMS {:.2} dB, crest {:.1} dB, 400 ms level spread {:.1} dB, mono loss {:.2} dB, correlation {:.3} ({:?})",
             variant.name,
             peak_db,
             rms,
             peak_db - rms,
             pick(0.9) - pick(0.1),
+            mono_loss,
+            correlation,
             elapsed
         );
         if wav {

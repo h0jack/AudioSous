@@ -31,6 +31,8 @@ export interface MixLimits {
   maxChangesPerProblem: number;
   /** Most combined processing cost the whole plan may carry. */
   maxTotalCost: number;
+  /** Most changes the whole plan may carry; problems are taken in priority order, so the most important get them. */
+  maxChanges: number;
   /** A pass must improve the candidate score by at least this much to be kept. */
   minPassGain: number;
   /** Below this confidence a problem only gets one small, cheap change, or none. */
@@ -40,9 +42,9 @@ export interface MixLimits {
 }
 
 export const MIX_LIMITS_BY_STRENGTH: Record<MixStrength, MixLimits> = {
-  conservative: { maxIterations: 2, minSeverity: 0.45, minReduction: 0.3, minNet: 0.1, maxChangesPerProblem: 1, maxTotalCost: 0.6, minPassGain: 0.08, lowConfidence: 0.65, comboDepth: 0.6 },
-  normal: { maxIterations: 3, minSeverity: 0.38, minReduction: 0.2, minNet: 0.06, maxChangesPerProblem: 2, maxTotalCost: 1.2, minPassGain: 0.05, lowConfidence: 0.6, comboDepth: 0.65 },
-  strong: { maxIterations: 4, minSeverity: 0.32, minReduction: 0.15, minNet: 0.03, maxChangesPerProblem: 2, maxTotalCost: 2, minPassGain: 0.03, lowConfidence: 0.55, comboDepth: 0.7 },
+  conservative: { maxIterations: 2, maxChanges: 3, minSeverity: 0.5, minReduction: 0.3, minNet: 0.1, maxChangesPerProblem: 1, maxTotalCost: 0.6, minPassGain: 0.08, lowConfidence: 0.65, comboDepth: 0.6 },
+  normal: { maxIterations: 3, maxChanges: 8, minSeverity: 0.38, minReduction: 0.2, minNet: 0.06, maxChangesPerProblem: 2, maxTotalCost: 1.2, minPassGain: 0.05, lowConfidence: 0.6, comboDepth: 0.65 },
+  strong: { maxIterations: 4, maxChanges: 12, minSeverity: 0.32, minReduction: 0.15, minNet: 0.03, maxChangesPerProblem: 2, maxTotalCost: 2, minPassGain: 0.03, lowConfidence: 0.55, comboDepth: 0.7 },
 };
 
 /** Under this confidence a problem is left alone and the plan says why. */

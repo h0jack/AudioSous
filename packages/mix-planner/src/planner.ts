@@ -110,6 +110,8 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
 
   // One pass may be spent on severe level problems alone, so nothing is judged around a stem far off its level.
   let gate = true;
+  /** Earlier passes' solutions the current pass found redundant; written to `decisions` only if the pass is kept. */
+  const pruned = new Map<string, Decision>();
   for (let pass = 1; pass <= limits.maxIterations; pass += 1) {
     const survey: Survey = pass === 1 ? baseline : current!.survey;
     const detected = pass === 1 ? detected0 : detectMixProblems({ survey, settings, levels, mixPeakDbfs });
@@ -150,6 +152,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
       `pass${pass}:decisions`,
       builds[0]!.decisions.map((decision) => ({ problem: decision.problem.id, sev: decision.problem.severity, outcome: decision.outcome, note: decision.note, alternatives: decision.alternatives.map((item) => ({ label: item.label, r: item.reduction, cost: item.cost, col: item.collateral, sec: item.secondary, net: item.net })) })),
     );
+    pruned.clear();
     best = prune(best, known1);
     best = revise(best, known1);
     const gain = best.result.score - current!.score;
@@ -173,6 +176,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
       break;
     }
     passes.push({ pass, problems: open.length, selected: added, scoreBefore: current!.score, scoreAfter: best.result.score, kept: true, note: `${best.policy} candidate kept: ${added} new ${added === 1 ? "change" : "changes"}.` });
+    for (const [problemId, decision] of pruned) decisions.set(problemId, decision);
     for (const decision of best.decisions) {
       const previous = decisions.get(decision.problem.id);
       if (previous?.selected) continue;
@@ -247,8 +251,9 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
         continue;
       }
       const budget = picks.reduce((sum, change) => sum + change.cost, 0) + pick.cost;
-      if (budget > limits.maxTotalCost) {
-        made.push({ problem, pass, alternatives, selected: null, note: `The plan's processing budget for this strength is spent; this problem waits.`, outcome: "budget", changeIds: [] });
+      const count = picks.length + pick.changes.filter((change) => !picks.some((item) => item.id === change.id)).length;
+      if (budget > limits.maxTotalCost || count > limits.maxChanges) {
+        made.push({ problem, pass, alternatives, selected: null, note: `The plan's ${count > limits.maxChanges ? `change budget for this strength (${limits.maxChanges})` : "processing budget for this strength"} is spent on more important problems; this one waits.`, outcome: "budget", changeIds: [] });
         continue;
       }
       const ids: string[] = [];
@@ -281,42 +286,44 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
   /** Leave-one-out: an intervention the re-measured mix does not miss is redundant and goes. */
   function prune(best: Built, known1: DetectedProblem[]): Built {
     let current1 = best;
+    // Earlier passes' solutions are tested too: a later change on the same stem can make one of them unnecessary.
+    const earlier = [...decisions.values()].filter((decision) => decision.selected && decision.changeIds.some((id) => current1.changes.some((change) => change.id === id)));
+    const all = () => [...current1.decisions.filter((decision) => decision.selected), ...earlier.filter((decision) => !pruned.has(decision.problem.id) && !current1.decisions.some((item) => item.problem.id === decision.problem.id))];
     // Redundancy needs company: only an intervention that shares a stem with another selected change can be made
     // unnecessary by it. A lone change on its own stem was already judged against "no change".
     const stemsOf = (decision: Decision) => new Set(current1.changes.filter((change) => decision.changeIds.includes(change.id)).map((change) => change.trackId));
-    const selected = current1.decisions
-      .filter((decision) => decision.selected)
+    const order = all()
       .filter((decision) => {
         const own = stemsOf(decision);
         return current1.changes.some((change) => !decision.changeIds.includes(change.id) && (own.has(change.trackId) || decision.problem.trackIds.includes(change.trackId)));
       })
       .sort((left, right) => right.selected!.cost - left.selected!.cost || left.problem.id.localeCompare(right.problem.id))
       .slice(0, 6);
-    for (const decision of selected) {
-      const others = new Set(current1.decisions.filter((item) => item !== decision && item.selected).flatMap((item) => item.changeIds));
-      const own = decision.changeIds.filter((id) => !others.has(id) && !chosen.some((change) => change.id === id));
+    for (const decision of order) {
+      const others = new Set(all().filter((item) => item.problem.id !== decision.problem.id).flatMap((item) => item.changeIds));
+      const own = decision.changeIds.filter((id) => !others.has(id) && current1.changes.some((change) => change.id === id));
       if (own.length === 0) continue;
       const without = current1.changes.filter((change) => !own.includes(change.id));
       const result = evaluateCandidate(evalCtx, without, known1);
-      if (result.score >= current1.result.score - 0.002) {
-        trace("prune", { problem: decision.problem.id, removed: own, with: current1.result.score, without: result.score });
-        // What the whole mix had with it that it does not have without: the reason it goes.
-        const only = current1.result.regressions.filter((item) => !result.regressions.some((other) => other.description === item.description));
-        const worse = [...known1]
-          .filter((problem) => problem.id !== decision.problem.id && (current1.result.severities.get(problem.id) ?? 0) > (result.severities.get(problem.id) ?? 0) + 0.05)
-          .map((problem) => problem.title);
-        const why =
-          only.length > 0
-            ? `with it, the re-measured mix regressed: ${only[0]!.description}`
-            : worse.length > 0
-              ? `with it, re-measured, ${worse[0]} got worse`
-              : "the rest of the plan already covers what it would do";
-        const decisions1 = current1.decisions.map((item) =>
-          item === decision ? { ...item, outcome: "redundant" as const, selected: null, changeIds: [], note: `${decision.selected!.label} was left out: ${why} (candidate score ${current1.result.score.toFixed(2)} with it, ${result.score.toFixed(2)} without).` } : item,
-        );
-        // Keep the alternative visible as the one that was considered.
-        decisions1.find((item) => item.problem.id === decision.problem.id)!.alternatives = decision.alternatives;
-        current1 = { ...current1, changes: without, decisions: decisions1, result };
+      if (result.score < current1.result.score - 0.002) continue;
+      trace("prune", { problem: decision.problem.id, removed: own, with: current1.result.score, without: result.score });
+      // What the whole mix had with it that it does not have without: the reason it goes.
+      const only = current1.result.regressions.filter((item) => !result.regressions.some((other) => other.description === item.description));
+      const worse = [...known1]
+        .filter((problem) => problem.id !== decision.problem.id && (current1.result.severities.get(problem.id) ?? 0) > (result.severities.get(problem.id) ?? 0) + 0.05)
+        .map((problem) => problem.title);
+      const why =
+        only.length > 0
+          ? `with it, the re-measured mix regressed: ${only[0]!.description}`
+          : worse.length > 0
+            ? `with it, re-measured, ${worse[0]} got worse`
+            : "the rest of the plan already covers what it would do";
+      const note = `${decision.selected!.label} was left out: ${why} (candidate score ${current1.result.score.toFixed(2)} with it, ${result.score.toFixed(2)} without).`;
+      const redundant: Decision = { ...decision, outcome: "redundant", selected: null, changeIds: [], note };
+      if (current1.decisions.includes(decision)) current1 = { ...current1, changes: without, decisions: current1.decisions.map((item) => (item === decision ? redundant : item)), result };
+      else {
+        pruned.set(decision.problem.id, redundant);
+        current1 = { ...current1, changes: without, result };
       }
     }
     return current1;
@@ -356,7 +363,13 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
 
   function assemble(): FullMixPlan {
     const severities = final.severities;
-    const shown = [...known.values()].filter((problem) => problem.severity >= limits.minSeverity);
+    // A weak relationship no planner can act on is reported in one line, not as an issue.
+    const quiet = (problem: DetectedProblem) => {
+      const decision = decisions.get(problem.id);
+      return problem.type !== "section-contrast" && problem.type !== "intent" && problem.severity < 0.55 && !decision?.selected && (decision?.alternatives.length ?? 0) === 0 && (decision?.changeIds.length ?? 0) === 0;
+    };
+    const shown = [...known.values()].filter((problem) => problem.severity >= limits.minSeverity && !quiet(problem));
+    const unshown = [...known.values()].filter((problem) => problem.severity >= limits.minSeverity && quiet(problem));
     const interventions: MixIntervention[] = [];
     const problems: MixProblem[] = shown.map((problem) => {
       const decision = decisions.get(problem.id);
@@ -449,7 +462,11 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
         : changes.length === 0
           ? `Full Mix found ${problems.length} ${problems.length === 1 ? "issue" : "issues"} but no change worth its cost.`
           : `Full Mix found ${problems.length} significant ${problems.length === 1 ? "issue" : "issues"} and proposes ${changes.length} ${changes.length === 1 ? "change" : "changes"}.`;
-    const notes = [stopReason, ...(trimReason ? [trimReason] : []), ...subsystemNotes()].slice(0, 12);
+    const weak =
+      unshown.length > 0
+        ? [`Also read and left alone, weaker and with no move worth making: ${unshown.map((problem) => `${problem.title} (severity ${problem.severity.toFixed(2)})`).join("; ")}.`.slice(0, 600)]
+        : [];
+    const notes = [stopReason, ...(trimReason ? [trimReason] : []), ...weak, ...subsystemNotes()].slice(0, 12);
     return {
       planVersion: FULL_MIX_PLAN_VERSION,
       plannerVersion: FULL_MIX_PLANNER_VERSION,
