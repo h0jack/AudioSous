@@ -380,12 +380,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = removeTask(get().tasks, id);
     if (next !== get().tasks) set({ tasks: next });
   },
-  goWelcome: () => set({ tasks: cancelActive(get().tasks), screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), autoMix: idleAutoMix(), exportJob: null, assistant: idleAssistant(false, get().assistant.settings) }),
+  goWelcome: () => set({ tasks: cancelActive(get().tasks), changesFocus: null, screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), autoMix: idleAutoMix(), exportJob: null, assistant: idleAssistant(false, get().assistant.settings) }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
     set({
       tasks: cancelActive(get().tasks),
+      changesFocus: null,
       screen: "project",
       document,
       projectFilePath,

@@ -7,7 +7,7 @@ Audiosous is a local desktop application. Milestone 1 did not mix, host plugins,
 ```text
 Audiosous/
 ├── apps/desktop/          React + Vite UI and the Tauri shell
-├── crates/audio-engine/   Native playback clock, proxies, and device output
+├── crates/audio-engine/   Native playback clock, proxies, device output, the offline mix graph, and export
 ├── packages/
 │   ├── project-model/     Versioned .amix schema, migrations, roles, import checks
 │   ├── audio-files/       WAV and AIFF header inspection (no full decode)
@@ -64,6 +64,8 @@ The React app never imports `services/analysis`.
 | Tests | Vitest for TypeScript, `cargo test` for path and copy safety |
 | Analysis | Python sidecar (`numpy`, `scipy`, `soundfile`, `pyloudnorm`). The UI does not import it |
 | Assistant provider | `@anthropic-ai/sdk` in the webview; its requests go through the Tauri shell (`ureq`), which adds the key |
+| Export encoding | WAV written by Audiosous; FLAC with `flacenc` (Apache-2.0/MIT); MP3 with the LAME library (LGPL), loaded at run time with `libloading` and never linked statically; `md-5` for the FLAC checksum |
+| Export verification | `symphonia` (MPL-2.0) decodes WAV, FLAC, and MP3 back for the checks |
 
 There is no account system or upload step. The only network request Audiosous makes is the assistant's, when a provider is configured and the person sends a message: structured project information to the Anthropic Messages API, never audio (see [Conversational assistant](#conversational-assistant)).
 
@@ -109,6 +111,8 @@ A mono stem uses equal-power pan. A stereo stem uses the same coefficients as a 
 If the device is not 48 kHz float, a mixer thread outside the callback does the rate conversion. Its stereo, planar, and interleaved buffers are allocated once and reused. The callback only copies from that device ring, or converts float to 16-bit from a buffer allocated when the stream opened.
 
 Steady-state playback memory is the rings plus a small scratch buffer per reader. A 5-second stereo float ring is about 1.9 MB, so 11 stems are about 21 MB, 32 stems about 61 MB, and 64 stems about 123 MB. The proxy file stays on disk. The reader never loads it whole.
+
+Since the post-Milestone 8 export work, the per-frame mix loop lives in `render.rs` as `MixGraph`, shared by the offline bounce (proxies, 48 kHz) and export (original stems, any rate). The EQ, spatial, and dynamics runtimes take the rate they run at: ramps keep 30 ms, the transient hold 1 ms blocks, and every time constant its duration. At 48 kHz they are exactly what the device callback runs (the bounce is still tested equal to the realtime engine within 1e-4).
 
 The mix order is read, then the per-track process stage (static EQ since Milestone 4: track filters, then the filters of the section under the playhead; dynamics since Milestone 6: dynamic EQ, compressor, transient, ducking; then width since Milestone 5), then pan or balance, gain, sum, then a mix-bus stage that is still identity. EQ sits before the fader so a fader move never changes what the filter sees, and before pan so both channels are filtered the same. Since Milestone 6 every track's frame is pulled before any track is processed, so a sidechain key exists for the frame whatever the track order.
 
@@ -442,7 +446,7 @@ Ranges are two runs. All runs had 0 underruns. That leaves headroom for later dy
 
 ### Export
 
-There is no final render yet. When export is built, it has to run the same nodes on the original source at its own sample rate, not on the 48 kHz proxy. The response formulas are rate-independent and the planner stores frequencies, gains, and Q, not coefficients. Above about 0.45 × the playback rate the proxy and a high-rate source differ, and the planner never places a filter there.
+Export runs the same nodes on the original source at the export's own sample rate, not on the 48 kHz proxy (see [Export](#export)): the planner stores frequencies, gains, and Q, not coefficients, and the filters are designed again for that rate. A filter is clamped to 0.45 × the rate it runs at, so above about 21.6 kHz a high-rate export and the proxy differ; the planner never places a filter there.
 
 ### Legacy engine
 
@@ -1132,6 +1136,95 @@ cargo run --release -p audiosous-audio --example bounce_mix -- target/acceptance
 
 `converse-project.ts` loads a real project with the M7 scenario loader (`packages/mix-planner/scripts/scenario.ts`), runs a conversation through the real planners, apply, and undo in memory, and writes `report.txt` (each turn's request, tools and results, candidate, writes, reply, and an independent grounding audit), `transcript.json` (everything sent and received), and `bounce.json` (Current, each candidate as previewed and unmatched, each applied state) for `bounce_mix`. Without `AGENT_MODEL` it uses the conversation's scripted tool calls and replies made only from that turn's tool results; with it the configured model decides and the scripts are ignored. The project file is never written.
 
+## Processing status
+
+One task model (`apps/desktop/src/lib/tasks.ts`, kept in the store as `tasks`) holds every long-running piece of work: stem import, waveform measurement, playback-audio preparation (the proxies), Play priming, analysis, the five planners, Auto Mix, the assistant, and export. A task has a kind, a label, a status (queued, running, complete, failed, cancelled), real progress when the fraction is known (stems ready, frames rendered) or a stage counter when it is not, the current detail, per-item steps (each stem, each stage), cancel and retry, an error, and what it blocks:
+
+| Blocks | Set by | Effect |
+| --- | --- | --- |
+| `playback` | waveform measurement, playback audio not ready or failed | Play is disabled, its tooltip says why ("Preparing playback — 8 of 11 stems ready"), Space does nothing |
+| `editing` | waveform measurement | the preparation overlay covers the workspace, as before |
+| `planning` | waveform measurement | Auto Mix waits |
+| `export` | preparation, a running export, a running Auto Mix | Export is disabled with the reason |
+
+Analysis, the planners, and the assistant block nothing, so Play stays available while the EQ planner measures. `gate(tasks, what)` is the one rule every control reads; nothing else decides readiness.
+
+Who publishes: the planner sessions publish from the store's own setters (`setEq` and the others map `phase`/`progress`/`error` to a task, so every planner is covered without touching its flow); the assistant from `setAssistant`; the analysis queue as it runs; the waveform loader from the project screen; the playback hook from each engine status poll (about 30 per second; an unchanged task is not re-written); Auto Mix and export from their flows. Cancel and retry are registered per task id (`registerTaskActions`) because they are functions, not state.
+
+The engine reports each stem's proxy state (queued, building with its percent, ready, failed with the reason) in `EngineStatus.proxyTracks`, read on the control thread from a mutex the builder writes; the device callback never touches it. A failed stem keeps Play disabled and names the file; Retry reloads the project into the engine, which rebuilds only what is missing.
+
+What the person sees: the banner under the header shows a failure first, then the most important running task (preparation, export, Auto Mix, Full Mix, the assistant, then the planners), with a bar for real fractions and stage dots otherwise, Cancel, Retry, Dismiss, and Details (every task and its steps, glyph and word so nothing is color alone). A major task's completion leaves a short note ("Project ready — 11 tracks prepared", "Recommended Mix ready — 5 changes to preview", "Export completed — Night Drive.flac") for four seconds. The preparation overlay shows both stages, waveforms and playback audio, with real counts and a per-stem list. Each planner tab shows its own task prominently ("EQ: Checking frequency interactions — Analyzing 3 of 11: Kick"). When Play is pressed and the engine is priming, the transport shows "Preparing playback…"; the playhead still does not move until audio starts.
+
+## Auto Mix
+
+Auto Mix (the header's primary button) takes a project from loaded stems to one verified Recommended Mix. It is not a sixth planner and does not concatenate the four planners' recommendations: the Gain, EQ, Space, and Dynamics stages gather the evidence those planners measure, and Full Mix decides what survives.
+
+```text
+Preparing audio            waits for the engine's playback audio (the same proxies every measurement reads; never builds them twice)
+Analyzing levels           per-stem analysis (sidecar, disk cache)
+Checking frequency…        EQ band frames from the proxies
+Evaluating stereo space    stereo frames
+Checking dynamics          envelope frames
+Building coordinated mix   the current mix's rendered peak, then planFullMix in the worker: the four planners as measurement,
+                           problems, alternatives against "no change", re-measured whole-mix candidates, pruning
+Verifying candidate        the Full Mix render check through the native DSP
+```
+
+The result is exactly the Full Mix plan for the saved project at the chosen strength (tested byte-identical), shown as the Recommended Mix: what was analyzed, the problems found by kind, the changes kept by processor, and how many of the four planners' own recommendations were left out. It plays as a candidate through the Full Mix A/B, opens on its Changes view, and is written only by Apply Mix (the Full Mix apply: one project update, one undo step). Strength is the Full Mix strength (Normal by default; Conservative and Strong in the button's menu).
+
+Reuse: per-stem analysis and frames are kept in memory per set of source files (ids, paths, size, modification time, mute) and the rendered peak per mix state (`loadMixInputs` in `lib/full-mix.ts`, shared with Full Mix and the assistant); a fresh, unconstrained Full Mix plan with the same settings is reused whole, every stage marked "reused". Band, stereo, and envelope requests already in flight are joined (`lib/inflight.ts`), so the EQ tab and Auto Mix never measure the same stems twice at once.
+
+Open, unapplied Gain / EQ / Space / Dynamics candidates are closed when Auto Mix starts; they are never inputs. A change to gain, EQ, space, dynamics, roles, sections, notes, or a source while Auto Mix runs fails it with that reason, and a ready Recommended Mix goes stale ("Mix changed — Rebuild") when the mix changes after it. Cancel bumps the generation: the work in flight is dropped, the half-built candidate discarded, and nothing is written. Log events: `automix.start`, `automix.complete` (counts, reused stages, timings), `automix.failed`, `automix.stale`, `automix.cancel`, `automix.apply`.
+
+## Changes: Current, Candidate, Difference
+
+`packages/mix-planner/src/difference.ts` turns any candidate into one normalized difference model by diffing the saved project against the project the plan's own apply would write (Full Mix and Auto Mix, Gain, EQ, Space, Dynamics each have an adapter). Because it diffs documents, a change that edits a saved node reads as before / after / net, never as the new node alone. It reports:
+
+- **Gain**: current, candidate, and delta per stem, song-wide and per section (a section override replaces the fader there; only what differs from the song-wide move counts as a section change); a uniform safety trim is one line, not a move on every stem; each stem's estimated level in the mix before and after, for the hierarchy graph.
+- **EQ**: the response that plays in each scope (track, and track + section) before and after, and their difference curve, with the largest net change and where; whether a saved filter was edited.
+- **Space**: pan and width before and after per scope, in words ("moved right, narrower").
+- **Dynamics**: each node added, edited, or removed, in words; its gain reduction over time (the planner's envelope simulation, up to 400 buckets); p95 and maximum reduction; the share of the scope where it acts; the key's hits for a duck or keyed dynamic EQ (from the envelope, aligned with the reduction); a dynamic EQ's deepest curve; and its before/after readings (sustained-level variation, crest, gap over the key, hit collision, attack over body).
+- **Interactions**: each pair's measure before and after, labelled for what it is (Full Mix problem severity, the EQ planner's competed share, the Space planner's conflict).
+- **Metrics**: open problems, center congestion, correlation, mono fold-down, estimated peak, largest reduction, and per-stem readings, each with which way is an improvement. None is presented as a mix-quality score.
+- **Where**: song-wide domains, and per section the domains changed there only (G, E, S, D).
+
+The desktop's Changes view (`components/ChangesView.tsx`) draws it the same way in every plan tab (Full Mix opens on Problems, the Recommended Mix on Changes), with one Current / Candidate / Difference toggle: Current draws the saved state, Candidate draws the candidate over a dashed ghost of the saved one, Difference draws only the change. Small moves are legible: the EQ difference plot zooms to ±1, 2, 3, 6, or 12 dB and says so ("Difference scale ±2 dB"); every drawing carries its numbers; a plain sentence says what moved and, for small moves, that it is subtle and may be hard to hear in isolation, with what it measurably did ("Lead ↔ Pad interaction went from 0.77 to 0.32"). The timeline marks sections that have section-only changes with the same letters; clicking one opens the Changes view focused there, and clicking a change selects its stem and section. Difference listening (Candidate − Current) is not implemented: the visual view is the aid, Current/Candidate the audition.
+
+## Export
+
+Export renders the applied (saved) mix to a finished file. It runs in the shell on its own thread (`export_host.rs`), one export at a time, polled by the webview like the audio status; it never touches the device callback.
+
+```text
+original stems (media/) ──► SourceStream: decoded in blocks; resampled once to the export rate with a 256-tap
+        Blackman-Harris sinc when the stem's rate differs; the resampler's delay removed (frame 0 is the stem's first sample)
+    ──► MixGraph at the export rate (render.rs): EQ (track, section), dynamic EQ, compressor, transient, ducking with
+        sidechain keys, width and pan, faders with section gain — the playback DSP, rate-aware
+    ──► temporary float render beside the output, measured: integrated loudness, loudness range, sample peak,
+        true peak, and the true peak of every 50 ms block
+    ──► distribution stage (optional): one gain to the target; the true-peak limiter only where a peak would pass
+    ──► encoder to a temporary file ──► decoded and measured ──► renamed into place ──► temporaries removed
+```
+
+**What is exported.** The mix as the engine plays it for the saved project (`engineVariant` of the document, the same shape the render check uses): faders and mute, section gain, EQ, space, and dynamics. Solo is for listening and is ignored. An open candidate is never exported; the dialog says when one is open ("Export Applied Mix").
+
+**Source and rate.** Stems are read from `media/`, not the playback proxies. The export rate is the project's when the format allows it (WAV up to 192 kHz, FLAC up to 96 kHz — the encoder's limit — MP3 44.1 or 48 kHz), or 44.1 or 48 kHz. A stem at the export rate is not resampled; at 48 kHz from 48 kHz stems the export equals the proxy bounce bit for bit. The playback proxies of resampled stems keep their FFT resampler's delay (545 frames, 11 ms, for 192 kHz stems); export is on the stems' own timeline.
+
+**Loudness** (`loudness.rs`, ITU-R BS.1770-4): K-weighting designed for the actual rate, 400 ms blocks with 75% overlap gated at −70 LUFS and 10 LU under their mean; loudness range from 3 s blocks every 100 ms gated 20 LU under their mean (95th − 10th percentile); true peak by polyphase interpolation to at least 176.4 kHz (4× at 44.1/48 kHz, 2× at 88.2/96 kHz). Tested on the EBU Tech 3341/3342 reference cases; on real exports it agrees with ffmpeg's `ebur128` to 0.1 LU and 0.1 dB.
+
+**Presets** are Audiosous starting points with their numbers shown, not platform requirements: Preserve Mix Level (no gain; the limiter only catches a true peak over −1.0 dBTP), Streaming Balanced (−14 LUFS, −1.0 dBTP, the default), Streaming Loud (−10 LUFS, −1.0 dBTP), Custom (−30 to −5 LUFS, ceiling −6 to 0 dBTP). The dialog says that services normalize playback differently and that a preset is not a guarantee of identical playback loudness everywhere.
+
+**Limiter** (`limiter.rs`): offline, deterministic, true-peak aware. Per frame: the interpolated peak, the gain that keeps it under the ceiling, the minimum of that over a 5 ms lookahead, a 150 ms recovery that returns exactly to unity between peaks, and a 5 ms average (the average of a window minimum never exceeds what any peak in the window needs, so the gain is down before the peak arrives without a step). It starts primed so a peak in the first 5 ms is caught. Audio that fits passes bit for bit. With a target, limiting costs a little loudness, so the gain is corrected by up to two measure-only passes; after encoding, a file over the ceiling by more than 0.05 dB is mastered again a little lower (at most twice).
+
+**Heavy limiting.** From the render's block peaks the plan estimates the largest reduction and how much of the song would be reduced by more than 1 and 3 dB. Over 6 dB at any moment, or over 3 dB for more than 5% of the song, is heavy: the export stops after the render and asks — Use safer level (the loudest target that keeps the reduction ≤ 3 dB and over 1 dB for ≤ 5% of the song), Continue anyway, or Cancel. The safer level is not pushed back toward the requested number; the summary states the level reached instead. A file that still needed heavy limiting says so in its summary.
+
+**Formats.** WAV 16-bit and 24-bit PCM (seeded TPDF dither) and 32-bit float. FLAC 16 and 24-bit, encoded block by block to disk with the stream's MD5, a true-length last frame, and Vorbis comments. MP3 320 kbps CBR or V0, through LAME with an ID3v2 tag (title, artist, album, track, year) and the LAME/Xing frame (gapless length). MP3 is unavailable, with the reason, when LAME is not installed (`AUDIOSOUS_LAME_PATH` points at a library elsewhere).
+
+**Verification.** The written file is decoded completely and checked: sample rate, channels, length (exact for WAV and FLAC, within one MP3 frame), loudness against the pre-encode measurement, and true peak against the ceiling. Only then is the temporary file renamed to the chosen path. A failure leaves nothing at the output path; cancel removes the temporaries.
+
+**Determinism.** The same project, settings, and stems give byte-identical WAV and FLAC (tested); MP3 is LAME's deterministic output for the same input.
+
+**Concurrency with playback.** Export runs on one thread with buffered reads; playback keeps its reader threads and the callback. Allowed at the same time, measured below in the milestone notes. Log events: `export.start`, `export.complete` (format, rate, duration, loudness, true peak, limiter, render speed, timings, peak memory), `export.failed`, `export.cancel`.
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
@@ -1145,7 +1238,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`, and `dynamicsplan.start`, `dynamicsplan.complete`, `dynamicsplan.verify`, `dynamicsplan.preview`, `dynamicsplan.apply`, `dynamicsplan.cancel`, and `dynamicsplan.stale`, and `fullmix.start`, `fullmix.complete`, `fullmix.check`, `fullmix.preview`, `fullmix.apply`, `fullmix.cancel`, and `fullmix.stale`, and the assistant's `agent.*` events (see [Conversational assistant](#conversational-assistant), Logging). `fullmix.complete` records `analysisMs` (loading and measuring, including the render of Current), `durationMs` (planning in the worker), `checkMs` (the render check), the problem, change, and independent counts, and the number of planner runs. `dynamicsplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the other plans. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, envelopes, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`, and `dynamicsplan.start`, `dynamicsplan.complete`, `dynamicsplan.verify`, `dynamicsplan.preview`, `dynamicsplan.apply`, `dynamicsplan.cancel`, and `dynamicsplan.stale`, and `fullmix.start`, `fullmix.complete`, `fullmix.check`, `fullmix.preview`, `fullmix.apply`, `fullmix.cancel`, and `fullmix.stale`, and the assistant's `agent.*` events (see [Conversational assistant](#conversational-assistant), Logging), and `automix.*` and `export.*` (see [Auto Mix](#auto-mix) and [Export](#export)). `fullmix.complete` records `analysisMs` (loading and measuring, including the render of Current), `durationMs` (planning in the worker), `checkMs` (the render check), the problem, change, and independent counts, and the number of planner runs. `dynamicsplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the other plans. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, envelopes, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 

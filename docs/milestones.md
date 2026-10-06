@@ -550,6 +550,93 @@ No provider credential was available in the development environment (no `ANTHROP
 - a GUI walk-through: open Assistant, connect a provider, ask a diagnostic question, ask for a candidate, preview it, inspect the highlighted problem, refine by conversation and in the plan UI, continue, apply, undo, change the mix and see the candidate go stale, cancel a request in flight;
 - the Milestone 7 listening pass and walk-through, which are still open too.
 
+## Post-Milestone 8: productization
+
+This pass makes the existing system easier to operate and able to deliver a finished file. It adds no mixing engine: Auto Mix is Full Mix with its evidence gathered in visible stages, the difference view reads what the planners already measure, and export runs the playback DSP offline. Every planner, Full Mix, and the assistant work as before. See [Processing status](architecture.md#processing-status), [Auto Mix](architecture.md#auto-mix), [Changes](architecture.md#changes-current-candidate-difference), and [Export](architecture.md#export).
+
+| Slice | Status |
+| --- | --- |
+| 1. Shared processing task model | Done. One store of tasks with what each blocks (playback, editing, planning, export); import, waveforms, playback audio (per-stem proxy state from the engine), priming, analysis, the five planners, the assistant, Auto Mix, and export publish into it |
+| 2. Prominent processing UX | Done. Banner under the header with real progress or stages, Cancel / Retry / Dismiss, a detail panel per stem or stage, completion notes; preparation overlay with both stages; Play disabled with the reason while playback audio is prepared or failed, enabled during analysis; "Preparing playback…" while priming; planner tabs show their task |
+| 3. Auto Mix orchestrator | Done. Seven stages, reuse of current analysis and plans, joining in-flight measurements, cancel, staleness, open subsystem candidates closed, Apply as one undo step, Conservative / Normal / Strong |
+| 4. Difference data model | Done. `mix-planner/difference.ts`: gain and section gain, EQ curves and net difference, pan/width, dynamics reduction timelines with key hits, dynamic EQ curves, interactions, metrics, section markers; adapters for Full Mix and the four planners |
+| 5. Difference UI | Done. One Changes view with Current / Candidate / Difference in every plan tab, zoomed and labelled difference scale, plain-language sentences, timeline section markers |
+| 6. Offline render core | Done. Rate-aware DSP runtimes; `MixGraph` shared by the bounce and export; original stems with one sinc resample |
+| 7. Loudness and output stage | Done. BS.1770-4 integrated, LRA, sample and true peak; presets with numbers; custom target; offline true-peak limiter; heavy-limiting decision with a safer level |
+| 8. FLAC / MP3 | Done. FLAC 16/24 (streamed, exact length, tags), MP3 320 CBR / V0 through LAME loaded at run time (ID3, gapless) |
+| 9. Export UX | Done. Dialog, applied-mix rule, progress through the task model, decision, summary with verification, Show in folder |
+| 10. Hardening | Partly. Real-project Auto Mix and export runs, independent loudness checks, contention and performance measurements, CI, and docs are done. Listening and the GUI walk-through are open (below) |
+
+### Tests
+
+- `apps/desktop` (+39): the task model and preparation (Play blocked with its reason, enabled when ready, not blocked by analysis, planners, or the assistant; failure visible with Retry; banner priority and expiry; stages vs real percentages; planner and assistant tasks from the store); Auto Mix (stage order, equal to Full Mix, fewer changes than the planners alone with the omitted count, no write before Apply and one undo step, cancel, staleness during and after, open candidates closed, reuse, blocked by preparation, playback-audio failure, discard, an already-good mix); the mix-inputs cache (reuse, peak re-rendered after a fader move, re-measured after a source change, in-flight joining); the Changes view render (zoomed labelled scale, numbers and sentence, arrows and words, dashed current, diagnostics labelled not a quality score, which candidate the timeline marks); export (presets and their numbers, rates per format, applied mix only with an open candidate, task stages and times, heavy-limiting decision, cancel, blocked during preparation, failures).
+- `packages/mix-planner` (+12): gain and section gain deltas, safety trim as one line, EQ net difference and a replaced saved filter, pan/width words, a duck's timeline aligned with the key's hits and its metrics, a section dynamic EQ's curve and marker, key-hit detection, the difference scale, the Full Mix, EQ, and empty adapters.
+- `crates/audio-engine` (+21, 1 ignored): per-stem proxy state including a failure; BS.1770 reference cases (−23 LUFS sines at 44.1/48/96 kHz, gating, 10 LU range, inter-sample peak, silence); the limiter (frame count and timing, true peak under the ceiling, untouched when it fits, deterministic); encoders (WAV at three depths, FLAC length and reproducibility, MP3 length and ID3 with LAME, seeded dither, the desktop's format names); export (every processing type — gain, section gain, EQ, section EQ, space, compressor, sidechain, transient, dynamic EQ, section dynamics — rendered from source equal to the playback render within 1e-5 and audibly active; WAV, FLAC, and MP3 at Streaming Balanced with duration, channels, rate, loudness, true peak, and no temporaries left; byte-identical lossless exports; 44.1 kHz from 48 kHz stems; distribution plans for quiet, near-target, loud, and spiky mixes; heavy limiting flagged and the safer level lighter; cancel before and after the render; a missing stem named; FLAC over 96 kHz refused; settings as the desktop sends them). The ignored stress test plays Generated 5 while exporting it.
+
+### Acceptance run
+
+**Auto Mix** (`apps/desktop/scripts/auto-mix-project.ts`, the desktop's `runAutoMix` with the store, apply, and undo on each project's cached analysis; Normal):
+
+| Mix | Analyzed | Detected | Kept | Four planners alone | Left out | Equal to Full Mix run directly |
+| --- | --- | --- | --- | --- | --- | --- |
+| Already good (Generated 5, 11 stems) | 11 tracks, 5 sections | 3 level, 4 frequency | 2 gain, 2 EQ, 1 duck (5) | 9 | 4 | yes, byte for byte; the same 5 changes Milestone 7 reported |
+| Problematic (6 stems) | 6 tracks, 5 sections | 3 level, 3 frequency, 2 space, 1 dynamics | 2 gain, 1 EQ, 1 duck, 1 dynamic EQ, 1 width (6) | 11 | 5 | yes; Milestone 7's 6 changes |
+
+Auto Mix never added processing over Full Mix; on the already-good mix it kept 5 of 9 planner rows, the same as Milestone 7 (whether 5 is "few" for that mix is the listening call still open from Milestone 7). Planning took 3.7 s and 4.2 s in Node without the render check; a second click on an unchanged project took 0.2 ms with every stage reused. Apply wrote one history step and undo restored the mix exactly. The difference view of the problematic plan reads, for example: "Pad is reduced 2.6 dB around 2.1 kHz … Lead ↔ Pad interaction went from 0.77 to 0.32", "Synth: moved right, narrower (pan R30 → R50, width 160% → 100%)", "Ducking on Bass up to 2.0 dB when Kick plays", drawn with 400 kick hits over the reduction; of the already-good plan: "This is a subtle change: Bass Bus down 1.1 dB", "Subway is only reduced 1.7 dB around 2.3 kHz, so the effect may be difficult to hear in isolation", on a ±3 dB difference scale.
+
+**Export** (`crates/audio-engine/examples/export_mix.rs`, the applied Recommended Mix, Streaming Balanced −14 LUFS / −1 dBTP unless stated; the good mix from 192 kHz stems, the problematic mix from 48 kHz stems):
+
+| Mix | File | Integrated | True peak | Duration | Limiter max / over 1 dB | ffmpeg ebur128 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Good | WAV 24-bit 48 kHz | −14.05 LUFS | −0.97 dBTP | 141.428 s | 4.4 dB / 3.6% | −14.1 LUFS, −0.9 dBTP, LRA 8.5 |
+| Good | WAV 24-bit 192 kHz | −14.05 | −1.00 | 141.428 | 4.5 / 3.8% | −14.1, −1.0 |
+| Good | FLAC 24-bit 96 kHz | −14.09 | −1.05 | 141.428 | 4.7 / 4.4% | −14.1, −1.1 |
+| Good | FLAC 16-bit 44.1 kHz | −14.05 | −0.98 | 141.428 | 4.4 / 3.6% | −14.1, −1.0 |
+| Good | MP3 320 kbps 48 kHz | −14.12 | −0.95 (warned: 0.05 dB over after encoding) | 141.428 | 4.7 / 4.4% | −14.1, −0.9 |
+| Good | WAV float, Preserve | −20.95 | −3.76 | 141.428 | none | −21.0 |
+| Problem | WAV 24 / FLAC 24 / FLAC 16 / MP3 320 | −14.08 to −14.11 | −0.99 to −1.04 | 141.451 | ≈ 3 dB | −14.1 |
+
+Every file decoded completely at its length (exact for WAV and FLAC), `flac -t` passed every FLAC, and ffprobe read the ID3 and Vorbis tags. Before the loudness stage the source render and the playback bounce measured the same loudness to 0.000 LU; on the 48 kHz stems they were bit-identical, and on the 192 kHz stems they line up after 545 frames (the proxy's resampler delay) with the residual 31 dB under the signal, the difference between the proxies' FFT resampler and the export's sinc.
+
+**Processing UX.** Covered by store and render tests, and by `prepare_project` (below) for the per-stem states the preparation view reads. Not yet walked through in the window.
+
+### Performance
+
+| Measure | Result |
+| --- | --- |
+| Auto Mix planning (Node, no render check) | 3.7 s (11 stems), 4.2 s (6 stems); repeat on an unchanged project 0.2 ms |
+| Export render, 11 stems at 192 kHz → 48 kHz (sinc) | 12× real time (11.4 s for 141 s) |
+| Export render, 11 stems at 192 kHz → 192 kHz (no resampling) | 16× real time |
+| Export render, 11 stems → FLAC 96 kHz | 6.5× real time, 30 s in all |
+| Export render, 6 stems at 48 kHz | 90–105× real time |
+| Export peak memory (whole process, VmHWM) | 21–22 MB for every format, including FLAC 96 kHz (frames are streamed to disk) |
+| Total export time, 141 s song | 12–18 s at 48 kHz (render, master, encode, decode-verify) |
+| Project preparation, Generated 5 (11 stems, 192 kHz, 217 MB; files in the OS cache) | 3.7 s for every stem's playback audio, first stem ready after 0.4 s (`prepare_project`) |
+| Playback while exporting (Generated 5 played in real time on the offline engine for 60 s while the same stems export to FLAC) | 0 underruns either way; lowest buffer 3.07 s alone, 2.99–3.07 s while exporting; worst block 0.19–0.71 ms alone, 0.60–0.97 ms while exporting (budget 10.67 ms); the export rendered at 11.6–12.2× real time beside it |
+| Callback cost, `npm run stress:audio` (release, 512-frame callbacks) | full load 11 / 32 / 64 stems 0.39 / 1.27 / 2.40 ms, every run 0 underruns; soaks of Generated 5 and Generated2 141 s each, 0 underruns, callback 0.195 / 0.200 ms |
+| Callback cost against the Milestone 8 engine, run back to back | full load 11 / 32 / 64 stems: 0.362 / 1.038 / 2.84 ms before, 0.338 / 1.094 / 2.58 ms now — within run-to-run variance, in both directions |
+
+Export and playback may run together (one export thread with buffered reads beside the four reader threads and the callback). The measurements above are why: no underrun and no loss of buffer under a full-speed export. The callback still does not allocate, lock, log, or read disk (the existing allocation tests pass); the per-stem proxy status is read on the control thread only.
+
+### Known limitations
+
+- The playback proxies of resampled stems are 545 frames (11 ms at 48 kHz) late against the stems' own timeline, because the proxy builder keeps its FFT resampler's delay (since Milestone 2.5). Export is on the stems' timeline, so section boundaries land 11 ms earlier in an export from 192 kHz stems than they play in the app. Fixing it rebuilds every proxy (a proxy format change); it is left for a later pass.
+- FLAC export is limited to 96 kHz by the encoder; a 192 kHz project exports FLAC at 96 kHz or WAV at 192 kHz.
+- MP3 encoding can raise the true peak a few hundredths of a dB past the ceiling even after two lower passes; the summary says so and suggests −1.5 dBTP for MP3.
+- MP3 needs the LAME library on the machine (or bundled with the app and found through `AUDIOSOUS_LAME_PATH`); without it MP3 is disabled with the reason. Packaging LAME for macOS and Windows installers is not done.
+- WAV is written without tags; FLAC and MP3 carry title, artist, album, track, and year.
+- The loudness stage is one gain and a safety limiter. It is not mastering: no EQ, no multiband, no clipping, no saturation.
+- Auto Mix inherits Full Mix's models and limits (see Milestone 7). It plans at one strength and goal; it does not try several and pick by ear.
+- Difference listening (Candidate − Current) is not implemented; the visual view and the Current / Candidate A/B are the aids.
+- The hierarchy graph reads EQ as a 30% share of its average dip and ignores dynamics; it shows relative level, not loudness.
+- The timeline marks section-only changes; song-wide changes are listed once in the Changes view instead of on every section.
+
+### Still open
+
+- Listening to the WAV, FLAC, and MP3 exports of both projects (start and end, dropouts, every stem present, section processing and the duck audible, stereo image), and to the Recommended Mix against Current. The objective checks above passed; no one has listened yet.
+- A GUI walk-through: create a large project and watch preparation (Play disabled with its reason, enabled when ready), run Auto Mix with its stages and cancel, read the Recommended Mix and its Changes view, apply and undo, export each format with Streaming Balanced and with a heavy target, cancel an export, and check that subtle changes are legible to someone new to mixing.
+- The Milestone 7 and 8 listening passes and walk-throughs, which are still open.
+
 ## Explicitly later
 
-Multiband compression, de-essing, lookahead, gain-reduction automation editing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, an ML mixing model, a general-purpose or autonomous agent, web access for the assistant, preference learning, accounts, collaboration, and source separation.
+Multiband compression, de-essing, lookahead, gain-reduction automation editing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting inside the mix, mastering (export has only a gain and a safety limiter), difference listening, VST hosting, reference matching, an ML mixing model, a general-purpose or autonomous agent, web access for the assistant, preference learning, accounts, collaboration, and source separation.
