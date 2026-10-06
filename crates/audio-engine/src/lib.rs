@@ -10,6 +10,7 @@ mod engine;
 mod envelope;
 mod eq;
 mod mix;
+mod mixcheck;
 mod peaks;
 mod proxy;
 mod source;
@@ -18,7 +19,8 @@ mod stereo;
 mod verify;
 
 pub use bands::{band_edges, cached_band_frames, measure_band_frames, BandFrames, BandsIdentity, BANDS_VERSION};
-pub use bounce::{bounce, BounceSettings, BounceTrack};
+pub use bounce::{bounce, bounce_range, BounceSettings, BounceTrack};
+pub use mixcheck::{check_mix, merge_windows, MixCheck, MixSectionSpec, MixVariantSpec, SectionLevel, MIX_CHECK_PREROLL};
 pub use dynamics::{reduction_db, DynKind, DynSpec, DynamicsChain, DynamicsNodeSpec, KeyDetectorKind, CONTROL_FRAMES, DYNAMICS_RAMP_FRAMES, KEY_SPAN_DB};
 pub use envelope::{cached_envelope_frames, dequantize_db, measure_envelope_frames, EnvelopeFrames, ENVELOPE_HOP, ENVELOPE_VERSION};
 pub use engine::{DynamicsMeter, Engine, EngineStatus, LoadedTrack, TrackDynamics, TrackDynamicsRegion, TrackEq, TrackEqRegion, TrackGainRegion, TrackSpatial, TrackSpatialRegion};

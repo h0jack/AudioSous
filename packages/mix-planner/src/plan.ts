@@ -166,7 +166,8 @@ function emptyDocument(plan: FullMixPlan): ProjectDocument {
 export function refreshFullMix(plan: FullMixPlan): FullMixPlan {
   const included = plan.changes.filter((change) => changeIncluded(change, "preview"));
   const reviewCount = plan.changes.filter((change) => change.status === "needs-review").length;
-  const trim = trimFor(plan, included);
+  const estimated = trimFor(plan, included);
+  const trim = plan.candidateTrim.renderedDb !== null ? Math.min(estimated, plan.candidateTrim.renderedDb) : estimated;
   const reason = Math.abs(trim) >= 0.05 ? `Headroom trim: ${formatSignedDb(trim)} dB on every stem, because the included changes could push the estimated peak past the current mix or ${SAFETY.ceilingDbfs} dBFS. A safety trim, not a mix decision.` : null;
   const notes = plan.summary.notes.filter((note) => !note.startsWith("Headroom trim:") && !note.startsWith("After review:"));
   if (reason) notes.push(reason);
@@ -175,7 +176,7 @@ export function refreshFullMix(plan: FullMixPlan): FullMixPlan {
   const confidence = plan.summary.confidence;
   return {
     ...plan,
-    candidateTrim: { gainDb: trim, reason },
+    candidateTrim: { gainDb: trim, reason, renderedDb: plan.candidateTrim.renderedDb },
     summary: { ...plan.summary, reviewCount, notes: notes.slice(-12), confidenceLabel: confidenceLabel(confidence) },
   };
 }
@@ -293,7 +294,49 @@ export function applyFullMixPlan(document: ProjectDocument, plan: FullMixPlan, m
   const chosen = plan.changes.filter((change) => (mode === "accepted" ? change.status === "accepted" : changeIncluded(change, "all")));
   const result = applyChanges(document, chosen);
   if (result.failures.length > 0) return { ok: false, failures: result.failures };
-  const trim = trimFor(plan, chosen);
+  const estimated = trimFor(plan, chosen);
+  const trim = plan.candidateTrim.renderedDb !== null ? Math.min(estimated, plan.candidateTrim.renderedDb) : estimated;
   const next = Math.abs(trim) >= 0.05 ? addTrim(result.document, trim) : result.document;
   return { ok: true, document: withUpdatedAt(next), applied: chosen.length };
+}
+
+/* ------------------------------------------------------------------ render check */
+
+/** What rendering Current and the candidate through the native DSP measured. */
+export interface RenderedCheck {
+  seconds: number;
+  current: { peakDbfs: number; rmsDb: number; monoLossDb: number; correlation: number };
+  /** The candidate as Apply would write it: included changes and the safety trim, no loudness match. */
+  candidate: { peakDbfs: number; rmsDb: number; monoLossDb: number; correlation: number };
+  /** Change of each section boundary's level step, candidate against current, dB. */
+  steps: Array<{ sectionId: string; name: string; changeDb: number }>;
+}
+
+/**
+ * Folds the rendered whole-mix check into the plan: a candidate whose rendered peak passes the current mix's (or
+ * the ceiling, whichever is higher) gets the extra safety trim, and mono, level, and section-step findings are
+ * stated. It never adds or removes a change.
+ */
+export function withRenderedCheck(plan: FullMixPlan, check: RenderedCheck): FullMixPlan {
+  const notes = plan.summary.notes.filter((note) => !note.startsWith("Render check:"));
+  const findings: string[] = [];
+  const allowed = Math.max(check.current.peakDbfs, SAFETY.ceilingDbfs);
+  let trim = plan.candidateTrim.gainDb;
+  let reason = plan.candidateTrim.reason;
+  if (check.candidate.peakDbfs > allowed + 0.1) {
+    const extra = round2(-(check.candidate.peakDbfs - allowed));
+    trim = round2(clamp(trim + extra, -SAFETY.maxTrimDb, 0));
+    reason = `Headroom trim: ${formatSignedDb(trim)} dB on every stem, because the rendered candidate peaked at ${formatSignedDb(check.candidate.peakDbfs)} dBFS against ${formatSignedDb(check.current.peakDbfs)} dBFS now. A safety trim, not a mix decision.`;
+    findings.push(`the rendered peak rose to ${formatSignedDb(check.candidate.peakDbfs)} dBFS, so the safety trim is ${formatSignedDb(trim)} dB`);
+  } else {
+    findings.push(`peak ${formatSignedDb(check.current.peakDbfs)} → ${formatSignedDb(check.candidate.peakDbfs)} dBFS`);
+  }
+  findings.push(`level ${formatSignedDb(round2(check.candidate.rmsDb - check.current.rmsDb))} dB before the A/B's loudness match`);
+  const monoGrowth = check.candidate.monoLossDb - check.current.monoLossDb;
+  findings.push(monoGrowth > SAFETY.monoLossGrowthDb ? `mono fold-down loses ${monoGrowth.toFixed(1)} dB more than now; listen in mono` : `mono fold-down ${check.current.monoLossDb.toFixed(2)} → ${check.candidate.monoLossDb.toFixed(2)} dB`);
+  const jumps = check.steps.filter((step) => Math.abs(step.changeDb) > SAFETY.transitionStepDb);
+  if (jumps.length > 0) findings.push(`the step into ${jumps.map((step) => `${step.name} (${formatSignedDb(step.changeDb)} dB)`).join(", ")} changes noticeably`);
+  notes.push(`Render check: ${Math.round(check.seconds)} s of Current and the candidate rendered through the native DSP from the playback proxies; ${findings.join("; ")}.`);
+  const filtered = reason ? notes.filter((note) => !note.startsWith("Headroom trim:")).concat(reason) : notes;
+  return { ...plan, candidateTrim: { gainDb: trim, reason, renderedDb: trim < plan.candidateTrim.gainDb ? trim : plan.candidateTrim.renderedDb }, summary: { ...plan.summary, notes: filtered.slice(-12) } };
 }

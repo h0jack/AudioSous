@@ -5,6 +5,7 @@ import { useAppStore } from "../state/app-store";
 import { AutoBalancePanel } from "./AutoBalancePanel";
 import { DynamicsPanel } from "./DynamicsPanel";
 import { EqPanel } from "./EqPanel";
+import { FullMixPanel } from "./FullMixPanel";
 import { SpacePanel } from "./SpacePanel";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -15,7 +16,8 @@ const PLANS_MIN_PX = 140;
 const STORAGE_KEY = "audiosous.plans-drawer";
 
 /**
- * Mix plans under the timeline: gain (AutoBalance), EQ, space (pan and width), and dynamics. One is shown at a time; each keeps
+ * Mix plans under the timeline: gain (AutoBalance), EQ, space (pan and width), dynamics, and Full Mix (all four
+ * coordinated). One is shown at a time; each keeps
  * its state. While a plan is open this is a resizable drawer: drag the handle (or use the arrow keys on it) to trade
  * room with the timeline, or collapse it to the tab strip and the plan's Current / Candidate / Apply bar so the whole
  * timeline is visible while you listen.
@@ -26,7 +28,8 @@ export function PlansPanel({ document, playback }: { document: ProjectDocument; 
   const eqOpen = useAppStore((state) => state.eq.open);
   const spaceOpen = useAppStore((state) => state.space.open);
   const dynamicsOpen = useAppStore((state) => state.dynamics.open);
-  const open = tab === "gain" ? balanceOpen : tab === "eq" ? eqOpen : tab === "space" ? spaceOpen : dynamicsOpen;
+  const fullOpen = useAppStore((state) => state.fullMix.open);
+  const open = tab === "gain" ? balanceOpen : tab === "eq" ? eqOpen : tab === "space" ? spaceOpen : tab === "dynamics" ? dynamicsOpen : fullOpen;
   const rootRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ y: number; height: number } | null>(null);
   const [room, setRoom] = useState(0);
@@ -116,6 +119,7 @@ export function PlansPanel({ document, playback }: { document: ProjectDocument; 
         <Tab id="eq" label={`EQ${eqOpen ? " ·" : ""}`} active={tab === "eq"} />
         <Tab id="space" label={`Space${spaceOpen ? " ·" : ""}`} active={tab === "space"} />
         <Tab id="dynamics" label={`Dynamics${dynamicsOpen ? " ·" : ""}`} active={tab === "dynamics"} />
+        <Tab id="full" label={`Full Mix${fullOpen ? " ·" : ""}`} active={tab === "full"} />
         {open ? (
           <button
             type="button"
@@ -134,8 +138,10 @@ export function PlansPanel({ document, playback }: { document: ProjectDocument; 
         <EqPanel document={document} playback={playback} />
       ) : tab === "space" ? (
         <SpacePanel document={document} playback={playback} />
-      ) : (
+      ) : tab === "dynamics" ? (
         <DynamicsPanel document={document} playback={playback} />
+      ) : (
+        <FullMixPanel document={document} playback={playback} />
       )}
     </div>
   );
@@ -153,7 +159,7 @@ function readSaved(): { height: number | null; collapsed: boolean } {
   }
 }
 
-function Tab({ id, label, active }: { id: "gain" | "eq" | "space" | "dynamics"; label: string; active: boolean }) {
+function Tab({ id, label, active }: { id: "gain" | "eq" | "space" | "dynamics" | "full"; label: string; active: boolean }) {
   return (
     <button
       type="button"

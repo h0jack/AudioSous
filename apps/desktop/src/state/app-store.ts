@@ -2,6 +2,7 @@ import type { AutoBalanceSettings, MixPlan, SourceFingerprint } from "@audiosous
 import type { EqPlan, EqSettings } from "@audiosous/eq-planner";
 import type { SpatialPlan, SpatialSettings } from "@audiosous/spatial-planner";
 import type { DynamicsPlan, DynamicsSettings } from "@audiosous/dynamics-planner";
+import type { FullMixPlan, FullMixSettings } from "@audiosous/mix-planner";
 import type { ImportWarning, ProjectDocument } from "@audiosous/project-model";
 import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
@@ -143,7 +144,67 @@ export function idleDynamics(): DynamicsSession {
   };
 }
 
-export type PlanTab = "gain" | "eq" | "space" | "dynamics";
+/** What the Full Mix A/B plays: one change or one problem's solution on its own, or the candidate without it. */
+export interface FullMixFocus {
+  kind: "change" | "problem";
+  id: string;
+  side: "only" | "without";
+}
+
+/** The rendered whole-mix check: Current and the candidate through the native DSP on the proxies. */
+export interface FullMixCheck {
+  seconds: number;
+  current: { peakDbfs: number; rmsDb: number; monoLossDb: number; correlation: number };
+  candidate: { peakDbfs: number; rmsDb: number; monoLossDb: number; correlation: number };
+  /** Change of each section boundary's level step, candidate against current, dB. */
+  steps: Array<{ sectionId: string; changeDb: number }>;
+  notes: string[];
+}
+
+export interface FullMixSession {
+  open: boolean;
+  generation: number;
+  phase: "idle" | "analyzing" | "planning" | "checking" | "ready" | "failed";
+  progress: string | null;
+  plan: FullMixPlan | null;
+  settings: FullMixSettings;
+  /** Whole-mix A/B: false plays Current, true plays the Full Mix Candidate. */
+  preview: boolean;
+  focus: FullMixFocus | null;
+  /** Play the candidate at the current mix's estimated loudness. */
+  loudnessMatch: boolean;
+  /** Problem whose evidence, alternatives, and changes are open. Selection is not an edit. */
+  selectedProblemId: string | null;
+  /** Change whose editor is open. */
+  selectedChangeId: string | null;
+  check: FullMixCheck | null;
+  /** Rendered peak of the current mix, read before planning (the headroom check). */
+  mixPeakDbfs: number | null;
+  error: string | null;
+  fingerprints: SourceFingerprint[];
+}
+
+export function idleFullMix(): FullMixSession {
+  return {
+    open: false,
+    generation: 0,
+    phase: "idle",
+    progress: null,
+    plan: null,
+    settings: { strength: "normal", goal: "balanced" },
+    preview: false,
+    focus: null,
+    loudnessMatch: true,
+    selectedProblemId: null,
+    selectedChangeId: null,
+    check: null,
+    mixPeakDbfs: null,
+    error: null,
+    fingerprints: [],
+  };
+}
+
+export type PlanTab = "gain" | "eq" | "space" | "dynamics" | "full";
 
 export type Screen = "welcome" | "import" | "project";
 export type Workspace = "mix" | "analysis";
@@ -168,6 +229,7 @@ interface AppState {
   eq: EqSession;
   space: SpaceSession;
   dynamics: DynamicsSession;
+  fullMix: FullMixSession;
   planTab: PlanTab;
   goWelcome: () => void;
   setWorkspace: (workspace: Workspace) => void;
@@ -185,6 +247,7 @@ interface AppState {
   setEq: (patch: Partial<EqSession>) => void;
   setSpace: (patch: Partial<SpaceSession>) => void;
   setDynamics: (patch: Partial<DynamicsSession>) => void;
+  setFullMix: (patch: Partial<FullMixSession>) => void;
   setPlanTab: (tab: PlanTab) => void;
 }
 
@@ -203,8 +266,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   eq: idleEq(),
   space: idleSpace(),
   dynamics: idleDynamics(),
+  fullMix: idleFullMix(),
   planTab: "gain",
-  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics() }),
+  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix() }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
@@ -223,6 +287,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       eq: idleEq(),
       space: idleSpace(),
       dynamics: idleDynamics(),
+      fullMix: idleFullMix(),
       planTab: "gain",
     }),
   replaceDocument: (document, dirty, edit) => {
@@ -261,5 +326,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setEq: (patch) => set({ eq: { ...get().eq, ...patch } }),
   setSpace: (patch) => set({ space: { ...get().space, ...patch } }),
   setDynamics: (patch) => set({ dynamics: { ...get().dynamics, ...patch } }),
+  setFullMix: (patch) => set({ fullMix: { ...get().fullMix, ...patch } }),
   setPlanTab: (planTab) => set({ planTab }),
 }));

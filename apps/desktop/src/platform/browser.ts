@@ -133,6 +133,9 @@ export const browserPlatform: DesktopPlatform = {
   async checkDynamics() {
     return [];
   },
+  async checkMix() {
+    return [];
+  },
   async measureWaveform() {
     throw new Error("Waveform measurement in the browser uses the JavaScript measurer.");
   },

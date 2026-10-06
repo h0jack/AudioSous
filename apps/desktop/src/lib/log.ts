@@ -49,7 +49,14 @@ export type LogEvent =
   | "dynamicsplan.preview"
   | "dynamicsplan.apply"
   | "dynamicsplan.cancel"
-  | "dynamicsplan.stale";
+  | "dynamicsplan.stale"
+  | "fullmix.start"
+  | "fullmix.complete"
+  | "fullmix.check"
+  | "fullmix.preview"
+  | "fullmix.apply"
+  | "fullmix.cancel"
+  | "fullmix.stale";
 
 export async function logEvent(
   platform: DesktopPlatform,

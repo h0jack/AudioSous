@@ -203,17 +203,18 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
   const eq = useAppStore((state) => state.eq);
   const space = useAppStore((state) => state.space);
   const dynamics = useAppStore((state) => state.dynamics);
+  const fullMix = useAppStore((state) => state.fullMix);
 
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !document) return;
     publish(engine, document, nativeRef.current);
-  }, [document, balance, eq, space, dynamics]);
+  }, [document, balance, eq, space, dynamics, fullMix]);
 
   /** Sends gain, section gain, EQ, pan/width, and dynamics only when what the engine would hear changed. */
   function publish(engine: RunningEngine, song: ProjectDocument, native: boolean): void {
     const state = useAppStore.getState();
-    const monitor = monitorState(song, state.balance, state.eq, state.space, state.dynamics);
+    const monitor = monitorState(song, state.balance, state.eq, state.space, state.dynamics, state.fullMix);
     const key = `${native}:${monitorKey(monitor)}:${song.tracks.map((track) => `${track.muted}:${track.solo}`).join("|")}`;
     if (key === publishedKey.current) return;
     publishedKey.current = key;

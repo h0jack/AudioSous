@@ -106,7 +106,7 @@ export async function runDynamicsPlan(): Promise<void> {
 }
 
 /** Proxy envelope frames per track. Muted stems are measured too: a muted kick can still key a duck. */
-async function loadEnvelopeFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EnvelopeFrames | null>> {
+export async function loadEnvelopeFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EnvelopeFrames | null>> {
   const out: Record<string, EnvelopeFrames | null> = {};
   try {
     const responses = await platform.envelopeFrames(
@@ -201,6 +201,7 @@ function stopOthers(): void {
   useAppStore.getState().setBalance({ preview: false, auditionId: null });
   useAppStore.getState().setEq({ preview: false, auditionId: null });
   useAppStore.getState().setSpace({ preview: false, auditionId: null });
+  useAppStore.getState().setFullMix({ preview: false, focus: null });
 }
 
 /** Whole-plan A/B. Starting a dynamics audition stops a gain, EQ, or space audition, so one comparison plays at a time. */

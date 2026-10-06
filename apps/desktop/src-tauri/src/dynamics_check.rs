@@ -119,7 +119,7 @@ pub fn check(project_file: &str, requests: Vec<DynamicsCheckRequest>) -> Result<
     Ok(out)
 }
 
-fn proxy_for(project: &Path, cache: &Path, track_id: &str, relative_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn proxy_for(project: &Path, cache: &Path, track_id: &str, relative_path: &str) -> Result<PathBuf, String> {
     let proxy = cache.join(proxy_file_name(track_id)?);
     let source = bundle::resolve_project_media_file(project, relative_path)?;
     let meta = fs::metadata(&source).map_err(|error| error.to_string())?;

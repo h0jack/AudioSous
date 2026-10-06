@@ -43,8 +43,9 @@ export {
   setChangeStatus,
   setProblemStatus,
   solutionChanges,
+  withRenderedCheck,
 } from "./plan";
-export type { ApplyFullMixResult, ChangePatch, FullMixApplyMode, FullMixAudition, FullMixAuditionOptions } from "./plan";
+export type { ApplyFullMixResult, ChangePatch, FullMixApplyMode, FullMixAudition, FullMixAuditionOptions, RenderedCheck } from "./plan";
 
 export { applyChanges, describeChange, nodeIdFor, panWords, processorKind } from "./changes";
 export { changeCost, costLabel, isAnchor } from "./cost";

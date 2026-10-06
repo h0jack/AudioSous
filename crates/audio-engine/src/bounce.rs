@@ -35,6 +35,12 @@ pub struct BounceSettings {
 
 /// Interleaved stereo for `seconds` from the start of the song.
 pub fn bounce(tracks: &[BounceTrack], settings: BounceSettings, seconds: f64) -> Result<Vec<f32>, String> {
+    bounce_range(tracks, settings, 0.0, seconds)
+}
+
+/// Interleaved stereo for `seconds` from `start_seconds`. Filters, detectors, and ramps start cold at the start,
+/// as after a seek; a caller that measures a window renders a little before it and drops that part.
+pub fn bounce_range(tracks: &[BounceTrack], settings: BounceSettings, start_seconds: f64, seconds: f64) -> Result<Vec<f32>, String> {
     let ids: Vec<String> = tracks.iter().map(|track| track.id.clone()).collect();
     let published_eq = PublishedEq::empty();
     published_eq.publish(&eq_table_for(&ids, settings.eq));
@@ -64,9 +70,13 @@ pub fn bounce(tracks: &[BounceTrack], settings: BounceSettings, seconds: f64) ->
     let mut spatial = SpatialRuntime::new();
     spatial.refresh(&published_spatial);
 
+    let start = (start_seconds.max(0.0) * f64::from(PLAYBACK_RATE)) as usize;
     let mut readers = Vec::with_capacity(tracks.len());
     for track in tracks {
-        let (header, reader) = ProxyReader::open(&track.proxy)?;
+        let (header, mut reader) = ProxyReader::open(&track.proxy)?;
+        if start > 0 {
+            reader.seek_frame(start.min(header.frames as usize) as u64)?;
+        }
         readers.push((usize::from(header.channels).clamp(1, 2), header.frames, reader));
     }
     let total = (seconds.max(0.0) * f64::from(PLAYBACK_RATE)) as usize;
@@ -80,11 +90,11 @@ pub fn bounce(tracks: &[BounceTrack], settings: BounceSettings, seconds: f64) ->
     while position < total {
         let frames = (total - position).min(CHUNK);
         for (index, (_, length, reader)) in readers.iter_mut().enumerate() {
-            let wanted = frames.min((*length as usize).saturating_sub(position));
+            let wanted = frames.min((*length as usize).saturating_sub(start + position));
             got[index] = if wanted > 0 { reader.read_interleaved(wanted, &mut buffers[index])? } else { 0 };
         }
         for frame in 0..frames {
-            let file_frame = (position + frame) as u64;
+            let file_frame = (start + position + frame) as u64;
             for (index, (channels, _, _)) in readers.iter().enumerate() {
                 keys[index] = if frame < got[index] {
                     let at = frame * channels;

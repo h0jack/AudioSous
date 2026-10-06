@@ -3,8 +3,9 @@ import { dynamicsAudition, dynamicsPlanIsStale, type DynamicsAudition } from "@a
 import { auditionMix, planIsStale } from "@audiosous/balance-planner";
 import { eqAudition, eqPlanIsStale, type EqAudition } from "@audiosous/eq-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
+import { fullMixAudition, fullMixPlanIsStale, type FullMixAudition } from "@audiosous/mix-planner";
 import { spatialAudition, spatialAuditionAt, spatialPlanIsStale, type SpatialAudition } from "@audiosous/spatial-planner";
-import { idleDynamics, idleSpace, type BalanceSession, type DynamicsSession, type EqSession, type SpaceSession } from "../state/app-store";
+import { idleBalance, idleDynamics, idleEq, idleFullMix, idleSpace, type BalanceSession, type DynamicsSession, type EqSession, type FullMixSession, type SpaceSession } from "../state/app-store";
 
 /**
  * What the engine should play right now: the saved mix, plus whichever plan is being auditioned.
@@ -16,6 +17,9 @@ import { idleDynamics, idleSpace, type BalanceSession, type DynamicsSession, typ
  *   spatial: saved pan, width, and section pan/width → Spatial candidate rows (if any)
  *   dynamics: saved dynamics → Dynamics candidate rows (if any), with level-match offsets on the faders and section
  *            gain windows of the processed stems while the candidate is auditioned (never saved)
+ *   full mix: while a Full Mix audition plays, the project with the auditioned changes written in (gain, EQ, space,
+ *            and dynamics together) replaces the saved one here, plus a uniform offset (safety trim and loudness
+ *            match). Starting it stops the other four auditions, so the layers above are the saved state.
  */
 export interface MonitorState {
   gains: Map<string, number>;
@@ -26,6 +30,15 @@ export interface MonitorState {
   spatialAudition: SpatialAudition;
   dynamics: TrackDynamicsSetting[];
   dynamicsAudition: DynamicsAudition;
+  /** The Full Mix audition playing, or null. */
+  fullMix: FullMixAudition | null;
+}
+
+/** The Full Mix audition, only while a fresh plan is previewed or one change or problem is auditioned. */
+export function currentFullMixAudition(document: ProjectDocument, full: FullMixSession): FullMixAudition | null {
+  if (!full.plan || full.phase !== "ready" || (!full.preview && !full.focus)) return null;
+  if (fullMixPlanIsStale(full.plan, document, full.fingerprints, full.settings)) return null;
+  return fullMixAudition(document, full.plan, { mode: full.preview ? "candidate" : "current", focus: full.focus, loudnessMatch: full.loudnessMatch });
 }
 
 export function balanceAudition(document: ProjectDocument, balance: BalanceSession) {
@@ -66,7 +79,16 @@ export function currentDynamicsAudition(document: ProjectDocument, dynamics: Dyn
   });
 }
 
-export function monitorState(document: ProjectDocument, balance: BalanceSession, eq: EqSession, space: SpaceSession = idleSpace(), dynamicsSession: DynamicsSession = idleDynamics()): MonitorState {
+export function monitorState(
+  document: ProjectDocument,
+  balance: BalanceSession,
+  eq: EqSession,
+  space: SpaceSession = idleSpace(),
+  dynamicsSession: DynamicsSession = idleDynamics(),
+  full: FullMixSession = idleFullMix(),
+): MonitorState {
+  const fullMix = currentFullMixAudition(document, full);
+  if (fullMix) return { ...monitorState(fullMix.document, idleBalance(), idleEq(), idleSpace(), idleDynamics()), fullMix };
   const gainPlan = balanceAudition(document, balance);
   const audition = currentEqAudition(document, eq);
   const spatial = currentSpatialAudition(document, space);
@@ -137,6 +159,7 @@ export function monitorState(document: ProjectDocument, balance: BalanceSession,
     spatialAudition: spatial,
     dynamics: dynamics.tracks,
     dynamicsAudition: dynamics,
+    fullMix: null,
   };
 }
 

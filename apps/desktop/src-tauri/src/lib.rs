@@ -2,6 +2,7 @@ mod analysis;
 mod audio_host;
 mod bundle;
 mod dynamics_check;
+mod mix_check;
 mod eq_check;
 mod space_check;
 mod waveform;
@@ -424,6 +425,13 @@ async fn dynamics_check(
 }
 
 #[tauri::command]
+async fn mix_check(project_file: String, request: mix_check::MixCheckRequest) -> Result<Vec<audiosous_audio::MixCheck>, String> {
+    tauri::async_runtime::spawn_blocking(move || mix_check::check(&project_file, request))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn stereo_frames(
     project_file: String,
     tracks: Vec<space_check::StereoFramesRequest>,
@@ -523,6 +531,7 @@ pub fn run() {
             audio_dynamics_meter,
             envelope_frames,
             dynamics_check,
+            mix_check,
             eq_check,
             eq_band_frames,
             stereo_frames,

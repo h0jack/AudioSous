@@ -91,6 +91,7 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
               useAppStore.getState().setEq({ preview: false, auditionId: null });
               useAppStore.getState().setSpace({ preview: false, auditionId: null });
               useAppStore.getState().setDynamics({ preview: false, auditionId: null });
+              useAppStore.getState().setFullMix({ preview: false, focus: null });
             }}
           >
             AutoBalance
@@ -289,6 +290,7 @@ function audition(id: string, side: "original" | "recommended"): void {
     useAppStore.getState().setEq({ preview: false, auditionId: null });
     useAppStore.getState().setSpace({ preview: false, auditionId: null });
     useAppStore.getState().setDynamics({ preview: false, auditionId: null });
+    useAppStore.getState().setFullMix({ preview: false, focus: null });
   }
 }
 

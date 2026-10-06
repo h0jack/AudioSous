@@ -581,7 +581,7 @@ function DetectorSelect({ value, disabled, onChange }: { value: "transient" | "s
   );
 }
 
-function NumberSlider({
+export function NumberSlider({
   label,
   unit,
   value,

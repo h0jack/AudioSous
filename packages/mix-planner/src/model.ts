@@ -327,7 +327,8 @@ export const fullMixPlanSchema = z.object({
   interventions: z.array(mixInterventionSchema).max(256),
   changes: z.array(mixChangeSchema).max(96),
   evaluation: fullMixEvaluationSchema,
-  candidateTrim: z.object({ gainDb: finite, reason: z.string().nullable() }),
+  /** Safety trim on every fader. `renderedDb` is the least trim the rendered check asked for; edits never go above it. */
+  candidateTrim: z.object({ gainDb: finite, reason: z.string().nullable(), renderedDb: finite.nullable() }),
   /** Per stem, for headroom and loudness estimates after edits. */
   levels: z.array(
     z.object({

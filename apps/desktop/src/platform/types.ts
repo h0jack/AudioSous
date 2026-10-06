@@ -133,6 +133,34 @@ export interface DynamicsCheckResponse {
   error: string | null;
 }
 
+/** One mix variant as the native engine plays it (the same shape the monitor sends), for a whole-mix render check. */
+export interface MixCheckVariant {
+  name: string;
+  tracks: Array<{ id: string; gainDb: number; muted: boolean }>;
+  gainRegions: Array<{ trackId: string; startSeconds: number; endSeconds: number; gainDb: number }>;
+  eq: Array<{ trackId: string; filters: EqCheckFilter[]; regions: Array<{ startSeconds: number; endSeconds: number; filters: EqCheckFilter[] }> }>;
+  spatial: Array<{ trackId: string; pan: number; width: number; regions: Array<{ startSeconds: number; endSeconds: number; pan: number; width: number }> }>;
+  dynamics: Array<{ trackId: string; nodes: DynamicsCheckNode[]; regions: Array<{ startSeconds: number; endSeconds: number; nodes: DynamicsCheckNode[] }> }>;
+}
+
+export interface MixCheckRequest {
+  tracks: Array<{ trackId: string; relativePath: string }>;
+  variants: MixCheckVariant[];
+  windows: Array<[number, number]>;
+  sections: Array<{ id: string; startSeconds: number; endSeconds: number }>;
+  durationSeconds: number;
+}
+
+export interface MixCheckResult {
+  name: string;
+  seconds: number;
+  peakDbfs: number;
+  rmsDb: number;
+  monoLossDb: number;
+  correlation: number;
+  sections: Array<{ id: string; rmsDb: number | null }>;
+}
+
 export interface DesktopPlatform {
   kind: "tauri" | "browser";
   pickAudioFiles(): Promise<ListedFile[] | null>;
@@ -170,6 +198,8 @@ export interface DesktopPlatform {
   envelopeFrames(projectFile: string, tracks: Array<{ trackId: string; relativePath: string }>): Promise<Array<{ trackId: string; json: string | null; error: string | null }>>;
   /** Runs candidate dynamics through the native processors on the playback proxies and measures the result. Desktop only. */
   checkDynamics(projectFile: string, requests: DynamicsCheckRequest[]): Promise<DynamicsCheckResponse[]>;
+  /** Renders mix variants from the playback proxies through the native DSP over windows and measures them. Desktop only. */
+  checkMix(projectFile: string, request: MixCheckRequest): Promise<MixCheckResult[]>;
   measureWaveform(projectFile: string, relativePath: string, trackId: string, onProgress: (ratio: number) => void): Promise<void>;
   cancelWaveform(): Promise<void>;
   hasPreview(): boolean;

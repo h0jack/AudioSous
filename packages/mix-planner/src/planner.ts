@@ -486,7 +486,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
         independent,
         surveys: surveyor.runs,
       },
-      candidateTrim: { gainDb: round2(trim), reason: trimReason },
+      candidateTrim: { gainDb: round2(trim), reason: trimReason, renderedDb: null },
       levels: document.tracks.map((track) => {
         const level = levels.find((item) => item.trackId === track.id);
         return { trackId: track.id, loudnessDb: level?.loudnessDb ?? null, peakDbfs: level?.peakDbfs ?? null, gainDb: track.gainDb, muted: track.muted };
