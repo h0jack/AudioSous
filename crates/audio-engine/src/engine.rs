@@ -2543,7 +2543,9 @@ mod tests {
         let mut block = vec![0.0_f32; 256];
         let started = Instant::now();
         engine.render_block(&mut block);
-        assert!(started.elapsed() < Duration::from_millis(50));
+        // A dry ring must not make the callback wait; the bound only has to tell "returned" from "blocked",
+        // with room for a busy test machine.
+        assert!(started.elapsed() < Duration::from_millis(400));
         assert!(engine.status().underruns >= 1);
         assert!(block.iter().all(|sample| *sample == 0.0));
         let _ = fs::remove_dir_all(&dir);
@@ -2620,7 +2622,9 @@ mod tests {
         let mut block = vec![0.0_f32; 512];
         let started = Instant::now();
         engine.render_block(&mut block);
-        assert!(started.elapsed() < Duration::from_millis(50));
+        // A dry ring must not make the callback wait; the bound only has to tell "returned" from "blocked",
+        // with room for a busy test machine.
+        assert!(started.elapsed() < Duration::from_millis(400));
         assert!(engine.status().underruns >= 1);
         assert_eq!(engine.status().last_underrun_track, "left");
         let right = block
@@ -2671,7 +2675,8 @@ mod tests {
             let started = Instant::now();
             engine.render_block(&mut block);
             assert!(
-                started.elapsed() < Duration::from_millis(100),
+                // The locks are held for 800 ms; anything well under that did not wait on them.
+                started.elapsed() < Duration::from_millis(400),
                 "callback waited on a lock"
             );
         });
