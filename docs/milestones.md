@@ -479,6 +479,77 @@ Ranges are two runs: once alone, once inside the full `npm run stress:audio`. Th
 - a physical listening pass on Current, the four planners combined, the Full Mix Candidate, and the reviewed plan for both mixes (the `bounce_mix --wav` bounces, and the desktop app), judging whether the candidate is clearer, more coherent, and less processed, and whether five changes on the already-good mix are right;
 - a GUI walk-through in the desktop app: run Full Mix, inspect problems, expand one, view evidence, preview one solution and the whole mix, reject a change, edit a change, accept a problem's solution, Apply accepted, Ctrl+Z, regenerate, change an EQ so the plan goes stale, Cancel.
 
+## Milestone 8
+
+Milestone 8 is the conversational assistant: the person describes what they hear or want, and the assistant reads the project, measures with the planners, builds a candidate with them, explains it from their evidence, and lets the person preview, refine, and apply it. It invents no mix values (the planners compute every change), writes nothing without the person's go-ahead, sends no audio, and is optional: every planner works without it. See [Conversational assistant](architecture.md#conversational-assistant) and [assistant.md](assistant.md).
+
+| Slice | Status |
+| --- | --- |
+| 1. Agent contract | Done. Permissions (READ, PLAN, PREVIEW, WRITE, FINAL), constraints, UI focus, decisions, cards, transcript, candidate history, session state, request limits (`packages/mix-agent/src/contract.ts`) |
+| 2. Context builder | Done. Compact JSON per request (stems, sections, selection, the request's resolved references and constraints, standing constraints, the live candidate with the person's edits, candidates, last apply), 9,000-character budget, recent window plus summary; no audio, paths, or keys |
+| 3. Tool registry | Done. 19 tools on an allowlist, zod-validated, each with a permission and a "when to use" description; the tools reach the app only through `AgentEnvironment` |
+| 4. Provider abstraction | Done. Neutral `AgentModel`; one Anthropic provider through the official SDK, routed through the Tauri shell, which holds the key and allows only the Messages endpoint |
+| 5. Core loop | Done. Deterministic reading, then model ⇄ tools, ≤ 8 model calls and ≤ 12 tools per request, final reply validated and grounding-checked, superseded requests discarded |
+| 6. Candidate integration | Done. Candidates are Full Mix plans in the existing review: same A/B, editors, apply, and undo; cards for Preview, Current, Inspect, Apply; replies focus stems, sections, problems, changes |
+| 7. Refinement | Done. Scale from current values (named amounts or a stated factor), remove, restore, accept, reset, another option, compare, go back, simplify |
+| 8. Safety, permission, privacy | Done. Writes need the person's words or a button; explicit values only from the person; stale and constraint-violating candidates refused; cancellation; privacy disclosure; metadata-only logs |
+| 9. Acceptance | Partly. Conversation fixtures, two real-project conversations through the real planners with renders, the independent grounding audit, the direct-planner comparison, CI, and docs are done. Conversations with a live model, the hallucination review of live transcripts, the physical listening pass, and the GUI walk-through are open (see below) |
+
+Full Mix gained what the assistant needs (planner 7.1.0): constraints (protected stems, ruled-out domains and processors, allowed sections with song-wide moves rescoped into them, focus), request intents read like section notes, `scaleChange`, and `simplifyFullMix`. A plan without constraints is unchanged: the Milestone 7 acceptance reports reproduce byte for byte.
+
+### Tests
+
+- `packages/mix-agent` (63, new). References (names, labels, head nouns, roles and import patterns, plurals as groups, ambiguity, selection and focus, sections by name, ordinal, number, type, and "here"); language (protected stems, ruled-out domains and processors, scope and placement, strength and standing strength, narrow routes, releases, approval for apply and undo, explicit values, stated factors). Conversations with a scripted model on the real planners: an explicit edit as one undo step; an unstated value refused; no tool takes a raw EQ value; diagnosis without changes; "leave it" with the healthy relationship as evidence; broad request to Full Mix, never the project; each domain route only in its domain; the person's narrowing holds over the model's route; protected stem never changed, even when the model forgets, and standing for the session; excluded EQ; section-only scope; a request intent planned and not saved; ambiguity asks; the selection resolves "this … here"; no apply without approval and "let's hear it" previews; "do it" only after a presented candidate; a false "applied" claim corrected; the panel's Apply; weak → less aggressive → keep the EQ, lose the width → apply persists only the reviewed candidate; "a little less" from the person's edit; stated factors only; another option, compare, go back; simplify; undo after apply and discard before; no undo over a manual edit; stale refusal; a candidate built while the mix changed refused; tool failure reported as failure; missing analysis stated; an invented number sent back and replaced; tool-result numbers pass; invalid arguments; the model-call limit; supersede leaves everything as it was; no paths or audio in what is sent and the transcript window; metadata-only logs; provenance; large results shortened as valid JSON.
+- `packages/mix-planner` (46, 13 new). Empty constraints change nothing; protected stems; excluded domain; excluded processor; focus; out-of-focus problems scored as regressions, not new problems; section-only rescoping writes nothing outside the section; constraints in the identity; determinism; request intents equal saved notes, unsaved, not stale; numbers stripped from intents; `scaleChange` from the current value and inside the bounds; `simplifyFullMix`.
+- `apps/desktop` (85, 10 new). With the real store, review, apply, and undo: a candidate in the Full Mix review without touching the project; "let's hear it" switches the A/B; the person's plan-UI edit is read and applied exactly, one undo step, and conversational undo is the store's undo; stale refusal from the conversation and from the card; UI focus without an undo entry; an explicit pan as one undo step; offline without a provider; cancel; nothing in the project file; the panel renders its cards and the offline notice.
+- `apps/desktop/src-tauri` (Rust, 4 new). Only POST to the Messages endpoint; credential headers from the webview dropped; settings round trip with the key never returned and stored owner-only; nothing sent without a configured provider.
+
+### Acceptance run
+
+No provider credential was available in the development environment (no `ANTHROPIC_API_KEY`, no stored key), so no conversation has run against a live model yet. The tool layer, the planners, the constraint and permission guards, and the render checks were exercised on real music with scripted model decisions: `converse-project.ts` drives the real planners, apply, and undo on the Milestone 7 projects from their cached analysis, and `bounce_mix` renders every candidate and applied state through the native DSP. Scripted replies are composed only from that turn's tool results and pass the same grounding check; an independent audit of each final reply against everything the agent saw found no unsupported value or claimed write in either conversation.
+
+**Deliberately problematic mix** (19 turns, `conversations/problem-mix.json`):
+
+| Request | Route and tools | Result |
+| --- | --- | --- |
+| What's wrong with the mix? | detect | Lead too quiet for its role (1.00), Bass level unstable (1.00), Kick/Bass collision (0.89); no candidate |
+| The kick is getting buried. | detect, plan_mix full, focus Kick | Candidate A: Bass duck from Kick up to −1.3 dB + Bass −1.0 dB; collision 0.89 → 0.35 re-measured |
+| Why ducking instead of lowering the bass? | explain_problem | From the planner's alternatives: the combination removes 65%; the duck alone 54%, Bass −1.5 dB alone 46% "and would change the stem everywhere it plays", a 55 Hz bell 32% |
+| A little less on the duck. | refine scale slightly-less (ducking) | Duck −1.3 → −1.1 dB |
+| Let's hear it. / Apply it. / Undo that. | preview / apply / undo | A/B on the candidate; applied as one undo step; undone through the history (render equals Current) |
+| Make the lead clearer, but don't touch the lead itself. | plan_mix full, focus Lead; Lead protected from the words | Candidate B: Pad −1.9 dB, Synth −2.0 dB; nothing on the Lead |
+| (Pad edited to −1.2 dB in the plan UI) Keep the pad change but lose the synth change. | refine remove Synth, accept Pad | The person's −1.2 dB kept and accepted, Synth rejected |
+| Another option, more conservative. / What's the difference? / Go back to the previous one. | plan_mix conservative / compare / select | Candidate C (Pad −1.7, Synth −1.0); difference listed by processing; back to B with the person's edit |
+| Clean the whole mix up. | plan_mix full | Candidate D, identical to Full Mix run directly (6 changes; renders equal to Milestone 7's candidate) |
+| This sounds better, but maybe too processed. | simplify | Candidate E: the duck and the Synth dynamic EQ out, 6 → 4 changes, ≥ 80% of the measured improvement kept |
+| Only change Drop 2: the synth is too wide there. | plan_mix space; Drop 2 only from the words | Candidate F: Synth width 160% → 100% in Drop 2 only |
+| Pan the pad 20% left. | set_track_control | Exactly that, one undo step |
+| Make the chorus punchier. | plan_mix | Refused: there is no chorus (sections listed), nothing changed |
+| Fix the low end, no compression. | plan_mix full, compressor ruled out from the words | Candidate G: Bass −1.5 dB and a duck from Kick; no compressor |
+| (Bass fader moved) Apply it. | apply | Refused: Candidate G is out of date |
+
+**Already-good mix** (8 turns, `conversations/good-mix.json`):
+
+| Request | Result |
+| --- | --- |
+| Should the bass be louder? | No: the planners measure Bass Bus too loud for its role (0.70) and a PunchBox/Bass Bus collision (1.00); the other kicks' relationships are fine |
+| Make the kick punchier. | Three kick-role stems: the agent asks SideKick6, PunchBox, or 2nd BD |
+| PunchBox. | Candidate A: Bass Bus −1.1 dB (goal punchy) |
+| (Trumpets and Drop 2 selected) Make this stand out more here. | Candidate B, Drop 2 only: MasterEQ, Stutter Expression, PunchBox, Skimming Air −2 dB each there; the Trumpets themselves unchanged (the level planner makes room). Whether lowering the kick there is right is a listening call |
+| Make the drop wider without changing the lead. | Candidate C: Stutter Expression and MasterEQ 100% → 120% in the Drop only; mono loss 0.82 → 0.86 dB |
+| No stereo changes. Just make the drop less crowded. | Candidate D: Bass Bus duck from PunchBox, MasterEQ −2.3 dB at 1.6 kHz, Subway −1.7 dB at 2.2 kHz; no space change; Lead still protected from the previous request |
+| What processing is on the bass bus? / Why does the breakdown feel crowded? | Read from the project; the breakdown's measured problem is the PunchBox/Bass Bus collision, two relationships there are fine |
+
+**Renders** (`bounce_mix`, 141 s, native DSP from the proxies): the applied state rendered identically to the previewed candidate without loudness matching (RMS −22.23 dB, correlation 0.602), and the state after conversational undo identically to Current. The "clean it up" candidate rendered exactly as Milestone 7's Full Mix Candidate (peak −4.05 dBFS, RMS −23.62 dB, correlation 0.682); the simplified candidate kept its mono and correlation gains (0.75 dB, 0.684) with two fewer processors. Loudness-matched candidates rendered within 0.15 dB RMS of Current on the problematic mix; on the good mix within 0.15 dB except the Drop 2-only candidate, 0.30 dB under (its loudness estimate is song-wide, so a change confined to one section is matched only partly).
+
+**Request latency without the model** (tools only, Node): mix reading 0.2–0.6 s, focused plans 0.3–2.5 s, a whole-mix plan 2–4.5 s, simplification 7.5 s, refinement, preview, and apply under 10 ms.
+
+**Still open before Milestone 8 is complete:**
+- real conversations with a live model: run both conversation files with `AGENT_MODEL=anthropic` (and 10–15 free-form requests in the app), record routing, diagnosis, candidates, refinements, latency, and review every transcript for unsupported claims, invented values, and claimed writes;
+- a physical listening pass on the candidates above (the `bounce_mix --wav` renders and the desktop A/B), checking that each candidate matches its explanation, that refinements change what they claim, and that Apply matches the preview by ear;
+- a GUI walk-through: open Assistant, connect a provider, ask a diagnostic question, ask for a candidate, preview it, inspect the highlighted problem, refine by conversation and in the plan UI, continue, apply, undo, change the mix and see the candidate go stale, cancel a request in flight;
+- the Milestone 7 listening pass and walk-through, which are still open too.
+
 ## Explicitly later
 
-Multiband compression, de-essing, lookahead, gain-reduction automation editing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.
+Multiband compression, de-essing, lookahead, gain-reduction automation editing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, an ML mixing model, a general-purpose or autonomous agent, web access for the assistant, preference learning, accounts, collaboration, and source separation.

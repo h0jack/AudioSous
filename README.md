@@ -1,6 +1,6 @@
 # Audiosous
 
-Audiosous is a local desktop application for musicians who can make a track and want help shaping the mix. Milestone 1 covers the project file, stem import, a shared playback clock, waveforms, sections, intent, undo, and autosave. Nothing here uploads audio.
+Audiosous is a local desktop application for musicians who can make a track and want help shaping the mix. It plays stems on one native clock, measures them, and plans level, EQ, stereo, and dynamics changes deterministically, alone or as one Full Mix plan you audition and apply. An optional assistant lets you ask for changes in your own words and drives those planners; it sends structured project information to the AI provider you connect, never audio (see `docs/assistant.md`). Nothing here uploads audio.
 
 ## Run the desktop app
 
@@ -36,4 +36,4 @@ Night Drive/
 
 `project.amix` is versioned JSON. Media paths inside it stay relative to that folder. Import copies stems and does not modify the originals.
 
-See `docs/architecture.md`, `docs/project-format.md`, and `docs/milestones.md`.
+See `docs/architecture.md`, `docs/assistant.md`, `docs/project-format.md`, and `docs/milestones.md`.

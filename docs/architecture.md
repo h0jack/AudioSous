@@ -17,7 +17,8 @@ Audiosous/
 │   ├── eq-planner/        Frequency interaction analysis and deterministic static-EQ planning. No network.
 │   ├── spatial-planner/   Stereo-field interaction analysis and deterministic pan/width planning. No network.
 │   ├── dynamics-planner/  Time-domain dynamics analysis and deterministic compressor/duck/transient/dynamic-EQ planning. No network.
-│   └── mix-planner/       Full Mix: problems, interventions, cost, and re-measured whole-mix planning across the four planners. No network.
+│   ├── mix-planner/       Full Mix: problems, interventions, cost, and re-measured whole-mix planning across the four planners. No network.
+│   └── mix-agent/         The conversational assistant: references, constraints, context, tools, orchestrator, provider abstraction. No network of its own.
 ├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
 └── test-assets/           Reserved for generated stems in a later slice
@@ -38,12 +39,14 @@ apps/desktop
   → spatial-planner
   → dynamics-planner
   → mix-planner
+  → mix-agent
 
 balance-planner → project-model, analysis-contract
 eq-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom)
 spatial-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom), eq-planner (spectral model, pairs)
 dynamics-planner → project-model, analysis-contract, balance-planner (tiers, intent clauses), eq-planner (spectral model, pairs, responses)
 mix-planner → project-model, analysis-contract, and all four planners (as measurement, as the source of candidate changes, and for their evaluators)
+mix-agent → project-model, analysis-contract, mix-planner, and the planners' formatting helpers; the Anthropic SDK only in its provider entry
 audio-engine → project-model
 services/analysis  has no dependency on the UI
 ```
@@ -60,8 +63,9 @@ The React app never imports `services/analysis`.
 | Project validation | Zod |
 | Tests | Vitest for TypeScript, `cargo test` for path and copy safety |
 | Analysis | Python sidecar (`numpy`, `scipy`, `soundfile`, `pyloudnorm`). The UI does not import it |
+| Assistant provider | `@anthropic-ai/sdk` in the webview; its requests go through the Tauri shell (`ureq`), which adds the key |
 
-There is no cloud client, account system, or upload step.
+There is no account system or upload step. The only network request Audiosous makes is the assistant's, when a provider is configured and the person sends a message: structured project information to the Anthropic Messages API, never audio (see [Conversational assistant](#conversational-assistant)).
 
 ## Project schema
 
@@ -947,9 +951,9 @@ Sidechain keys are still the key track's own source, before its EQ, dynamics, an
 
 ### Plan contract
 
-`packages/mix-planner/src/model.ts`: `kind: "full-mix"`, `planVersion` 1, `plannerVersion` 7.0.0, plain JSON validated with zod. It holds the problems (with evidence, severity before and after, outcome: solved, improved, unchanged, left alone, or deferred, the selected intervention, and an explanation), the interventions (selected and up to three considered alternatives per problem, each with its items, cost, confidence, expected reduction, net, outcome: selected, rejected, redundant, regression, or not needed, and the reason), the changes, the evaluation, the safety trim (and the least trim the render check asked for, which an edit never undercuts), and per-stem loudness and peak for re-checking after edits.
+`packages/mix-planner/src/model.ts`: `kind: "full-mix"`, `planVersion` 1, `plannerVersion` 7.1.0 (7.1.0 adds request constraints and intents, `scaleChange`, and `simplifyFullMix` for the assistant; a plan without constraints is unchanged), plain JSON validated with zod. It holds the problems (with evidence, severity before and after, outcome: solved, improved, unchanged, left alone, or deferred, the selected intervention, and an explanation), the interventions (selected and up to three considered alternatives per problem, each with its items, cost, confidence, expected reduction, net, outcome: selected, rejected, redundant, regression, or not needed, and the reason), the changes, the evaluation, the safety trim (and the least trim the render check asked for, which an edit never undercuts), and per-stem loudness and peak for re-checking after edits.
 
-**Stale identity** covers the project id, the four analysis versions (sidecar, EQ bands, stereo frames, envelopes), all five planner versions, the strength and goal, every stem's id, name, label, role, fader, pan, width, mute, duration, and file identity, sections (bounds, type, intent), Track × Section prominence, notes, and gain, pan, and width overrides, and every saved EQ, spatial, and dynamics node. Selection, the playhead, loop, and zoom are not in it.
+**Stale identity** covers the project id, the four analysis versions (sidecar, EQ bands, stereo frames, envelopes), all five planner versions, the request's constraints and intents when there are any, the strength and goal, every stem's id, name, label, role, fader, pan, width, mute, duration, and file identity, sections (bounds, type, intent), Track × Section prominence, notes, and gain, pan, and width overrides, and every saved EQ, spatial, and dynamics node. Selection, the playhead, loop, and zoom are not in it.
 
 **Open subsystem plans** are not inputs. Full Mix plans from the saved project only; a Level, EQ, Space, or Dynamics candidate that is open but not applied never feeds it, and applying Full Mix makes those plans stale.
 
@@ -1003,6 +1007,131 @@ cargo run --release -p audiosous-audio --example bounce_mix -- OUT_DIR [--wav]
 
 The scenario edits roles, faders, pan and width, saved processing (or clears it with `clearProcessing`), sections, prominence, and notes in memory, and can script a review. The harness prints the four planners on their own next to the Full Mix plan (problems, every alternative and why, the selected changes, the re-measured evaluation) and writes the plan, the reviewed plan, and bounce variants for Current, the four planners' Apply all combined, the Full Mix Candidate raw and loudness-matched, and the reviewed plan. `bounce_mix` renders them through the playback DSP and reports peak, RMS, crest, level spread, mono fold-down, and correlation.
 
+## Conversational assistant
+
+Milestone 8 adds a conversational layer over the deterministic planners. The person says what they hear or want ("the chorus feels weak", "the kick is getting buried", "make the drop wider but don't touch the vocal", "a little less", "why ducking?"); the assistant reads the project, measures with the planners, builds a candidate with them, explains it from their evidence, and lets the person preview, refine, and apply it through the Full Mix review. It is not a second mixing engine: no value it proposes comes from the model. It lives in `packages/mix-agent` (no DOM, no network of its own) and the desktop's `lib/assistant.ts` and `components/AssistantPanel.tsx`.
+
+```text
+message ──► deterministic reading (references, constraints, approval, explicit values, stated factors)
+              │
+              ▼
+          context builder ──► compact JSON (stems, sections, selection, request reading, standing constraints,
+              │                             current candidate with the person's edits, candidates, last apply)
+              ▼
+          model ⇄ tool registry (allowlist, schemas, permissions), ≤ 8 model calls, ≤ 12 tools per request
+              │        READ    project, stems, sections, problems, interactions, candidate, evidence, compare
+              │        PLAN    plan_mix (Full Mix, or one domain, with constraints and intents), refine, simplify,
+              │                select, discard  ──► candidate in Plans → Full Mix (never the project)
+              │        PREVIEW the Full Mix A/B
+              │        WRITE   apply_candidate, undo_last_apply, set_track_control  (only with the person's approval)
+              ▼
+          final reply (respond / ask_clarification) ──► grounding check ──► transcript + action cards + UI focus
+```
+
+### Packages and boundaries
+
+`@audiosous/mix-agent`:
+
+- `contract.ts`: permissions, constraints, UI focus, decisions, cards, transcript, candidate history, session state, limits.
+- `references.ts`: stem and section references. A pronoun goes to the selection, then the conversation's focus. A stem name beats a role word; a single word names a stem when it is the head of its name ("synth" is "Lead Synth", "bass" is not "Bass Drum Room"); role words come from the roles and the import patterns ("trumpet" is brass). Several equal fits are ambiguous unless the selection or focus decides. Sections: names, "the second drop", "Drop 2", "the last chorus", a type (all sections of it), and "here" (the selected section, else the one under the playhead).
+- `language.ts`: what the person's own words say, read without a model: write approval, preview, undo, protected stems, ruled-out domains and processors, allowed and excluded sections ("only the chorus", "here", "in Drop 2"), strength words and whether they are standing ("from now on"), narrow routes ("only fix the levels"), explicit numeric instructions, and stated factors ("25% weaker").
+- `context.ts`: the context builder; `reading.ts`: the four planners as measurement, read into compact problems, interactions, level rows, and stem readings; `tools.ts`: the registry; `agent.ts`: the orchestrator; `grounding.ts`: the reply check; `prompt.ts`: the system prompt; `model.ts`: the provider abstraction; `providers/anthropic.ts`: the one provider; `testing.ts`: a scripted model and an in-memory environment on the real planners.
+
+The tools touch the application only through `AgentEnvironment` (`environment.ts`): the document, loading analysis and frames, the mix reading, Full Mix planning and simplification, the candidate slot, staleness, the A/B, apply, undo, one direct control edit, UI focus, activity, and metadata logging. The desktop implements it with what the Full Mix review already uses (`loadMixInputs`, the planning worker, the render check, `fullMix` in the store, `setFullMixPreview` and `auditionFullMix`, `applyFullMix`, the store's undo). There is no file system, shell, network, or code tool; an unknown tool name is refused.
+
+### Tools and permissions
+
+| Tool | Permission | Does |
+| --- | --- | --- |
+| `get_project_overview`, `get_track_details`, `get_section_details` | READ | Saved settings, every EQ and dynamics node with the plan that wrote it and its note, sidechain keys, section overrides, measured loudness, peak, crest, and dynamics class |
+| `detect_mix_problems` | READ | The four planners on the saved mix: problems with severity, confidence, and evidence, healthy relationships, level rows, mix correlation and mono loss; narrowed by stems, sections, dimensions |
+| `get_interactions` | READ | One planner's pairwise measurements (masking regions, center competition, kick hits, level rows) |
+| `get_candidate`, `explain_problem`, `compare_candidates` | READ | The live candidate with the person's edits; one problem's evidence, chosen solution, and every alternative with why it lost; the processing difference between two candidates |
+| `plan_mix` | PLAN | Full Mix, or one domain (`level`, `eq`, `space`, `dynamics`), with focus, allowed sections, protected stems, ruled-out processing, strength, goal, and request intents |
+| `refine_candidate` | PLAN | Scale (named amounts 0.5–1.5 or a factor the person stated), remove, restore, accept, reset changes, from their current values |
+| `simplify_candidate` | PLAN | Takes out the change the re-measured mix misses least, one at a time, while the rest keeps ≥ 80% of the measured improvement and adds no regression; a new candidate |
+| `select_candidate`, `discard_candidate` | PLAN | Go back to an earlier candidate (refused when stale); close the current one |
+| `preview` | PREVIEW | Candidate, Current, one problem or one change only / without, loudness-matched by default |
+| `apply_candidate` | WRITE | The existing Full Mix apply, one undo step; runs only when this message approves |
+| `undo_last_apply` | WRITE | The store's undo, only when the person asks and the project is still exactly what that apply produced |
+| `set_track_control` | WRITE | A fader, pan, or width value the person stated in this message, one undo step |
+| `respond`, `ask_clarification` | FINAL | End the turn with a reply (and UI focus) or one question with options |
+
+### Routing
+
+The system prompt and the tool descriptions steer the choice; the deterministic layer enforces what the person said. Broad, subjective, or multi-dimension requests ("improve", "punchier", "clearer", "less crowded") go to Full Mix, which weighs every domain itself; the agent does not chain the subsystem planners. A narrow request uses one domain: `level` excludes EQ, space, and dynamics, `eq` excludes the others, and so on. Domain routes are Full Mix restricted to one domain, so every candidate has one contract, one A/B, one review, and one apply, and the values still come from that domain's planner (Full Mix's alternatives are the subsystem planners' rows). When the person narrows the route ("only fix the levels"), the narrowing holds whatever route the model asked for. An explicit numeric instruction is `set_track_control`. A diagnostic question uses READ tools and gets an answer, with a candidate only on request.
+
+### Constraints and request intents
+
+Full Mix 7.1.0 takes `constraints` (`packages/mix-planner/src/constraints.ts`):
+
+- **Protected stems** are measured (and may key a duck) but never changed. **Excluded domains and processors** are never planned. An alternative that breaks a constraint is dropped before it is scored; if every move for a problem is ruled out, the problem is reported as left alone "as asked".
+- **Allowed sections**: a song-wide change is moved into the allowed sections (Track × Section gain, EQ, pan and width, dynamics), nothing outside them moves, and a problem is judged on the share of its time inside them (alternatives and the re-measured candidate alike), so a chorus-only move is not compared against the whole song.
+- **Focus**: only problems involving the focused stems or sections are planned. Every other problem is still measured and scored, so a focused change that worsens one counts as a regression there, not as a new problem.
+- **Request intents** are notes the planners already read (section and Track × Section intent: "wider", "punchier", "more prominent", "less muddy"), added to the planning view only. The planners verify and size them as they do saved notes; digits are stripped, so a note cannot carry a value; nothing is written to the project.
+
+The agent merges, deterministically: the route's domains, the session's standing constraints ("don't touch the vocal" lasts until "you can touch the vocal now"), what this message says, and what the model adds. The model can narrow; it cannot drop what the person said. The constraints and intents are stored in the plan and are part of its stale identity, which is still computed on the saved project. Empty constraints give a plan byte-identical to a plan without them.
+
+### Hallucination and permission guards
+
+- **Values.** No tool takes a processor value from the model. Planner values come from `plan_mix`; refinements scale them by named amounts or a factor the person stated; `set_track_control` refuses any value that is not in the person's message (stem, control, mode, value all matched). Edits use the planners' own bounds.
+- **Writes.** `apply_candidate` and `undo_last_apply` check the approval read from the message: "apply it", "commit", "save it", "can you apply it?" approve; "let's hear it" is a preview; questions ("should I apply?") and holding off ("not yet") never approve; a bare "do it" or "yes" approves only right after a presented, fresh candidate and not after an offer to build one. The panel's Apply button is the other way to approve. Stale candidates are refused with that reason. Undo is refused when another edit came after the apply, so a manual edit is never undone behind the person's back.
+- **Replies.** Every dB, Hz, %, ms, LUFS, or ratio in a reply must appear in the context, a tool result, or the person's words (within rounding, kHz and Hz, percent and fraction); a reply may not claim an apply, undo, or edit that did not succeed this turn. A failing reply is sent back once with what was unsupported; a second failure is replaced with a reply built from the tool results. A failed tool returns its reason and "nothing was changed", never a result.
+- **Bounds.** At most 8 model calls and 12 tool executions per request; a tool result over 12,000 characters is shortened field by field (long strings, then long lists), always valid JSON. Each request is superseded by a newer message or Cancel: its results never reach the session, the review, or the project.
+
+### Session state and candidates
+
+The session is in memory, per open project, and never written to `project.amix`: the transcript (for display), one-line summaries of turns that left the recent window, the conversation focus (stems, section, problem, change), standing constraints, up to 8 candidates (`Candidate A`, `B`, …, each with its plan, what was asked, and whether it was applied), the current candidate, the last apply (the lines it wrote and the document it produced), and a pending question. The current candidate is the Full Mix review's plan, so accept, reject, and edits made in the plan UI are what the agent reads next ("that's better, a little less still" scales the person's value, not the planned one). A new project starts a new conversation.
+
+### Context
+
+The model gets one user message per request: a JSON context, a summary of older turns, the last 8 transcript entries (700 characters each), and the message. The context has every stem (name, role, fader, pan, width when not default, mono, mute, processing summary, prominence; on projects over 24 stems only names and roles except the stems the request is about), sections (name, type, bounds, note), the selection and the section under the playhead, the request reading (mentioned stems and sections resolved or ambiguous, stated constraints, approval, explicit values, stated factors), standing constraints, the current candidate (changes with ids, status, the person's edits; problems with outcome and severity), other candidates, and the last apply. It is capped at 9,000 characters: section notes go first, then detail on stems the request is not about, then the candidate's problems. Measurements and evidence are fetched by tools, scoped to what the request is about.
+
+Never sent: audio, waveforms, proxies, analysis frames, file names or paths, environment variables, or the API key.
+
+### Provider abstraction
+
+`AgentModel.complete(request)` takes a system prompt, neutral messages (text, tool calls, tool results), neutral tool specs (JSON Schema), and a token limit, and returns text and tool calls with a stop reason. A provider maps those to its API; an assistant message keeps the provider's own form (`providerData`) so it can be sent back unchanged inside the same request (reasoning blocks included). The orchestrator never sees a vendor type. Each request starts a new model conversation (context + recent transcript as text), so nothing is ever edited in a provider-side history.
+
+The one provider is Anthropic, through the official SDK (`@anthropic-ai/sdk`), default model `claude-opus-5-5`, adaptive thinking, effort medium (low and high in settings), `tool_choice: auto` (the prompt asks for `respond` at the end; plain text is accepted as an answer), a cached system prompt, and the API's default server-side refusal fallback. The SDK's `fetch` goes to the Tauri shell (`agent_http`), which accepts only a POST to `https://api.anthropic.com/v1/messages`, drops any credential header from the webview, adds the key, and returns the response. The key comes from `ANTHROPIC_API_KEY` or a key file in the app's config directory (owner-only permissions); provider, model, and effort are in `agent.json` there. Neither is in a project. The SDK is loaded the first time the assistant is used.
+
+Without a provider (or in the browser preview) the panel says how to connect one, sends nothing, and changes nothing. Level, EQ, Space, Dynamics, and Full Mix do not depend on the assistant.
+
+### UI
+
+**Assistant** in the header opens a panel beside the Mix workspace: the conversation, a step list per reply ("Loading analysis…", "Checking Drop 2…", "Building Full Mix candidate…", "Rendering Current and the candidate…"), Cancel while it works, suggested answers for a question, and cards: a candidate (its changes, Preview, Current, Inspect, Apply; marked out of date when the mix changed), a problem (Inspect), an applied or edited list. Replies point the interface at what they are about: the stem and section are selected on the timeline (not recorded as an edit), the plan opens on Full Mix with the problem or change selected. Candidates open in Plans → Full Mix, which says when a plan was built for a request ("Planned for an assistant request: Lead untouched · only in Drop 2"). Settings hold the provider, model, effort, and key, and the privacy disclosure. See [assistant.md](assistant.md).
+
+### Performance
+
+The request's latency is the model's plus the tools': on the 6- and 11-stem acceptance projects the mix reading takes 0.2–0.6 s, a focused plan 0.3–2.5 s, a whole-mix plan 2–4.5 s, simplification about 7.5 s (it re-measures the candidate without each change), and refinements, previews, and applies a few milliseconds (Node, the same code the desktop runs in a worker). On the desktop the first request also loads the analysis cache and renders the current mix's peak, as Full Mix does; later requests reuse it while the stems are unchanged. Planning runs in the worker, never on the audio thread.
+
+### Logging
+
+`agent.request` (provider, model, message length, whether it was a question, approval), `agent.tool` (tool, permission, ok, duration), `agent.plan` (route, strength, goal, counts, constrained), `agent.preview`, `agent.apply` (counts, mode, undo, direct control), `agent.grounding` (counts), `agent.error` (kind), `agent.complete` (model and tool calls, duration, writes), `agent.cancel`, `agent.settings` (provider, model, effort, whether a key is set). No log line has message text, a prompt, a reply, project names, or a plan body.
+
+### Known limitations
+
+- Replies are not streamed: the panel shows the step list while the request runs, and the reply appears when it is complete. Cancel drops the request; the shell's HTTP call finishes in the background and its answer is discarded.
+- Subjective words reach the planners only as the notes they already read (width, punch, prominence, a short tone table, dynamics words). A word outside those vocabularies is diagnosed with the measurements but cannot steer a plan.
+- Section scope from the planners' evidence: a section-only move is judged on the problem's share of time in the section, not on a section-only measurement of the problem.
+- Simplification removes changes from the current candidate. Saved processing from an earlier session is not simplified: Full Mix does not plan removals.
+- Refinement re-checks each edited change with its planner's evaluator; the whole mix is re-measured only by planning again (or simplifying).
+- Comparing candidates lists their processing, change counts, and cost; problem scores of candidates with different settings are not comparable and are not shown.
+- The grounding check is about numbers and write claims. A wrong qualitative statement with no number in it is not caught; the prompt and the tools' evidence are what keep those grounded.
+- One provider (Anthropic). Another provider is one file implementing `AgentModel` plus its shell route.
+- The conversation is kept for the open project only.
+
+### Acceptance harness
+
+```sh
+npx vite-node packages/mix-planner/scripts/plan-full-mix-project.ts -- target/acceptance/m7-problem.json   # the M7 scenarios
+npx vite-node packages/mix-agent/scripts/converse-project.ts -- packages/mix-agent/scripts/conversations/problem-mix.json
+AGENT_MODEL=anthropic ANTHROPIC_API_KEY=… npx vite-node packages/mix-agent/scripts/converse-project.ts -- packages/mix-agent/scripts/conversations/good-mix.json
+cargo run --release -p audiosous-audio --example bounce_mix -- target/acceptance/m8-problem [--wav]
+```
+
+`converse-project.ts` loads a real project with the M7 scenario loader (`packages/mix-planner/scripts/scenario.ts`), runs a conversation through the real planners, apply, and undo in memory, and writes `report.txt` (each turn's request, tools and results, candidate, writes, reply, and an independent grounding audit), `transcript.json` (everything sent and received), and `bounce.json` (Current, each candidate as previewed and unmatched, each applied state) for `bounce_mix`. Without `AGENT_MODEL` it uses the conversation's scripted tool calls and replies made only from that turn's tool results; with it the configured model decides and the scripts are ignored. The project file is never written.
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
@@ -1016,7 +1145,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`, and `dynamicsplan.start`, `dynamicsplan.complete`, `dynamicsplan.verify`, `dynamicsplan.preview`, `dynamicsplan.apply`, `dynamicsplan.cancel`, and `dynamicsplan.stale`, and `fullmix.start`, `fullmix.complete`, `fullmix.check`, `fullmix.preview`, `fullmix.apply`, `fullmix.cancel`, and `fullmix.stale`. `fullmix.complete` records `analysisMs` (loading and measuring, including the render of Current), `durationMs` (planning in the worker), `checkMs` (the render check), the problem, change, and independent counts, and the number of planner runs. `dynamicsplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the other plans. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, envelopes, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`, and `dynamicsplan.start`, `dynamicsplan.complete`, `dynamicsplan.verify`, `dynamicsplan.preview`, `dynamicsplan.apply`, `dynamicsplan.cancel`, and `dynamicsplan.stale`, and `fullmix.start`, `fullmix.complete`, `fullmix.check`, `fullmix.preview`, `fullmix.apply`, `fullmix.cancel`, and `fullmix.stale`, and the assistant's `agent.*` events (see [Conversational assistant](#conversational-assistant), Logging). `fullmix.complete` records `analysisMs` (loading and measuring, including the render of Current), `durationMs` (planning in the worker), `checkMs` (the render check), the problem, change, and independent counts, and the number of planner runs. `dynamicsplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the other plans. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, envelopes, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 
