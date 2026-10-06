@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
-    // Full Mix, Auto Mix, and the assistant run whole-mix planning; a slow CI runner needs more than the 5 s default.
+    // Whole-mix planning runs every planner several times; a slow CI runner needs more than the 5 s default.
     testTimeout: 30_000,
   },
 });
