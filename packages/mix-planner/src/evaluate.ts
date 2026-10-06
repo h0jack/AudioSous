@@ -25,6 +25,11 @@ export interface EvaluationContext {
   base: ProjectDocument;
   baseline: Survey;
   mixPeakDbfs: number | null;
+  /**
+   * Share of each problem the plan may act on (1 without a section restriction). A severity drop is credited over
+   * that share, so a chorus-only move is judged against the chorus part of a song-wide problem, as its alternative was.
+   */
+  share?: (problem: DetectedProblem) => number;
 }
 
 export interface CandidateResult {
@@ -88,7 +93,7 @@ export function evaluateCandidate(ctx: EvaluationContext, changes: MixChange[], 
   for (const step of steps) {
     if (Math.abs(step.changeDb) > SAFETY.transitionStepDb) regressions.push({ kind: "transition", trackIds: [], description: `The level step into ${step.name} changes by ${formatSignedDb(step.changeDb)} dB.`, resolution: "reported" });
   }
-  const removed = known.reduce((sum, problem) => sum + weightOf(ctx, problem) * (problem.severity - (severities.get(problem.id) ?? problem.severity)), 0);
+  const removed = known.reduce((sum, problem) => sum + (weightOf(ctx, problem) * (problem.severity - (severities.get(problem.id) ?? problem.severity))) / (ctx.share?.(problem) ?? 1), 0);
   const createdPrice = created.reduce((sum, problem) => sum + weightOf(ctx, problem) * problem.severity, 0);
   const other = regressions.filter((item) => item.kind !== "problem" && item.kind !== "new-problem").length;
   // Side effects outside each problem (a fader move heard everywhere, a static cut while the protected part rests)

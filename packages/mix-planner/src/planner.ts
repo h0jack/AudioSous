@@ -4,9 +4,9 @@ import type { ProjectDocument } from "@audiosous/project-model";
 import { clamp, describeChange, fnv1a, processorKind, round2, round3 } from "./changes";
 import { costLabel } from "./cost";
 import { evaluateCandidate, metricsOf, rebase, type CandidateResult, type EvaluationContext, type StemLevel } from "./evaluate";
-import { changeLabel, generateAlternatives, reductionOf, type Alternative, type InterventionContext } from "./interventions";
+import { CONSTRAINED_NOTE, changeLabel, scopeShare, generateAlternatives, reductionOf, type Alternative, type InterventionContext } from "./interventions";
 import { PROBLEM_LABELS, fullMixPlanSchema, type FullMixPlan, type MixChange, type MixIntervention, type MixProblem, type Regression } from "./model";
-import { fullMixStateIdentity } from "./plan";
+import { changeIncluded, fullMixStateIdentity, refreshFullMix } from "./plan";
 import { detectMixProblems, type DetectedProblem } from "./problems";
 import { scaled } from "./rows";
 import {
@@ -20,6 +20,7 @@ import {
   type MixLimits,
 } from "./settings";
 import { PLANNERS, Surveyor, type MixInputs, type Survey } from "./survey";
+import { constraintsAreEmpty, normalizeConstraints, problemInFocus, withIntents, type MixConstraints } from "./constraints";
 
 export interface PlanFullMixInput extends MixInputs {
   document: ProjectDocument;
@@ -28,6 +29,11 @@ export interface PlanFullMixInput extends MixInputs {
   now?: string;
   /** The current mix's sample peak rendered from the proxies, when known; raises a headroom problem when it clips. */
   mixPeakDbfs?: number | null;
+  /**
+   * What the plan may touch and which problems it works on (a conversational request: "don't touch the vocal",
+   * "no compression", "only the chorus"). Omitted or empty: the whole mix, every domain.
+   */
+  constraints?: MixConstraints | null;
   /** Receives each stage's decisions. For acceptance scripts and debugging; the plan does not depend on it. */
   trace?: (stage: string, detail: unknown) => void;
 }
@@ -68,9 +74,12 @@ interface Built {
 export function planFullMix(input: PlanFullMixInput): FullMixPlan {
   const settings: FullMixSettings = { ...DEFAULT_FULL_MIX_SETTINGS, ...input.settings };
   const limits = MIX_LIMITS_BY_STRENGTH[settings.strength];
-  const document = input.document;
   const now = input.now ?? new Date().toISOString();
   const trace = input.trace ?? (() => {});
+  const constraints = constraintsAreEmpty(input.constraints) ? null : normalizeConstraints(input.constraints!);
+  // The planners read the request's intents as notes; the plan's identity and every write use the saved project.
+  const document = constraints && (constraints.intents ?? []).length > 0 ? withIntents(input.document, constraints) : input.document;
+  const inFocus = (problem: DetectedProblem) => !constraints || problemInFocus(problem, constraints);
   const inputs: MixInputs = { measurements: input.measurements, sectionMeasurements: input.sectionMeasurements, bands: input.bands, stereo: input.stereo, envelopes: input.envelopes };
   const surveyor = new Surveyor(document, inputs, settings.strength, now);
   const levels: StemLevel[] = document.tracks.map((track) => {
@@ -83,7 +92,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
   };
   const baseline = surveyor.survey([], PLANNERS);
   const mixPeakDbfs = input.mixPeakDbfs ?? null;
-  const evalCtx: EvaluationContext = { surveyor, settings, limits, levels, measurements: input.measurements, base: document, baseline, mixPeakDbfs };
+  const evalCtx: EvaluationContext = { surveyor, settings, limits, levels, measurements: input.measurements, base: document, baseline, mixPeakDbfs, ...(constraints?.sectionIds ? { share: (problem: DetectedProblem) => scopeShare({ constraints, document }, problem) } : {}) };
   const independent = {
     level: baseline.balance?.trackChanges.filter((row) => Math.abs(row.deltaDb) >= 0.05 || Math.abs(row.offsetFromGlobalDb) >= 0.05).length ?? 0,
     eq: baseline.eq?.changes.length ?? 0,
@@ -104,6 +113,8 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
   let stopReason = `Stopped after ${limits.maxIterations} passes, the most this strength allows.`;
 
   const detected0 = detectMixProblems({ survey: baseline, settings, levels, mixPeakDbfs });
+  // Every open problem is measured and scored, so a change that worsens one outside the focus counts as a
+  // regression, not as a new problem; only problems in focus are planned.
   for (const problem of detected0) if (problem.severity >= limits.minSeverity) register(problem, 1);
   const baseResult = evaluateCandidate(evalCtx, [], [...known.values()]);
   current = baseResult;
@@ -121,7 +132,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
     // Scores of one pass are comparable only against the same list of problems.
     if (known.size !== before) current = evaluateCandidate(evalCtx, chosen, [...known.values()]);
     // Problems already chosen for (in an earlier pass) are not re-planned; their remaining severity is reported.
-    const fresh = open.filter((problem) => !(decisions.get(problem.id)?.selected));
+    const fresh = open.filter((problem) => !(decisions.get(problem.id)?.selected) && inFocus(problem));
     if (fresh.length === 0) {
       stopReason = pass === 1 ? "No problem past the threshold: the mix needs no high-confidence change." : "No remaining problem past the threshold.";
       passes.push({ pass, problems: open.length, selected: 0, scoreBefore: current!.score, scoreAfter: current!.score, kept: false, note: stopReason });
@@ -201,7 +212,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
   // Problems seen in a pass but never decided: either no planner offered a move for them on the candidate any more,
   // or the passes ran out.
   for (const problem of known.values()) {
-    if (decisions.has(problem.id)) continue;
+    if (decisions.has(problem.id) || !inFocus(problem)) continue;
     const after = current!.severities.get(problem.id) ?? problem.severity;
     const note =
       after < limits.minSeverity
@@ -248,6 +259,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
         settings,
         limits,
         problems,
+        ...(constraints ? { constraints } : {}),
         translated: (view) => surveyor.surveyView(`${survey.key}:${fnv1a(JSON.stringify(view.sections.map((section) => section.userIntent)))}`, view, ["level", "space", "dynamics"]),
       };
       const { alternatives, already, note } = generateAlternatives(ctx, problem);
@@ -376,10 +388,12 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
     // A weak relationship no planner can act on is reported in one line, not as an issue.
     const quiet = (problem: DetectedProblem) => {
       const decision = decisions.get(problem.id);
-      return problem.type !== "section-contrast" && problem.type !== "intent" && problem.severity < 0.55 && !decision?.selected && (decision?.alternatives.length ?? 0) === 0 && (decision?.changeIds.length ?? 0) === 0;
+      return problem.type !== "section-contrast" && problem.type !== "intent" && decision?.note !== CONSTRAINED_NOTE && problem.severity < 0.55 && !decision?.selected && (decision?.alternatives.length ?? 0) === 0 && (decision?.changeIds.length ?? 0) === 0;
     };
-    const shown = [...known.values()].filter((problem) => problem.severity >= limits.minSeverity && !quiet(problem));
-    const unshown = [...known.values()].filter((problem) => problem.severity >= limits.minSeverity && quiet(problem));
+    // Outside the request's focus a problem is shown only when a change chosen for the focus also serves it.
+    const relevant = (problem: DetectedProblem) => inFocus(problem) || final.changes.some((change) => change.problemIds.includes(problem.id));
+    const shown = [...known.values()].filter((problem) => problem.severity >= limits.minSeverity && !quiet(problem) && relevant(problem));
+    const unshown = [...known.values()].filter((problem) => problem.severity >= limits.minSeverity && quiet(problem) && relevant(problem));
     const interventions: MixIntervention[] = [];
     const problems: MixProblem[] = shown.map((problem) => {
       const decision = decisions.get(problem.id);
@@ -485,7 +499,8 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
       projectId: document.project.id,
       sourceAnalysisVersion: ANALYSIS_ENGINE_VERSION,
       settings,
-      stateIdentity: fullMixStateIdentity(document, settings, input.fingerprints ?? []),
+      stateIdentity: fullMixStateIdentity(input.document, settings, input.fingerprints ?? [], constraints),
+      ...(constraints ? { constraints } : {}),
       summary: {
         headline,
         lines,
@@ -646,4 +661,94 @@ function summaryLines(problems: MixProblem[], changes: MixChange[], counts: Full
   if (after.maxReductionDb > SAFETY.maxStemReductionDb) concerns.push("heavy gain reduction on one stem");
   lines.push(concerns.length === 0 ? "No clipping, mono-compatibility, or gain-reduction concerns detected." : `Check: ${concerns.join("; ")}.`);
   return lines;
+}
+
+/* ------------------------------------------------------------------ simplify */
+
+export interface SimplifyResult {
+  plan: FullMixPlan;
+  /** Changes taken out, in order, each with why the rest of the candidate does not miss it. */
+  removed: Array<{ changeId: string; label: string; reason: string }>;
+  /** Re-measured candidate scores: the saved mix, the candidate as it was, and the simpler one. */
+  baselineScore: number;
+  fullScore: number;
+  simplifiedScore: number;
+  /** Share of the full candidate's measured improvement the simpler one keeps (0–1). */
+  kept: number;
+  before: { changes: number; cost: number };
+  after: { changes: number; cost: number };
+}
+
+/**
+ * "Less processed": takes changes out of a candidate one at a time, each time the one the re-measured mix misses
+ * least, while the rest keeps at least `keep` of the candidate's measured improvement and adds no regression.
+ * Removed changes are rejected in the returned plan (nothing is deleted, so they can be brought back). The four
+ * planners measure every step, as in planning; no value is invented.
+ */
+export function simplifyFullMix(input: PlanFullMixInput, plan: FullMixPlan, options: { keep?: number; maxRemovals?: number } = {}): SimplifyResult {
+  const keep = Math.min(1, Math.max(0.5, options.keep ?? 0.8));
+  const settings: FullMixSettings = plan.settings;
+  const limits = MIX_LIMITS_BY_STRENGTH[settings.strength];
+  const document = input.document;
+  const now = input.now ?? new Date().toISOString();
+  const inputs: MixInputs = { measurements: input.measurements, sectionMeasurements: input.sectionMeasurements, bands: input.bands, stereo: input.stereo, envelopes: input.envelopes };
+  const surveyor = new Surveyor(document, inputs, settings.strength, now);
+  const levels: StemLevel[] = document.tracks.map((track) => {
+    const measurement = input.measurements[track.id];
+    return { trackId: track.id, peakDbfs: measurement?.levels.peakDbfs ?? null, loudnessDb: measurement?.levels.integratedLufs ?? measurement?.levels.rmsDbfs ?? null };
+  });
+  const baseline = surveyor.survey([], PLANNERS);
+  const evalCtx: EvaluationContext = { surveyor, settings, limits, levels, measurements: input.measurements, base: document, baseline, mixPeakDbfs: input.mixPeakDbfs ?? null };
+  const ids = new Set(plan.problems.map((problem) => problem.id));
+  const known = detectMixProblems({ survey: baseline, settings, levels, mixPeakDbfs: input.mixPeakDbfs ?? null }).filter((problem) => ids.has(problem.id));
+  const names = (id: string) => {
+    const track = document.tracks.find((item) => item.id === id);
+    return track?.customLabel ?? track?.name ?? id;
+  };
+  const label = (change: MixChange) => `${names(change.trackId)} ${describeChange(change.processing, names, change.evidence.kind === "space" ? change.evidence.current : undefined).toLowerCase()}`;
+  let current = plan.changes.filter((change) => changeIncluded(change, "preview") && change.processing.type !== "trim");
+  const cost = (changes: MixChange[]) => round3(changes.reduce((sum, change) => sum + change.cost, 0));
+  const start = { changes: current.length, cost: cost(current) };
+  const base = evaluateCandidate(evalCtx, [], known);
+  const full = evaluateCandidate(evalCtx, current, known);
+  const improvement = full.score - base.score;
+  let result = full;
+  const removed: SimplifyResult["removed"] = [];
+  const maxRemovals = options.maxRemovals ?? 6;
+  while (current.length > 1 && removed.length < maxRemovals && improvement > 0) {
+    let best: { change: MixChange; result: CandidateResult } | null = null;
+    for (const change of current) {
+      const without = current.filter((item) => item.id !== change.id);
+      const trial = evaluateCandidate(evalCtx, without, known);
+      if (trial.regressions.length > result.regressions.length) continue;
+      if (trial.score - base.score < keep * improvement) continue;
+      if (!best || trial.score > best.result.score + 1e-9 || (Math.abs(trial.score - best.result.score) <= 1e-9 && change.cost > best.change.cost)) best = { change, result: trial };
+    }
+    if (!best) break;
+    const share = improvement > 0 ? (best.result.score - base.score) / improvement : 1;
+    removed.push({
+      changeId: best.change.id,
+      label: label(best.change),
+      reason: `Without it the re-measured candidate keeps ${Math.round(Math.min(1, share) * 100)}% of the full candidate's improvement and adds no regression, so its processing cost (${best.change.cost.toFixed(2)}) is not earning enough.`,
+    });
+    current = current.filter((item) => item.id !== best!.change.id);
+    result = best.result;
+  }
+  const removedIds = new Set(removed.map((item) => item.changeId));
+  const note = removed.length > 0 ? `Simplified: ${removed.length} ${removed.length === 1 ? "change" : "changes"} taken out (${removed.map((item) => item.label).join("; ")}); the rest keeps ${Math.round(Math.min(1, improvement > 0 ? (result.score - base.score) / improvement : 1) * 100)}% of the measured improvement.`.slice(0, 600) : null;
+  const next = refreshFullMix({
+    ...plan,
+    changes: plan.changes.map((change) => (removedIds.has(change.id) ? { ...change, status: "rejected" as const } : change)),
+    summary: { ...plan.summary, notes: note ? [note, ...plan.summary.notes].slice(0, 12) : plan.summary.notes },
+  });
+  return {
+    plan: next,
+    removed,
+    baselineScore: round3(base.score),
+    fullScore: round3(full.score),
+    simplifiedScore: round3(result.score),
+    kept: improvement > 0 ? round3(Math.min(1, (result.score - base.score) / improvement)) : 1,
+    before: start,
+    after: { changes: current.length, cost: cost(current) },
+  };
 }

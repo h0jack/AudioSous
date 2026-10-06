@@ -40,6 +40,7 @@ export {
   fullMixStateIdentity,
   refreshFullMix,
   resetChange,
+  scaleChange,
   setChangeStatus,
   setProblemStatus,
   solutionChanges,
@@ -58,5 +59,19 @@ export type { CandidateResult, StemLevel } from "./evaluate";
 export { contrastClauses, readContrast } from "./contrast";
 export { PLANNERS, Surveyor, balanceView, eqView } from "./survey";
 export type { MixInputs, Planner, Survey } from "./survey";
-export { planFullMix } from "./planner";
-export type { PlanFullMixInput } from "./planner";
+export { planFullMix, simplifyFullMix } from "./planner";
+export type { PlanFullMixInput, SimplifyResult } from "./planner";
+export {
+  CONSTRAINT_DOMAINS,
+  CONSTRAINT_PROCESSORS,
+  cleanNote,
+  constrainChange,
+  constraintViolation,
+  constraintsAreEmpty,
+  emptyConstraints,
+  mixConstraintsSchema,
+  normalizeConstraints,
+  problemInFocus,
+  withIntents,
+} from "./constraints";
+export type { ConstraintDomain, ConstraintProcessor, MixConstraints } from "./constraints";

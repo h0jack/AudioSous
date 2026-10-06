@@ -3,6 +3,7 @@ import { eqEvaluationSchema, eqRecommendationSchema } from "@audiosous/eq-planne
 import { eqFilterSchema } from "@audiosous/project-model";
 import { spatialPlanSchema } from "@audiosous/spatial-planner";
 import { z } from "zod";
+import { mixConstraintsSchema } from "./constraints";
 import { FULL_MIX_PLAN_VERSION, FULL_MIX_PLANNER_VERSION, MIX_GOALS, MIX_STRENGTHS } from "./settings";
 
 const finite = z.number().finite();
@@ -299,6 +300,8 @@ export const fullMixPlanSchema = z.object({
   projectId: z.string().min(1),
   sourceAnalysisVersion: z.string().min(1),
   settings: z.object({ strength: z.enum(MIX_STRENGTHS), goal: z.enum(MIX_GOALS) }),
+  /** What the plan was allowed to touch, when a request narrowed it. Absent: the whole mix. */
+  constraints: mixConstraintsSchema.optional(),
   stateIdentity: z.string().min(1),
   summary: z.object({
     headline: z.string().min(1).max(300),

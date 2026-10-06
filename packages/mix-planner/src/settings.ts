@@ -1,5 +1,5 @@
 export const FULL_MIX_PLAN_VERSION = 1;
-export const FULL_MIX_PLANNER_VERSION = "7.0.0";
+export const FULL_MIX_PLANNER_VERSION = "7.1.0";
 
 export const MIX_STRENGTHS = ["conservative", "normal", "strong"] as const;
 export type MixStrength = (typeof MIX_STRENGTHS)[number];

@@ -8,6 +8,7 @@ import { addTrim, applyChanges, clamp, clampGain, fnv1a, round2 } from "./change
 import { candidatePeak, mixLoudness, type StemLevel } from "./evaluate";
 import type { ChangeProcessing, ChangeStatus, FullMixPlan, MixChange } from "./model";
 import { reevaluate } from "./rows";
+import { constraintsAreEmpty, normalizeConstraints, type MixConstraints } from "./constraints";
 import { FULL_MIX_PLANNER_VERSION, MAX_LOUDNESS_MATCH_DB, SAFETY, type FullMixSettings } from "./settings";
 
 /* ------------------------------------------------------------------ identity */
@@ -18,7 +19,7 @@ import { FULL_MIX_PLANNER_VERSION, MAX_LOUDNESS_MATCH_DB, SAFETY, type FullMixSe
  * the analysis versions of all four measurements; every planner's version; and the settings. Selection, playhead,
  * loop, and zoom are not in it.
  */
-export function fullMixStateIdentity(document: ProjectDocument, settings: FullMixSettings, fingerprints: SourceFingerprint[] = []): string {
+export function fullMixStateIdentity(document: ProjectDocument, settings: FullMixSettings, fingerprints: SourceFingerprint[] = [], constraints: MixConstraints | null = null): string {
   const files = new Map(fingerprints.map((file) => [file.trackId, file]));
   const payload = {
     projectId: document.project.id,
@@ -36,12 +37,14 @@ export function fullMixStateIdentity(document: ProjectDocument, settings: FullMi
     eq: processingIdentity(document),
     spatial: spatialIdentity(document),
     dynamics: dynamicsIdentity(document),
+    // Only when present, so plans without constraints keep the identity they always had.
+    ...(constraints && !constraintsAreEmpty(constraints) ? { constraints: normalizeConstraints(constraints) } : {}),
   };
   return fnv1a(JSON.stringify(payload));
 }
 
 export function fullMixPlanIsStale(plan: FullMixPlan, document: ProjectDocument, fingerprints: SourceFingerprint[] = [], settings: FullMixSettings = plan.settings): boolean {
-  return plan.projectId !== document.project.id || plan.stateIdentity !== fullMixStateIdentity(document, settings, fingerprints);
+  return plan.projectId !== document.project.id || plan.stateIdentity !== fullMixStateIdentity(document, settings, fingerprints, plan.constraints ?? null);
 }
 
 /* ------------------------------------------------------------------ status */
@@ -94,6 +97,53 @@ export function editChange(plan: FullMixPlan, id: string, patch: ChangePatch): F
     return { ...next, cost: change.cost, status: change.status === "proposed" && next.status === "needs-review" ? ("needs-review" as const) : change.status };
   });
   return refreshFullMix({ ...plan, changes });
+}
+
+/**
+ * Moves one change toward its current setting (factor < 1: "a little less") or further from it (factor > 1: "more"),
+ * from the value it has now, so an edit the person made is the starting point. The planner's own edit bounds
+ * still apply. Returns the plan unchanged with a reason when the change has no amount to scale.
+ */
+export function scaleChange(plan: FullMixPlan, id: string, factor: number): { plan: FullMixPlan; scaled: boolean; reason: string | null } {
+  const change = plan.changes.find((item) => item.id === id);
+  if (!change) return { plan, scaled: false, reason: "No such change in this candidate." };
+  if (!Number.isFinite(factor) || factor < 0 || factor > 2) return { plan, scaled: false, reason: "A scale factor must be between 0 and 2." };
+  const patch = scalePatch(change, factor);
+  if (!patch) return { plan, scaled: false, reason: "This change has no amount that can be scaled." };
+  const next = editChange(plan, id, patch);
+  const after = next.changes.find((item) => item.id === id)!;
+  return { plan: next, scaled: JSON.stringify(after.processing) !== JSON.stringify(change.processing), reason: null };
+}
+
+function scalePatch(change: MixChange, factor: number): ChangePatch | null {
+  const processing = change.processing;
+  switch (processing.type) {
+    case "gain": {
+      const base = change.evidence.kind === "level" ? change.evidence.currentGainDb : processing.gainDb - processing.deltaDb;
+      return { gainDb: round2(base + (processing.gainDb - base) * factor) };
+    }
+    case "trim":
+      return null;
+    case "eq": {
+      if (processing.filter.kind === "high-pass" || processing.filter.kind === "low-pass") return null;
+      const replaced = change.evidence.kind === "eq" ? (change.evidence.evidence.replaces?.gainDb ?? 0) : 0;
+      return { gainDb: round2(replaced + (processing.filter.gainDb - replaced) * factor) };
+    }
+    case "spatial": {
+      if (change.evidence.kind !== "space") return null;
+      const current = change.evidence.current;
+      return {
+        pan: processing.pan === null ? null : current.pan + (processing.pan - current.pan) * factor,
+        width: processing.width === null ? null : current.width + (processing.width - current.width) * factor,
+      };
+    }
+    case "dynamics": {
+      const node = processing.processing;
+      if (node.type === "ducking" || node.type === "dynamic-eq") return { rangeDb: Math.min(-0.5, round2(node.rangeDb * factor)) };
+      if (node.type === "transient") return { attack: round2(node.attack * factor), sustain: round2(node.sustain * factor) };
+      return { ratio: Math.max(1.1, round2(1 + (node.ratio - 1) * factor)) };
+    }
+  }
 }
 
 export function resetChange(plan: FullMixPlan, id: string): FullMixPlan {

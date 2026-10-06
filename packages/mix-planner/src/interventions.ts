@@ -9,6 +9,7 @@ import { eqChange, fromBalanceRow, fromDynamicsRow, fromEqRow, fromSpaceRow, gai
 import { MIN_PROBLEM_CONFIDENCE, type FullMixSettings, type MixLimits } from "./settings";
 import type { MixInputs, Survey } from "./survey";
 import { translatedNotes } from "./contrast";
+import { constrainChange, type MixConstraints } from "./constraints";
 
 export interface InterventionContext extends RowContext {
   document: ProjectDocument;
@@ -19,6 +20,8 @@ export interface InterventionContext extends RowContext {
   limits: MixLimits;
   /** Every open problem of this pass, for crediting a change that helps several. */
   problems: readonly DetectedProblem[];
+  /** What the plan may touch. A change outside it is dropped or moved into the allowed sections, never offered as is. */
+  constraints?: MixConstraints;
 }
 
 /** One way to solve one problem: a single processor, or two at reduced depth. */
@@ -260,14 +263,23 @@ export function generateAlternatives(ctx: InterventionContext, problem: Detected
   const already = reductionOf(problem, ctx.chosen, ctx);
   if (problem.confidence < MIN_PROBLEM_CONFIDENCE) return { alternatives: [], already, note: `Confidence ${Math.round(problem.confidence * 100)}% is too low to change anything for this.` };
   if (already >= 0.7) return { alternatives: [], already, note: `Changes chosen for other problems already remove about ${Math.round(already * 100)}% of it.` };
-  const singles: MixChange[] = [];
-  const push = (change: MixChange | null) => {
-    if (!change) return;
-    if (singles.some((item) => item.id === change.id)) return;
-    const chosen = ctx.chosen.find((item) => item.id === change.id);
-    // A different setting for a change another problem already chose would contradict it.
-    if (chosen && JSON.stringify(chosen.processing) !== JSON.stringify(change.processing)) return;
-    singles.push(change);
+  // Each single is one move; a song-wide move confined to some sections by the constraints becomes one move per section.
+  const singles: MixChange[][] = [];
+  let blocked = 0;
+  const push = (raw: MixChange | null) => {
+    if (!raw) return;
+    const group = ctx.constraints ? constrainChange(ctx, raw, ctx.constraints, problem.sectionIds) : [raw];
+    if (group.length === 0) {
+      blocked += 1;
+      return;
+    }
+    if (singles.some((item) => item[0]!.id === group[0]!.id)) return;
+    for (const change of group) {
+      const chosen = ctx.chosen.find((item) => item.id === change.id);
+      // A different setting for a change another problem already chose would contradict it.
+      if (chosen && JSON.stringify(chosen.processing) !== JSON.stringify(change.processing)) return;
+    }
+    singles.push(group);
   };
   for (const row of problem.rows.dynamics) push(fromDynamicsRow(ctx, row, problem.id));
   for (const row of problem.rows.eq) push(fromEqRow(ctx, row, problem.id));
@@ -278,7 +290,7 @@ export function generateAlternatives(ctx: InterventionContext, problem: Detected
     // A fader move is offered for a conflict only when it is a level problem; otherwise it is EQ's or space's to solve.
     push(gapGain(ctx, problem));
   }
-  if (problem.type === "low-end-collision" && !singles.some((change) => change.domain === "eq")) push(lowEndCut(ctx, problem));
+  if (problem.type === "low-end-collision" && !singles.some((group) => group[0]!.domain === "eq")) push(lowEndCut(ctx, problem));
   if (problem.type === "headroom") push(trimChange(ctx, problem));
   if (problem.type === "section-contrast" && problem.metric.kind === "contrast" && ctx.translated) {
     // The note in each planner's own words, for the dimensions that fall short; the planners size the moves.
@@ -292,13 +304,13 @@ export function generateAlternatives(ctx: InterventionContext, problem: Detected
 
   const lowConfidence = problem.confidence < ctx.limits.lowConfidence;
   // A change another problem already chose is credited in `already`, not offered again as an alternative.
-  const usable = singles.filter((change) => !ctx.chosen.some((item) => item.id === change.id) && (effectOn(problem, change, ctx).db > 0.05 || effectOn(problem, change, ctx).share > 0.02));
-  let options: Alternative[] = usable.map((change) => score(ctx, problem, [lowConfidence ? scaled(ctx, change, 0.7) : change], already, "single"));
+  const usable = singles.filter((group) => group.every((change) => !ctx.chosen.some((item) => item.id === change.id)) && group.some((change) => effectOn(problem, change, ctx).db > 0.05 || effectOn(problem, change, ctx).share > 0.02));
+  let options: Alternative[] = usable.map((group) => score(ctx, problem, group.map((change) => (lowConfidence ? scaled(ctx, change, 0.7) : change)), already, "single"));
   if (lowConfidence) options = options.filter((option) => option.cost <= 0.1);
   options.sort(byNet);
   const best = options[0];
   if (!lowConfidence && ctx.limits.maxChangesPerProblem >= 2 && best && best.total < 0.8) {
-    const top = options.slice(0, 3);
+    const top = options.filter((option) => option.changes.length === 1).slice(0, 3);
     const combos: Alternative[] = [];
     for (let left = 0; left < top.length; left += 1) {
       for (let right = left + 1; right < top.length; right += 1) {
@@ -313,7 +325,29 @@ export function generateAlternatives(ctx: InterventionContext, problem: Detected
     if (combos[0]) options.push(combos[0]);
   }
   options.sort(byNet);
+  if (options.length === 0 && blocked > 0) return { alternatives: [], already, note: CONSTRAINED_NOTE };
   return { alternatives: options.slice(0, 4), already, note: null };
+}
+
+/** Why a problem got nothing when the request's constraints ruled out every move for it. */
+export const CONSTRAINED_NOTE = "Every move the planners offered for it would change a protected stem, a ruled-out kind of processing, or something outside the allowed sections, so it is left alone as asked.";
+
+/**
+ * Share of a problem the plan may act on: inside a section restriction, the part of the problem's time that falls in
+ * the allowed sections. A chorus-only move is judged against the chorus part of a song-wide conflict.
+ */
+export function scopeShare(ctx: Pick<InterventionContext, "constraints" | "document">, problem: Pick<DetectedProblem, "scope" | "sectionIds">): number {
+  const allowed = ctx.constraints?.sectionIds;
+  if (!allowed) return 1;
+  const sections = ctx.document.sections;
+  const ids = problem.scope.type === "section" ? [problem.scope.sectionId] : problem.sectionIds.length > 0 ? problem.sectionIds : sections.map((section) => section.id);
+  const length = (id: string) => {
+    const section = sections.find((item) => item.id === id);
+    return section ? Math.max(0, section.endTime - section.startTime) : 0;
+  };
+  const total = ids.reduce((sum, id) => sum + length(id), 0);
+  const inside = ids.filter((id) => allowed.includes(id)).reduce((sum, id) => sum + length(id), 0);
+  return total > 0 && inside > 0 ? Math.min(1, inside / total) : 1;
 }
 
 function byNet(left: Alternative, right: Alternative): number {
@@ -322,8 +356,9 @@ function byNet(left: Alternative, right: Alternative): number {
 
 function score(ctx: InterventionContext, problem: DetectedProblem, changes: MixChange[], already: number, kind: "single" | "combined"): Alternative {
   const withChosen = [...ctx.chosen.filter((item) => !changes.some((change) => change.id === item.id)), ...changes];
-  const total = reductionOf(problem, withChosen, ctx);
-  const reduction = round3(Math.max(0, total - already));
+  const share = scopeShare(ctx, problem);
+  const total = Math.min(1, reductionOf(problem, withChosen, ctx) / share);
+  const reduction = round3(clamp(total - already / share, 0, 1));
   const fresh = changes.filter((change) => !ctx.chosen.some((item) => item.id === change.id));
   const cost = round3(fresh.reduce((sum, change) => sum + change.cost, 0) + (kind === "combined" ? EXTRA_PROCESSOR_COST : 0));
   const collateral = round3(fresh.reduce((sum, change) => sum + collateralOf(problem, change), 0));
