@@ -303,6 +303,9 @@ interface AppState {
   planTab: PlanTab;
   /** Every long-running piece of work, by id (`lib/tasks.ts`). The banner, Play, and the action buttons read it. */
   tasks: Record<string, ProcessingTask>;
+  /** What the Changes view is focused on (a section marker or a change was clicked). */
+  changesFocus: { sectionId: string | null; trackId: string | null; token: number } | null;
+  setChangesFocus: (focus: { sectionId: string | null; trackId: string | null } | null) => void;
   setTask: (patch: TaskPatch) => void;
   dropTask: (id: string) => void;
   goWelcome: () => void;
@@ -347,6 +350,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   assistant: idleAssistant(),
   planTab: "gain",
   tasks: {},
+  changesFocus: null,
+  setChangesFocus: (focus) => set({ changesFocus: focus ? { ...focus, token: (get().changesFocus?.token ?? 0) + 1 } : null }),
   setTask: (patch) => {
     const now = Date.now();
     const next = upsertTask(pruneTasks(get().tasks, now), patch, now);

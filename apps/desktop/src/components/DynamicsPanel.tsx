@@ -34,6 +34,7 @@ import type { usePlayback } from "../lib/playback";
 import { getPlatform } from "../platform";
 import { useAppStore, type DynamicsSession } from "../state/app-store";
 import { PlannerStatus } from "./ProcessingStatus";
+import { PlanChanges } from "./PlanChanges";
 import { Button } from "./ui";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -132,6 +133,7 @@ export function DynamicsPanelView({ document, playback, dynamics }: { document: 
         <p className="mb-2 max-w-3xl text-xs text-faint">{dynamicsScope(document)}</p>
         {!native ? <p className="mb-2 max-w-3xl text-xs text-danger">This audio engine does not play dynamics. Use the native engine to hear compression, ducking, transient shaping, and dynamic EQ.</p> : null}
         <PlannerStatus kind="dynamics-plan" />
+        <PlanChanges tab="dynamics" document={document} />
         {dynamics.error ? <p className="text-sm text-danger">{dynamics.error}</p> : null}
         {stale ? (
           <p className="mb-2 text-sm text-danger" role="status">

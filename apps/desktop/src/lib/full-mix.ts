@@ -130,6 +130,11 @@ export interface LoadMixInputsOptions {
 let sourcesCache: { key: string; measurements: LoadedMixInputs["measurements"]; fingerprints: LoadedMixInputs["fingerprints"]; bands: LoadedMixInputs["bands"]; stereo: LoadedMixInputs["stereo"]; envelopes: LoadedMixInputs["envelopes"] } | null = null;
 let peakCache: { key: string; mixPeakDbfs: number | null } | null = null;
 
+/** The envelopes already loaded for this project, if any: for drawing a key's hits under a duck. */
+export function cachedEnvelopes(projectId: string): LoadedMixInputs["envelopes"] | null {
+  return sourcesCache && sourcesCache.key.startsWith(`${projectId}|`) ? sourcesCache.envelopes : null;
+}
+
 export function clearMixInputsCache(): void {
   sourcesCache = null;
   peakCache = null;

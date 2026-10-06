@@ -42,6 +42,9 @@ import { useAppStore } from "../state/app-store";
 import { describeFilter } from "@audiosous/eq-planner";
 import { HoverTip, RoleSelect } from "./ui";
 import { useGate } from "./ProcessingStatus";
+import { DomainLetters } from "./ChangesView";
+import { useActiveDifference } from "../lib/difference";
+import type { SectionMarker } from "@audiosous/mix-planner";
 
 const NAME_WIDTH = 232;
 const ROW_HEIGHT = 156;
@@ -67,6 +70,7 @@ export function Timeline({
   const duration = Math.max(document.project.durationSeconds, 0.001);
   const { playhead, playing, seek } = playback;
   const playGate = useGate("playback");
+  const candidate = useActiveDifference(document);
   const [zoom, setZoom] = useState(() => clampTimelineZoom(document.uiState.timelineZoom));
   const [scrollSeconds, setScrollSeconds] = useState(document.uiState.timelineScroll);
   const [range, setRange] = useState(document.uiState.timeRange);
@@ -493,6 +497,13 @@ export function Timeline({
                   <SectionName
                     key={section.id}
                     section={section}
+                    marker={candidate?.diff.sections.find((item) => item.sectionId === section.id) ?? null}
+                    candidateLabel={candidate?.label ?? null}
+                    onInspect={() => {
+                      if (!candidate) return;
+                      useAppStore.getState().setPlanTab(candidate.tab);
+                      useAppStore.getState().setChangesFocus({ sectionId: section.id, trackId: null });
+                    }}
                     selected={section.id === document.uiState.selectedSectionId}
                     pixelsPerSecond={pps}
                     scrollSeconds={scrollSeconds}
@@ -1210,32 +1221,45 @@ function SectionName({
   pixelsPerSecond,
   scrollSeconds,
   onSelect,
+  marker = null,
+  candidateLabel = null,
+  onInspect,
 }: {
   section: SongSection;
   selected: boolean;
   pixelsPerSecond: number;
   scrollSeconds: number;
   onSelect: () => void;
+  /** Section-only changes the open candidate makes here (G gain, E EQ, S space, D dynamics). */
+  marker?: SectionMarker | null;
+  candidateLabel?: string | null;
+  onInspect?: () => void;
 }) {
   const x = timeToX(section.startTime, pixelsPerSecond, scrollSeconds);
   const width = Math.max(0, (section.endTime - section.startTime) * pixelsPerSecond);
   const rangeLabel = `${formatClock(section.startTime)}–${formatClock(section.endTime)}`;
+  const words = marker ? marker.domains.map((domain) => (domain === "eq" ? "EQ" : domain)).join(", ") : "";
   return (
-    <HoverTip
-      label={`${section.name} · ${rangeLabel}`}
-      className="absolute inset-y-0 z-10 overflow-hidden"
-      style={{ left: x, width }}
-    >
-      <button
-        type="button"
-        aria-label={`Section ${section.name}, ${rangeLabel}`}
-        aria-pressed={selected}
-        className={`h-full w-full truncate px-1 text-left text-[10px] ${selected ? "text-accent" : "text-muted"}`}
-        onClick={onSelect}
-      >
-        {section.name}
-      </button>
-    </HoverTip>
+    <span className="absolute inset-y-0 z-10 flex overflow-hidden" style={{ left: x, width }}>
+      <HoverTip label={`${section.name} · ${rangeLabel}`} className="min-w-0 flex-1">
+        <button
+          type="button"
+          aria-label={`Section ${section.name}, ${rangeLabel}`}
+          aria-pressed={selected}
+          className={`h-full w-full truncate px-1 text-left text-[10px] ${selected ? "text-accent" : "text-muted"}`}
+          onClick={onSelect}
+        >
+          {section.name}
+        </button>
+      </HoverTip>
+      {marker && width > 40 ? (
+        <HoverTip label={`${candidateLabel ?? "The candidate"} changes ${words} in ${section.name} only. Click to inspect.`} className="flex shrink-0 items-center pr-1">
+          <button type="button" aria-label={`Inspect ${candidateLabel ?? "candidate"} changes in ${section.name}: ${words}`} className="flex items-center" onClick={onInspect}>
+            <DomainLetters domains={marker.domains} />
+          </button>
+        </HoverTip>
+      ) : null}
+    </span>
   );
 }
 

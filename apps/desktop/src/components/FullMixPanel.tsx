@@ -11,7 +11,9 @@ import {
   type MixStrength,
 } from "@audiosous/mix-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useDifference } from "../lib/difference";
+import { ChangesView } from "./ChangesView";
 import {
   applyFullMix,
   auditionFullMix,
@@ -60,6 +62,7 @@ export function FullMixPanelView({ document, playback, fullMix, autoMix = idleAu
   const plan = fullMix.plan;
   const stale = plan ? fullMixPlanIsStale(plan, document, fullMix.fingerprints, fullMix.settings) : false;
   const loggedStale = useRef<string | null>(null);
+  const [chosenView, setView] = useState<"changes" | "problems" | null>(null);
   useEffect(() => {
     if (!plan || !stale || loggedStale.current === plan.stateIdentity) return;
     loggedStale.current = plan.stateIdentity;
@@ -94,6 +97,8 @@ export function FullMixPanelView({ document, playback, fullMix, autoMix = idleAu
   const selected = plan?.problems.find((problem) => problem.id === fullMix.selectedProblemId) ?? null;
   const native = playback.engineKind === "native";
   const fromAutoMix = Boolean(plan && autoMix.phase === "ready" && autoMix.planCreatedAt === plan.createdAt && fullMix.phase === "ready");
+  // The Recommended Mix opens on what it changes; an expert Full Mix plan opens on its problems.
+  const view = chosenView ?? (fromAutoMix ? "changes" : "problems");
 
   return (
     <section className="flex min-h-0 flex-1 flex-col border-t border-line bg-panel" aria-label="Full Mix plan">
@@ -180,7 +185,18 @@ export function FullMixPanelView({ document, playback, fullMix, autoMix = idleAu
         {plan && fullMix.phase === "ready" ? (
           <>
             <Summary plan={plan} audition={audition?.note ?? null} />
-            {plan.problems.length > 0 ? (
+            <div className="mt-3 flex items-center gap-1" role="tablist" aria-label="Full Mix review">
+              {(["problems", "changes"] as const).map((value) => (
+                <button key={value} type="button" role="tab" aria-selected={view === value} className={`rounded px-2.5 py-1 text-xs ${view === value ? "bg-panel-2 text-ink" : "text-muted hover:text-ink"}`} onClick={() => setView(value)}>
+                  {value === "changes" ? "Changes (Current / Candidate / Difference)" : `Problems (${plan.problems.length})`}
+                </button>
+              ))}
+            </div>
+            {view === "changes" ? (
+              <div className="mt-3">
+                <FullMixChanges document={document} />
+              </div>
+            ) : plan.problems.length > 0 ? (
               <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,680px)]">
                 <ul className="flex flex-col gap-2 self-start" aria-label="Problems">
                   {plan.problems.map((problem) => (
@@ -537,4 +553,11 @@ function ConstraintLine({ plan }: { plan: FullMixPlan }) {
     constraints.focusSectionIds.length && !constraints.sectionIds ? `focused on ${constraints.focusSectionIds.map(section).join(", ")}` : null,
   ].filter(Boolean);
   return <p className="mt-1 text-xs text-accent">Planned for an assistant request: {parts.join(" · ")}.</p>;
+}
+
+/** The Full Mix (or Recommended Mix) candidate as changes: what, where, how much, and when. */
+function FullMixChanges({ document }: { document: ProjectDocument }) {
+  const active = useDifference("full", document);
+  if (!active) return <p className="text-xs text-muted">The changes are drawn when the plan is ready and current.</p>;
+  return <ChangesView document={document} diff={active.diff} label={active.label} />;
 }

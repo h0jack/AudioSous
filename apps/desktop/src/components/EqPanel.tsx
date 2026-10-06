@@ -21,6 +21,7 @@ import { getPlatform } from "../platform";
 import { useAppStore } from "../state/app-store";
 import { EqCurve } from "./EqCurve";
 import { PlannerStatus } from "./ProcessingStatus";
+import { PlanChanges } from "./PlanChanges";
 import { Button } from "./ui";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -104,6 +105,7 @@ export function EqPanel({ document, playback }: { document: ProjectDocument; pla
           <p className="mb-2 max-w-3xl text-xs text-danger">This audio engine plays without EQ. Use the native engine to hear the candidate.</p>
         ) : null}
         <PlannerStatus kind="eq-plan" />
+        <PlanChanges tab="eq" document={document} />
         {eq.error ? <p className="text-sm text-danger">{eq.error}</p> : null}
         {stale ? (
           <p className="mb-2 text-sm text-danger" role="status">

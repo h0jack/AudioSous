@@ -75,3 +75,33 @@ export {
   withIntents,
 } from "./constraints";
 export type { ConstraintDomain, ConstraintProcessor, MixConstraints } from "./constraints";
+export {
+  differenceScale,
+  dynamicsPlanDifference,
+  eqPlanDifference,
+  explainDynamics,
+  explainEq,
+  explainGain,
+  explainSpace,
+  fullMixDifference,
+  gainPlanDifference,
+  keyHits,
+  mixDifference,
+  panLabel,
+  spacePlanDifference,
+} from "./difference";
+export type {
+  CurvePoint,
+  DifferenceDomain,
+  DifferenceEvidence,
+  DifferenceInput,
+  DifferenceScope,
+  DynamicsDifference,
+  EqDifference,
+  GainDifference,
+  InteractionDifference,
+  MetricDifference,
+  MixDifference,
+  SectionMarker,
+  SpaceDifference,
+} from "./difference";

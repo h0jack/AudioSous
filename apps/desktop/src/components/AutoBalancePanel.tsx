@@ -15,6 +15,7 @@ import { logEvent } from "../lib/log";
 import { getPlatform } from "../platform";
 import { useAppStore } from "../state/app-store";
 import { PlannerStatus } from "./ProcessingStatus";
+import { PlanChanges } from "./PlanChanges";
 import { Button } from "./ui";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -111,6 +112,7 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
       <div className="min-h-0 flex-1 overflow-auto group-data-[collapsed=true]:hidden px-4 py-3">
         <p className="mb-2 max-w-3xl text-xs text-faint">{autoBalanceScope(document)}</p>
         <PlannerStatus kind="gain-plan" />
+        <PlanChanges tab="gain" document={document} />
         {balance.error ? <p className="text-sm text-danger">{balance.error}</p> : null}
         {stale ? (
           <p className="mb-2 text-sm text-danger" role="status">
