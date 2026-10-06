@@ -855,6 +855,17 @@ mod tests {
     }
 
     #[test]
+    fn settings_read_as_the_desktop_sends_them() {
+        let settings: ExportSettings = serde_json::from_value(json!({ "format": { "kind": "flac", "bits": 24 }, "sampleRate": 48000, "loudness": { "mode": "target", "integratedLufs": -14.0, "ceilingDbtp": -1.0 }, "metadata": { "title": "Night Drive", "trackNumber": 2 } })).unwrap();
+        assert_eq!(settings.loudness, LoudnessTarget::Target { integrated_lufs: -14.0, ceiling_dbtp: -1.0 });
+        assert_eq!(settings.metadata.track_number, Some(2));
+        let preserve: LoudnessTarget = serde_json::from_value(json!({ "mode": "preserve", "ceilingDbtp": -1.0 })).unwrap();
+        assert_eq!(preserve, LoudnessTarget::Preserve { ceiling_dbtp: -1.0 });
+        let choice: LimitingChoice = serde_json::from_value(json!("safer")).unwrap();
+        assert_eq!(choice, LimitingChoice::Safer);
+    }
+
+    #[test]
     fn a_missing_stem_is_named() {
         let fixture = fixture("missing", 48_000, 0.5, 0.5);
         fs::remove_file(&fixture.sources[1].path).unwrap();

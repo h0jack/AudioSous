@@ -1,4 +1,5 @@
 mod agent_host;
+mod export_host;
 mod analysis;
 mod audio_host;
 mod bundle;
@@ -521,11 +522,42 @@ async fn agent_http(app: AppHandle, request: agent_host::AgentHttpRequest) -> Re
         .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+fn export_start(host: tauri::State<'_, export_host::ExportHost>, project_file: String, request: export_host::ExportRequest) -> Result<u64, String> {
+    host.start(&project_file, request)
+}
+
+#[tauri::command]
+fn export_status(host: tauri::State<'_, export_host::ExportHost>, job_id: u64) -> Result<export_host::ExportStatus, String> {
+    host.status(job_id)
+}
+
+#[tauri::command]
+fn export_decide(host: tauri::State<'_, export_host::ExportHost>, job_id: u64, choice: Option<audiosous_audio::LimitingChoice>) -> Result<(), String> {
+    host.decide(job_id, choice)
+}
+
+#[tauri::command]
+fn export_cancel(host: tauri::State<'_, export_host::ExportHost>, job_id: u64) -> Result<(), String> {
+    host.cancel(job_id)
+}
+
+#[tauri::command]
+fn export_reveal(path: String) -> Result<(), String> {
+    export_host::reveal(&path)
+}
+
+#[tauri::command]
+fn export_mp3_available() -> Result<String, String> {
+    audiosous_audio::lame_available()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(audio_host::AudioHost::new())
+        .manage(export_host::ExportHost::default())
         .invoke_handler(tauri::generate_handler![
             list_audio_files,
             read_user_file_range,
@@ -565,7 +597,13 @@ pub fn run() {
             append_log,
             agent_settings,
             agent_save_settings,
-            agent_http
+            agent_http,
+            export_start,
+            export_status,
+            export_decide,
+            export_cancel,
+            export_reveal,
+            export_mp3_available
         ])
         .run(tauri::generate_context!())
         .expect("Audiosous failed to start");

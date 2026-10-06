@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
-import type { AgentSettingsInfo, AnalyzeAudioRequest, CopyProgress, DesktopPlatform, DynamicsCheckResponse, EqCheckResponse, ListedFile, MediaStatus, MixCheckResult, SpatialCheckResponse, TrackAnalysisBridgeResult } from "./types";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import type { AgentSettingsInfo, AnalyzeAudioRequest, CopyProgress, DesktopPlatform, DynamicsCheckResponse, EqCheckResponse, ListedFile, MediaStatus, MixCheckResult, SpatialCheckResponse, TrackAnalysisBridgeResult, ExportStatus } from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -175,6 +175,28 @@ export const tauriPlatform: DesktopPlatform = {
   },
   agentFetch() {
     return shellFetch;
+  },
+  async pickExportPath(defaultName, extension) {
+    const selected = await save({ title: "Export mix", defaultPath: `${defaultName}.${extension}`, filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
+    return typeof selected === "string" ? selected : null;
+  },
+  startExport(projectFile, request) {
+    return invoke<number>("export_start", { projectFile, request });
+  },
+  exportStatus(jobId) {
+    return invoke<ExportStatus>("export_status", { jobId });
+  },
+  decideExport(jobId, choice) {
+    return invoke("export_decide", { jobId, choice });
+  },
+  cancelExport(jobId) {
+    return invoke("export_cancel", { jobId });
+  },
+  revealExport(path) {
+    return invoke("export_reveal", { path });
+  },
+  mp3Available() {
+    return invoke<string>("export_mp3_available");
   },
 };
 

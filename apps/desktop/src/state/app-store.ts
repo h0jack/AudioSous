@@ -4,7 +4,7 @@ import type { SpatialPlan, SpatialSettings } from "@audiosous/spatial-planner";
 import type { DynamicsPlan, DynamicsSettings } from "@audiosous/dynamics-planner";
 import type { FullMixPlan, FullMixSettings } from "@audiosous/mix-planner";
 import type { AgentSession } from "@audiosous/mix-agent";
-import type { AgentSettingsInfo } from "../platform/types";
+import type { AgentSettingsInfo, ExportReport, ExportSettings, ExportStatus, MasterPlan } from "../platform/types";
 import type { ImportWarning, ProjectDocument } from "@audiosous/project-model";
 import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
@@ -207,6 +207,21 @@ export function idleFullMix(): FullMixSession {
   };
 }
 
+/** The export dialog and the job it runs. Settings are remembered per viewer (`lib/export.ts`). */
+export interface ExportSession {
+  open: boolean;
+  phase: "setup" | "running" | "deciding" | "done" | "failed" | "cancelled";
+  preset: "preserve" | "balanced" | "loud" | "custom";
+  settings: ExportSettings;
+  jobId: number | null;
+  status: ExportStatus | null;
+  plan: MasterPlan | null;
+  report: ExportReport | null;
+  error: string | null;
+  /** Why MP3 is unavailable, when it is. */
+  mp3Unavailable: string | null;
+}
+
 export type AutoMixStageId = "prepare" | "levels" | "frequency" | "space" | "dynamics" | "plan" | "verify";
 
 export interface AutoMixStage {
@@ -299,6 +314,8 @@ interface AppState {
   dynamics: DynamicsSession;
   fullMix: FullMixSession;
   autoMix: AutoMixSession;
+  exportJob: ExportSession | null;
+  setExportJob: (patch: Partial<ExportSession> | null) => void;
   assistant: AssistantState;
   planTab: PlanTab;
   /** Every long-running piece of work, by id (`lib/tasks.ts`). The banner, Play, and the action buttons read it. */
@@ -347,6 +364,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   dynamics: idleDynamics(),
   fullMix: idleFullMix(),
   autoMix: idleAutoMix(),
+  exportJob: null,
+  setExportJob: (patch) => set({ exportJob: patch === null ? null : ({ ...(get().exportJob ?? {}), ...patch } as ExportSession) }),
   assistant: idleAssistant(),
   planTab: "gain",
   tasks: {},
@@ -361,7 +380,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = removeTask(get().tasks, id);
     if (next !== get().tasks) set({ tasks: next });
   },
-  goWelcome: () => set({ tasks: cancelActive(get().tasks), screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), autoMix: idleAutoMix(), assistant: idleAssistant(false, get().assistant.settings) }),
+  goWelcome: () => set({ tasks: cancelActive(get().tasks), screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), autoMix: idleAutoMix(), exportJob: null, assistant: idleAssistant(false, get().assistant.settings) }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
@@ -383,6 +402,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       dynamics: idleDynamics(),
       fullMix: idleFullMix(),
       autoMix: idleAutoMix(),
+      exportJob: null,
       // A new project starts a new conversation; the panel stays where the person left it.
       assistant: idleAssistant(get().assistant.open, get().assistant.settings),
       planTab: "gain",

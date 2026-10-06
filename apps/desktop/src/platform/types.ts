@@ -161,6 +161,103 @@ export interface MixCheckResult {
   sections: Array<{ id: string; rmsDb: number | null }>;
 }
 
+/* ------------------------------------------------------------------ export */
+
+export type ExportFormat =
+  | { kind: "wav"; depth: "pcm16" | "pcm24" | "float32" }
+  | { kind: "flac"; bits: 16 | 24 }
+  | { kind: "mp3"; quality: "cbr320" | "v0" };
+
+export type LoudnessTarget = { mode: "preserve"; ceilingDbtp: number } | { mode: "target"; integratedLufs: number; ceilingDbtp: number };
+
+export interface ExportMetadata {
+  title?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  trackNumber?: number | null;
+  year?: number | null;
+}
+
+export interface ExportSettings {
+  format: ExportFormat;
+  sampleRate: number;
+  loudness: LoudnessTarget;
+  metadata: ExportMetadata;
+}
+
+export interface ExportRequest {
+  tracks: Array<{ trackId: string; relativePath: string }>;
+  /** The applied mix as the engine plays it: the same shape as a render-check variant. */
+  mix: MixCheckVariant;
+  durationSeconds: number;
+  settings: ExportSettings;
+  output: string;
+}
+
+export interface LoudnessReport {
+  integratedLufs: number;
+  loudnessRangeLu: number;
+  samplePeakDbfs: number;
+  truePeakDbtp: number;
+  maxMomentaryLufs: number;
+  maxShortTermLufs: number;
+  frames: number;
+  sampleRate: number;
+}
+
+export interface MasterPlan {
+  gainDb: number;
+  ceilingDbtp: number;
+  targetLufs: number | null;
+  estimatedMaxReductionDb: number;
+  estimatedShareOver1db: number;
+  estimatedShareOver3db: number;
+  limitingNeeded: boolean;
+  heavy: boolean;
+  saferTargetLufs: number | null;
+}
+
+export interface ExportReport {
+  output: string;
+  format: string;
+  sampleRate: number;
+  bitDepth: number | null;
+  bitrateKbps: number | null;
+  channels: number;
+  durationSeconds: number;
+  fileBytes: number;
+  integratedLufs: number;
+  truePeakDbtp: number;
+  samplePeakDbfs: number;
+  loudnessRangeLu: number;
+  mix: LoudnessReport;
+  gainDb: number;
+  targetLufs: number | null;
+  ceilingDbtp: number;
+  limiter: { maxReductionDb: number; shareOver1db: number; shareOver3db: number; meanActiveReductionDb: number; activeShare: number };
+  verification: string[];
+  warnings: string[];
+  renderSeconds: number;
+  totalSeconds: number;
+  renderSpeed: number;
+}
+
+export type ExportStage = "rendering" | "analyzing" | "deciding" | "mastering" | "encoding" | "verifying" | "done" | "failed" | "cancelled";
+
+export interface ExportStatus {
+  jobId: number;
+  stage: ExportStage;
+  detail: string;
+  framesDone: number;
+  framesTotal: number;
+  sampleRate: number;
+  analysis: { loudness: LoudnessReport; durationSeconds: number; renderSeconds: number; renderSpeed: number } | null;
+  plan: MasterPlan | null;
+  report: ExportReport | null;
+  error: string | null;
+  peakMemoryMb: number | null;
+}
+
 /** The assistant's provider settings as the shell reports them. Never contains the key. */
 export interface AgentSettingsInfo {
   provider: "none" | "anthropic";
@@ -228,4 +325,15 @@ export interface DesktopPlatform {
   saveAgentSettings(settings: SaveAgentSettings): Promise<AgentSettingsInfo>;
   /** A fetch that reaches the provider through the shell (which adds the key), or null where there is none. */
   agentFetch(): typeof fetch | null;
+  /** Asks where to save an export. Desktop only. */
+  pickExportPath(defaultName: string, extension: string): Promise<string | null>;
+  /** Starts rendering the applied mix from the original stems to a finished file. Desktop only. */
+  startExport(projectFile: string, request: ExportRequest): Promise<number>;
+  exportStatus(jobId: number): Promise<ExportStatus>;
+  /** The answer to heavy limiting: the safer level, continue, or null to cancel. */
+  decideExport(jobId: number, choice: "safer" | "continue" | null): Promise<void>;
+  cancelExport(jobId: number): Promise<void>;
+  revealExport(path: string): Promise<void>;
+  /** The MP3 encoder's version, or an error saying why MP3 is unavailable. */
+  mp3Available(): Promise<string>;
 }

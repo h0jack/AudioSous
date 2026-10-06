@@ -156,6 +156,21 @@ export const browserPlatform: DesktopPlatform = {
   agentFetch() {
     return null;
   },
+  async pickExportPath() {
+    return null;
+  },
+  async startExport(): Promise<number> {
+    throw new Error("Export renders the original stems and needs the desktop app.");
+  },
+  async exportStatus(): Promise<never> {
+    throw new Error("Export needs the desktop app.");
+  },
+  async decideExport() {},
+  async cancelExport() {},
+  async revealExport() {},
+  async mp3Available(): Promise<string> {
+    throw new Error("Export needs the desktop app.");
+  },
 };
 
 export function browserFilesFromDrop(fileList: FileList | File[]): ListedFile[] {

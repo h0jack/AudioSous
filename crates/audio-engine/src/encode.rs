@@ -725,6 +725,20 @@ mod tests {
         }
     }
 
+    /// The desktop sends these names; keep them stable.
+    #[test]
+    fn format_names_match_the_desktop() {
+        let wav: ExportFormat = serde_json::from_str(r#"{"kind":"wav","depth":"pcm24"}"#).unwrap();
+        assert_eq!(wav, ExportFormat::Wav { depth: WavDepth::Pcm24 });
+        let float: ExportFormat = serde_json::from_str(r#"{"kind":"wav","depth":"float32"}"#).unwrap();
+        assert_eq!(float, ExportFormat::Wav { depth: WavDepth::Float32 });
+        let mp3: ExportFormat = serde_json::from_str(r#"{"kind":"mp3","quality":"v0"}"#).unwrap();
+        assert_eq!(mp3, ExportFormat::Mp3 { quality: Mp3Quality::V0 });
+        let flac: ExportFormat = serde_json::from_str(r#"{"kind":"flac","bits":16}"#).unwrap();
+        assert_eq!(flac, ExportFormat::Flac { bits: 16 });
+        assert!(serde_json::from_str::<ExportFormat>(r#"{"kind":"mp3","quality":"cbr320"}"#).is_ok());
+    }
+
     #[test]
     fn dither_is_seeded() {
         let mut first = Quantizer::new(16);
