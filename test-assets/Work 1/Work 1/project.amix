@@ -4,7 +4,7 @@
     "id": "e858fe67-13d4-4db3-9048-ec2efec72b32",
     "name": "Work 1",
     "createdAt": "2026-10-05T21:44:57.203Z",
-    "updatedAt": "2026-10-06T04:26:27.192Z",
+    "updatedAt": "2026-10-06T16:59:12.202Z",
     "sampleRate": 192000,
     "durationSeconds": 241.40609895833333
   },
@@ -89,7 +89,21 @@
       "solo": false,
       "processing": {
         "schemaVersion": 2,
-        "nodes": [],
+        "nodes": [
+          {
+            "id": "fm-dde72e4c",
+            "type": "eq",
+            "enabled": true,
+            "filter": {
+              "kind": "bell",
+              "frequencyHz": 240,
+              "gainDb": -0.9,
+              "q": 2
+            },
+            "origin": "eq-plan",
+            "note": "Reduced Generated From Generated From Notes V.0.29 Mid High Arps by 0.9 dB around 240 Hz because Generated From Generated From Notes V.0.29 Mid High Arps and Generated From Generated From Notes V.0.29 Bass Arps are both strong in 200–270 Hz while they play together, with Generated From Generated From Notes V.0.29 Mid High Arps only 2.1 dB under Generated From Generated From Notes V.0.29 Bass Arps "
+          }
+        ],
         "dynamics": [
           {
             "id": "dyn-0190d211",
