@@ -56,7 +56,17 @@ export type LogEvent =
   | "fullmix.preview"
   | "fullmix.apply"
   | "fullmix.cancel"
-  | "fullmix.stale";
+  | "fullmix.stale"
+  | "agent.request"
+  | "agent.tool"
+  | "agent.plan"
+  | "agent.preview"
+  | "agent.apply"
+  | "agent.cancel"
+  | "agent.error"
+  | "agent.grounding"
+  | "agent.complete"
+  | "agent.settings";
 
 export async function logEvent(
   platform: DesktopPlatform,

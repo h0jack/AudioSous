@@ -161,6 +161,24 @@ export interface MixCheckResult {
   sections: Array<{ id: string; rmsDb: number | null }>;
 }
 
+/** The assistant's provider settings as the shell reports them. Never contains the key. */
+export interface AgentSettingsInfo {
+  provider: "none" | "anthropic";
+  model: string;
+  effort: "low" | "medium" | "high";
+  /** Where the key comes from: the ANTHROPIC_API_KEY environment variable, the app's settings, or nowhere. */
+  keySource: "environment" | "settings" | null;
+}
+
+export interface SaveAgentSettings {
+  provider: "none" | "anthropic";
+  model: string;
+  effort: "low" | "medium" | "high";
+  /** A new key to store, or null to keep the stored one. */
+  apiKey: string | null;
+  clearKey: boolean;
+}
+
 export interface DesktopPlatform {
   kind: "tauri" | "browser";
   pickAudioFiles(): Promise<ListedFile[] | null>;
@@ -205,4 +223,9 @@ export interface DesktopPlatform {
   hasPreview(): boolean;
   readPreview(): string | null;
   appendLog(line: string): Promise<void>;
+  /** Assistant provider settings, kept outside any project. */
+  agentSettings(): Promise<AgentSettingsInfo>;
+  saveAgentSettings(settings: SaveAgentSettings): Promise<AgentSettingsInfo>;
+  /** A fetch that reaches the provider through the shell (which adds the key), or null where there is none. */
+  agentFetch(): typeof fetch | null;
 }

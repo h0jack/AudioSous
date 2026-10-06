@@ -17,6 +17,7 @@
     "@audiosous/balance-planner": "0.1.0",
     "@audiosous/dynamics-planner": "0.1.0",
     "@audiosous/eq-planner": "0.1.0",
+    "@audiosous/mix-agent": "0.1.0",
     "@audiosous/mix-planner": "0.1.0",
     "@audiosous/project-model": "0.1.0",
     "@audiosous/spatial-planner": "0.1.0",

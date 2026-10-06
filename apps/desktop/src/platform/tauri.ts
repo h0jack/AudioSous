@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AnalyzeAudioRequest, CopyProgress, DesktopPlatform, DynamicsCheckResponse, EqCheckResponse, ListedFile, MediaStatus, MixCheckResult, SpatialCheckResponse, TrackAnalysisBridgeResult } from "./types";
+import type { AgentSettingsInfo, AnalyzeAudioRequest, CopyProgress, DesktopPlatform, DynamicsCheckResponse, EqCheckResponse, ListedFile, MediaStatus, MixCheckResult, SpatialCheckResponse, TrackAnalysisBridgeResult } from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -167,4 +167,31 @@ export const tauriPlatform: DesktopPlatform = {
   appendLog(line) {
     return invoke("append_log", { line });
   },
+  agentSettings() {
+    return invoke<AgentSettingsInfo>("agent_settings");
+  },
+  saveAgentSettings(settings) {
+    return invoke<AgentSettingsInfo>("agent_save_settings", { settings });
+  },
+  agentFetch() {
+    return shellFetch;
+  },
 };
+
+/**
+ * The assistant SDK's fetch. The request goes to the shell, which accepts only a POST to the provider's Messages
+ * endpoint, drops any credential header, and adds the stored key. Cancelling rejects at once; the shell's request
+ * finishes on its own and its answer is dropped.
+ */
+async function shellFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const signal = init?.signal ?? null;
+  if (signal?.aborted) throw new DOMException("Cancelled.", "AbortError");
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const headers: Array<[string, string]> = [];
+  new Headers(init?.headers).forEach((value, name) => headers.push([name, value]));
+  const body = typeof init?.body === "string" ? init.body : init?.body ? await new Response(init.body).text() : "";
+  const request = invoke<{ status: number; headers: Array<[string, string]>; body: string }>("agent_http", { request: { url, method: init?.method ?? "GET", headers, body } });
+  const aborted = new Promise<never>((_, reject) => signal?.addEventListener("abort", () => reject(new DOMException("Cancelled.", "AbortError")), { once: true }));
+  const response = await Promise.race([request, aborted]);
+  return new Response(response.body, { status: response.status, headers: response.headers });
+}

@@ -1,10 +1,10 @@
 import type { TrackFileMeasurement } from "@audiosous/analysis-contract";
+import { runJob } from "./planning-jobs";
 import {
   applyFullMixPlan,
   changeIncluded,
   editChange,
   fullMixPlanIsStale,
-  planFullMix,
   resetChange,
   setChangeStatus,
   setProblemStatus,
@@ -13,6 +13,8 @@ import {
   type ChangePatch,
   type FullMixApplyMode,
   type FullMixPlan,
+  type MixInputs,
+  type MixStrength,
   type PlanFullMixInput,
 } from "@audiosous/mix-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
@@ -50,30 +52,10 @@ export async function runFullMixPlan(): Promise<void> {
   await logEvent(platform, "info", "fullmix.start", "Started Full Mix planning.", { projectId, tracks: document.tracks.length, strength: store.fullMix.settings.strength, goal: store.fullMix.settings.goal });
   const current = () => useAppStore.getState().fullMix.generation === generation && useAppStore.getState().document?.project.id === projectId;
   try {
-    if (platform.kind !== "tauri") throw new Error("Full Mix reads the desktop analysis cache and the playback proxies. Open this project in the desktop app.");
     const analysisStarted = performance.now();
-    const measurements: Record<string, TrackFileMeasurement | null> = {};
-    const fingerprints: FullMixSession["fingerprints"] = [];
-    for (const [index, track] of document.tracks.entries()) {
-      if (!current()) return;
-      useAppStore.getState().setFullMix({ progress: `Analyzing ${index + 1} of ${document.tracks.length}: ${track.name}` });
-      const loaded = await loadTrackAnalysis(platform, projectFile, { id: track.id, filename: track.file.filename, relativePath: track.file.relativePath }, undefined, 15);
-      if (!current()) return;
-      measurements[track.id] = loaded.measurement;
-      const [status] = await platform.projectMediaStatus(projectFile, [track.file.relativePath]);
-      if (status) fingerprints.push({ trackId: track.id, fileSizeBytes: status.fileSizeBytes, modifiedAtNs: status.modifiedAtNs });
-    }
-    if (!current()) return;
-    useAppStore.getState().setFullMix({ progress: "Measuring bands, stereo, and envelopes on the playback proxies…" });
-    const bands = await loadBandFrames(platform, projectFile, document);
-    if (!current()) return;
-    const stereo = await loadStereoFrames(platform, projectFile, document);
-    if (!current()) return;
-    const envelopes = await loadEnvelopeFrames(platform, projectFile, document);
-    if (!current()) return;
-    useAppStore.getState().setFullMix({ progress: "Rendering the current mix for its peak…" });
-    const before = await renderCheck(platform, projectFile, document, null, songWindows(document));
-    const mixPeakDbfs = before?.[0]?.peakDbfs ?? null;
+    const loaded = await loadMixInputs(platform, projectFile, document, { current, progress: (label) => useAppStore.getState().setFullMix({ progress: label }) });
+    if (!loaded) return;
+    const { measurements, bands, stereo, envelopes, fingerprints, mixPeakDbfs } = loaded;
     const analysisMs = Math.round(performance.now() - analysisStarted);
     if (!current()) return;
     const latest = useAppStore.getState().document;
@@ -120,22 +102,78 @@ export async function runFullMixPlan(): Promise<void> {
   }
 }
 
-/** Plans in a Web Worker in the desktop app; directly where there is no worker (tests). */
-export function planOffThread(input: PlanFullMixInput): Promise<FullMixPlan> {
-  if (typeof Worker === "undefined") return Promise.resolve(planFullMix(input));
+export interface LoadedMixInputs {
+  measurements: Record<string, TrackFileMeasurement | null>;
+  bands: Awaited<ReturnType<typeof loadBandFrames>>;
+  stereo: Awaited<ReturnType<typeof loadStereoFrames>>;
+  envelopes: Awaited<ReturnType<typeof loadEnvelopeFrames>>;
+  fingerprints: FullMixSession["fingerprints"];
+  mixPeakDbfs: number | null;
+}
+
+/**
+ * Everything Full Mix measures from: each stem's analysis, band, stereo, and envelope frames from the proxies, and
+ * the current mix's rendered peak. Shared by the Full Mix button and the assistant. Null when `current` went false.
+ */
+export async function loadMixInputs(
+  platform: DesktopPlatform,
+  projectFile: string,
+  document: ProjectDocument,
+  options: { current: () => boolean; progress: (label: string) => void },
+): Promise<LoadedMixInputs | null> {
+  if (platform.kind !== "tauri") throw new Error("Full Mix reads the desktop analysis cache and the playback proxies. Open this project in the desktop app.");
+  const { current, progress } = options;
+  const measurements: Record<string, TrackFileMeasurement | null> = {};
+  const fingerprints: FullMixSession["fingerprints"] = [];
+  for (const [index, track] of document.tracks.entries()) {
+    if (!current()) return null;
+    progress(`Analyzing ${index + 1} of ${document.tracks.length}: ${track.name}`);
+    const loaded = await loadTrackAnalysis(platform, projectFile, { id: track.id, filename: track.file.filename, relativePath: track.file.relativePath }, undefined, 15);
+    if (!current()) return null;
+    measurements[track.id] = loaded.measurement;
+    const [status] = await platform.projectMediaStatus(projectFile, [track.file.relativePath]);
+    if (status) fingerprints.push({ trackId: track.id, fileSizeBytes: status.fileSizeBytes, modifiedAtNs: status.modifiedAtNs });
+  }
+  if (!current()) return null;
+  progress("Measuring bands, stereo, and envelopes on the playback proxies…");
+  const bands = await loadBandFrames(platform, projectFile, document);
+  if (!current()) return null;
+  const stereo = await loadStereoFrames(platform, projectFile, document);
+  if (!current()) return null;
+  const envelopes = await loadEnvelopeFrames(platform, projectFile, document);
+  if (!current()) return null;
+  progress("Rendering the current mix for its peak…");
+  const before = await renderCheck(platform, projectFile, document, null, songWindows(document));
+  return { measurements, bands, stereo, envelopes, fingerprints, mixPeakDbfs: before?.[0]?.peakDbfs ?? null };
+}
+
+/** Work the planning worker can do: Full Mix, the agent's mix reading, and simplification. */
+export type WorkerJob =
+  | { kind: "plan"; input: PlanFullMixInput }
+  | { kind: "read"; document: ProjectDocument; inputs: MixInputs & { mixPeakDbfs: number | null }; strength: MixStrength; now: string }
+  | { kind: "simplify"; input: PlanFullMixInput; plan: FullMixPlan; keep: number };
+
+/** Runs a planning job in a Web Worker in the desktop app; directly where there is no worker (tests). */
+export function runOffThread<T>(job: WorkerJob): Promise<T> {
+  if (typeof Worker === "undefined") return Promise.resolve(runJob(job) as T);
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./full-mix-worker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = (event: MessageEvent<{ ok: true; plan: FullMixPlan } | { ok: false; message: string }>) => {
+    worker.onmessage = (event: MessageEvent<{ ok: true; result: T } | { ok: false; message: string }>) => {
       worker.terminate();
-      if (event.data.ok) resolve(event.data.plan);
+      if (event.data.ok) resolve(event.data.result);
       else reject(new Error(event.data.message));
     };
     worker.onerror = (event) => {
       worker.terminate();
-      reject(new Error(event.message || "Full Mix planning failed."));
+      reject(new Error(event.message || "Planning failed."));
     };
-    worker.postMessage(input);
+    worker.postMessage(job);
   });
+}
+
+/** Plans in a Web Worker in the desktop app; directly where there is no worker (tests). */
+export function planOffThread(input: PlanFullMixInput): Promise<FullMixPlan> {
+  return runOffThread<FullMixPlan>({ kind: "plan", input });
 }
 
 /* ------------------------------------------------------------------ render check */

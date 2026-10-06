@@ -212,6 +212,7 @@ function Summary({ plan, audition }: { plan: FullMixPlan; audition: string | nul
   return (
     <div>
       <p className="max-w-3xl text-sm leading-relaxed text-ink">{summary.headline}</p>
+      {plan.constraints ? <ConstraintLine plan={plan} /> : null}
       <p className="mt-1 text-xs text-muted" aria-label="Plan summary">
         {summary.problemCount} {summary.problemCount === 1 ? "issue" : "issues"} · {summary.changeCount} selected {summary.changeCount === 1 ? "change" : "changes"} · {summary.rejectedCount} rejected {summary.rejectedCount === 1 ? "alternative" : "alternatives"} · Overall confidence {Math.round(summary.confidence * 100)}%
         {processing ? ` · ${processing}` : ""}
@@ -500,4 +501,22 @@ function RowButton({ label, pressed, disabled, onClick, children }: { label: str
       {children}
     </button>
   );
+}
+
+/** What a request narrowed (an assistant plan): shown so the review and the conversation say the same thing. */
+function ConstraintLine({ plan }: { plan: FullMixPlan }) {
+  const document = useAppStore((state) => state.document);
+  const constraints = plan.constraints;
+  if (!constraints || !document) return null;
+  const name = (id: string) => document.tracks.find((track) => track.id === id)?.customLabel ?? document.tracks.find((track) => track.id === id)?.name ?? id;
+  const section = (id: string) => document.sections.find((item) => item.id === id)?.name ?? id;
+  const parts = [
+    constraints.protectedTrackIds.length ? `${constraints.protectedTrackIds.map(name).join(", ")} untouched` : null,
+    constraints.excludedDomains.length ? `no ${constraints.excludedDomains.join(", ")} changes` : null,
+    constraints.excludedProcessors.length ? `no ${constraints.excludedProcessors.join(", ")}` : null,
+    constraints.sectionIds ? `only in ${constraints.sectionIds.map(section).join(", ")}` : null,
+    constraints.focusTrackIds.length ? `about ${constraints.focusTrackIds.map(name).join(", ")}` : null,
+    constraints.focusSectionIds.length && !constraints.sectionIds ? `focused on ${constraints.focusSectionIds.map(section).join(", ")}` : null,
+  ].filter(Boolean);
+  return <p className="mt-1 text-xs text-accent">Planned for an assistant request: {parts.join(" · ")}.</p>;
 }

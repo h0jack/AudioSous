@@ -1,3 +1,4 @@
+mod agent_host;
 mod analysis;
 mod audio_host;
 mod bundle;
@@ -497,6 +498,29 @@ fn append_log(app: AppHandle, line: String) -> Result<(), String> {
     bundle::append_log_line(&directory, &line)
 }
 
+fn agent_config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().app_config_dir().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn agent_settings(app: AppHandle) -> Result<agent_host::AgentSettingsInfo, String> {
+    Ok(agent_host::settings_info(&agent_config_dir(&app)?))
+}
+
+#[tauri::command]
+fn agent_save_settings(app: AppHandle, settings: agent_host::SaveAgentSettings) -> Result<agent_host::AgentSettingsInfo, String> {
+    agent_host::save_settings(&agent_config_dir(&app)?, settings)
+}
+
+/// The assistant's only network request: a POST to the Anthropic Messages endpoint, with the key added here.
+#[tauri::command]
+async fn agent_http(app: AppHandle, request: agent_host::AgentHttpRequest) -> Result<agent_host::AgentHttpResponse, String> {
+    let dir = agent_config_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || agent_host::send(&dir, request))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -538,7 +562,10 @@ pub fn run() {
             spatial_check,
             audio_set_loop,
             audio_status,
-            append_log
+            append_log,
+            agent_settings,
+            agent_save_settings,
+            agent_http
         ])
         .run(tauri::generate_context!())
         .expect("Audiosous failed to start");

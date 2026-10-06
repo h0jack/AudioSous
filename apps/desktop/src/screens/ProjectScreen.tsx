@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnalysisView } from "../components/AnalysisView";
+import { AssistantPanel } from "../components/AssistantPanel";
 import { FrequencyInteractionView } from "../components/FrequencyInteractionView";
 import { PlansPanel } from "../components/PlansPanel";
 import { SpatialInteractionView } from "../components/SpatialInteractionView";
@@ -14,6 +15,7 @@ export function ProjectScreen() {
   const projectFilePath = useAppStore((state) => state.projectFilePath);
   const warnings = useAppStore((state) => state.warnings);
   const workspace = useAppStore((state) => state.workspace);
+  const assistantOpen = useAppStore((state) => state.assistant.open);
   const [waveforms, setWaveforms] = useState<Record<string, LoadedWaveform>>({});
   const [analysisView, setAnalysisView] = useState<"stems" | "interaction" | "spatial">("stems");
   const [status, setStatus] = useState<string | null>("Measuring waveforms");
@@ -84,11 +86,14 @@ export function ProjectScreen() {
             ))}
           </ul>
         ) : null}
-        <div className={workspace === "mix" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
-          <div className="min-h-0 flex-1">
-            <Timeline document={document} waveforms={waveforms} status={status} playback={playback} />
+        <div className={workspace === "mix" ? "flex min-h-0 flex-1" : "hidden"}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1">
+              <Timeline document={document} waveforms={waveforms} status={status} playback={playback} />
+            </div>
+            <PlansPanel document={document} playback={playback} />
           </div>
-          <PlansPanel document={document} playback={playback} />
+          {assistantOpen ? <AssistantPanel /> : null}
         </div>
         {workspace === "analysis" ? (
           <div className="flex min-h-0 flex-1 flex-col">

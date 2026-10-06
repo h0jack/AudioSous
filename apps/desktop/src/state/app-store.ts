@@ -3,6 +3,8 @@ import type { EqPlan, EqSettings } from "@audiosous/eq-planner";
 import type { SpatialPlan, SpatialSettings } from "@audiosous/spatial-planner";
 import type { DynamicsPlan, DynamicsSettings } from "@audiosous/dynamics-planner";
 import type { FullMixPlan, FullMixSettings } from "@audiosous/mix-planner";
+import type { AgentSession } from "@audiosous/mix-agent";
+import type { AgentSettingsInfo } from "../platform/types";
 import type { ImportWarning, ProjectDocument } from "@audiosous/project-model";
 import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
@@ -204,6 +206,28 @@ export function idleFullMix(): FullMixSession {
   };
 }
 
+/**
+ * The conversational assistant. The session is scoped to the open project and lives only in memory: it is never
+ * written to the project file.
+ */
+export interface AssistantState {
+  open: boolean;
+  session: AgentSession | null;
+  /** The request in flight; a newer message or Cancel bumps it and the old one's results are dropped. */
+  generation: number;
+  busy: boolean;
+  /** The message being worked on, shown until the reply arrives. */
+  pending: string | null;
+  activity: string | null;
+  error: string | null;
+  settings: AgentSettingsInfo | null;
+  showSettings: boolean;
+}
+
+export function idleAssistant(open = false, settings: AgentSettingsInfo | null = null): AssistantState {
+  return { open, session: null, generation: 0, busy: false, pending: null, activity: null, error: null, settings, showSettings: false };
+}
+
 export type PlanTab = "gain" | "eq" | "space" | "dynamics" | "full";
 
 export type Screen = "welcome" | "import" | "project";
@@ -230,6 +254,7 @@ interface AppState {
   space: SpaceSession;
   dynamics: DynamicsSession;
   fullMix: FullMixSession;
+  assistant: AssistantState;
   planTab: PlanTab;
   goWelcome: () => void;
   setWorkspace: (workspace: Workspace) => void;
@@ -248,6 +273,7 @@ interface AppState {
   setSpace: (patch: Partial<SpaceSession>) => void;
   setDynamics: (patch: Partial<DynamicsSession>) => void;
   setFullMix: (patch: Partial<FullMixSession>) => void;
+  setAssistant: (patch: Partial<AssistantState>) => void;
   setPlanTab: (tab: PlanTab) => void;
 }
 
@@ -267,8 +293,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   space: idleSpace(),
   dynamics: idleDynamics(),
   fullMix: idleFullMix(),
+  assistant: idleAssistant(),
   planTab: "gain",
-  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix() }),
+  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), assistant: idleAssistant(false, get().assistant.settings) }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
@@ -288,6 +315,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       space: idleSpace(),
       dynamics: idleDynamics(),
       fullMix: idleFullMix(),
+      // A new project starts a new conversation; the panel stays where the person left it.
+      assistant: idleAssistant(get().assistant.open, get().assistant.settings),
       planTab: "gain",
     }),
   replaceDocument: (document, dirty, edit) => {
@@ -327,5 +356,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSpace: (patch) => set({ space: { ...get().space, ...patch } }),
   setDynamics: (patch) => set({ dynamics: { ...get().dynamics, ...patch } }),
   setFullMix: (patch) => set({ fullMix: { ...get().fullMix, ...patch } }),
+  setAssistant: (patch) => set({ assistant: { ...get().assistant, ...patch } }),
   setPlanTab: (planTab) => set({ planTab }),
 }));

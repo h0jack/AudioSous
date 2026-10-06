@@ -129,6 +129,7 @@ export function App() {
         {projectOpen ? (
           <div className="ml-auto flex shrink-0 items-center gap-3">
             <ViewToggle disabled={preparing} />
+            <AssistantToggle disabled={preparing} />
             <HoverTip label="Close this project">
               <button type="button" className="text-sm text-muted underline-offset-2 hover:underline" onClick={leave}>
                 Close
@@ -154,6 +155,27 @@ export function App() {
         {screen === "project" ? <ProjectScreen /> : null}
       </main>
     </div>
+  );
+}
+
+function AssistantToggle({ disabled = false }: { disabled?: boolean }) {
+  const open = useAppStore((state) => state.assistant.open);
+  return (
+    <HoverTip label="Describe what you hear or want; the assistant diagnoses with the planners and builds candidates you preview and apply">
+      <button
+        type="button"
+        aria-pressed={open}
+        disabled={disabled}
+        className={`rounded-md border border-line px-3 py-1 text-xs tracking-wide uppercase disabled:opacity-40 ${open ? "bg-accent text-accent-ink" : "text-muted"}`}
+        onClick={() => {
+          const state = useAppStore.getState();
+          state.setAssistant({ open: !open });
+          if (!open && state.workspace !== "mix") state.setWorkspace("mix");
+        }}
+      >
+        Assistant
+      </button>
+    </HoverTip>
   );
 }
 

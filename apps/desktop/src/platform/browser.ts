@@ -147,6 +147,15 @@ export const browserPlatform: DesktopPlatform = {
     return localStorage.getItem(PREVIEW_KEY);
   },
   async appendLog() {},
+  async agentSettings() {
+    return { provider: "none" as const, model: "", effort: "medium" as const, keySource: null };
+  },
+  async saveAgentSettings() {
+    throw new Error("The assistant needs the desktop app.");
+  },
+  agentFetch() {
+    return null;
+  },
 };
 
 export function browserFilesFromDrop(fileList: FileList | File[]): ListedFile[] {
