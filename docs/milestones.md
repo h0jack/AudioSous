@@ -380,6 +380,105 @@ Every run had 0 underruns. The rest of `npm run stress:audio` was unchanged in k
 - a physical listening pass on Current, the Dynamics Candidate, and the reviewed plan for both mixes (the `bounce_mix --wav` bounces, and the desktop app), listening for pumping, lost transients, over-compression, release behavior, low-end stability, and lead clarity;
 - a GUI walk-through in the desktop app: Plan dynamics, a row's detail, Current / Dynamics Candidate, Bypassed / Recommended, editing a compressor, a duck, and a dynamic EQ, Accept, Reject, Apply accepted, Ctrl+Z, regenerate, a stale plan after an EQ or fader change, Cancel, the DYN badge, and the live meter.
 
+## Milestone 7
+
+Milestone 7 is Full Mix planning: one coordinated plan across gain, static EQ, space, compression, ducking, transient shaping, and dynamic EQ that starts from problems, weighs alternatives against their cost, re-measures whole-mix candidates, and keeps the fewest changes that measurably help. The four planners stay separately usable. It does not add a conversational agent, a model, mastering, limiting, reverb, delay, saturation, plugins, reference matching, or preference learning. See [Full Mix planning](architecture.md#full-mix-planning).
+
+| Slice | Status |
+| --- | --- |
+| 1. Problem model | Done. `MixProblem`: scope, stems, protected and yielding stem, severity, confidence, priority group, evidence lines per planner, references; one problem per relationship whatever number of planners saw it; a re-readable measure (gaps in dB in a fixed region, spreads, conflicts, mono risk, contrast) |
+| 2. Intervention model | Done. Every Level, EQ, Space, and Dynamics row becomes a `MixChange` with its evidence; alternatives per problem (rows, a fader move where it is a level problem, a small kick-fundamental cut, two singles at reduced depth), all judged on the problem's own evidence with the planners' evaluators |
+| 3. Cost / regularization | Done. Per-processor cost, side-effect price, anchor and section penalties, a second-processor penalty, goal lean, minimum net and reduction, confidence rules, change and cost budgets per strength |
+| 4. Integrated candidate builder | Done. Problems in priority order, credit for changes already chosen, no contradicting values, minimal / balanced / assertive whole-mix candidates |
+| 5. Candidate evaluation | Done. The four planners run again on each candidate through measurement views (dynamics folded in for EQ, Space, and AutoBalance), problems re-read, new problems, headroom, mono, gain reduction, level shifts, section steps; leave-one-out pruning; regression revision |
+| 6. Iteration | Done. 2 / 3 / 4 passes, problems first seen on a candidate rebased to the saved mix, a level-first pass when a stem is far off, deterministic stopping with the reason stated |
+| 7. Full Mix UI | Done. Plans → Full Mix: problem-oriented view, evidence, alternatives considered, Current vs Full Mix Candidate (loudness-matched), only-this-fix / candidate-without-it, per-change A/B, Accept / Reject / Edit per change, Accept / Reject solution per problem, planning in a worker |
+| 8. Apply / undo / stale | Done. One project update for every domain, one undo step, nothing written if any change cannot be stored, stale on anything the plan read, not on selection |
+| 9. Hardening | Partly. Fixtures, regression tests, real-music runs with bounces, the independent-vs-integrated comparison, the render check, combined DSP stress, docs, and CI are done. The physical listening pass and the GUI walk-through need a person at the desktop app and are open |
+
+### Tests
+
+- `packages/mix-planner` (33, new). The problem model (one problem per relationship, evidence from several planners); fixtures A–H (one problem with four possible fixes gets one or two cheap moves on the supporting part; kick/bass ducked, not lowered everywhere, with the rejected fader move explained; a conflict saved EQ already fixed gets no spatial move; an excessively loud pad gets a fader cut and nothing else; static masking gets a static cut; event masking gets a dynamic EQ, not a permanent cut; an already-good mix gets at most one change at every strength; a drop that lacks its asked-for width and punch gets one or two section moves and no blanket gain lift, and a note the mix already satisfies gets nothing); intent ("make the trumpet stand out" weighed across domains, not turned into a boost; nothing when it already stands out); the multi-problem song is not a concatenation (fewer changes than the four planners, at most one change of a kind per stem, the over-wide synth narrowed); no conflict solved with gain, EQ, pan, and a duck together; one change serving two problems; determinism; the pass limit and stop reason; Conservative ≤ Strong; re-measured severity after; headroom, mono, and gain reduction inside their limits; a harmful candidate scored below the baseline with regressions; manual compressor not duplicated and kept; an applied plan as the new baseline; review rows never chosen; 32 stems in seconds. The plan contract: round trip, stale identity (fader, EQ, width, role, prominence and notes, section intent, settings; not selection), accept and reject by change and by problem, edits re-checked with the subsystem evaluators and out-of-range edits to review, reset, every audition mode, loudness matching, Apply all and Apply accepted, atomic refusal.
+- `apps/desktop` (75, 14 new). The Full Mix review flow with the real functions: Current vs candidate through the monitor with gain, EQ, space, and dynamics together and a uniform loudness offset; only-this-fix and candidate-without-it; one-change A/B; one comparison at a time across all five plans; an edit heard at once; accept by problem and by change, Apply accepted, one undo step; partial apply refused with the reason; stale refusal after a fader move but not selection; cancel; the render-check request from the engine's own settings. Render smoke tests of the panel, its problems, alternatives, editors, and the legacy warning.
+- `crates/audio-engine` (Rust, 3 new; 85 in all). A window render equals the same span of a full render; the mix check's peak, level, mono fold-down, correlation, and section levels follow the settings; windows are clamped, sorted, and merged. `stress_dynamics_callback_cost` gains a "full" load with section gain windows on every stem.
+- `packages/dynamics-planner` (45). Unchanged in behaviour; interactions now carry `levelGapDb`.
+
+### Acceptance run
+
+Planned with `plan-full-mix-project.ts` from the cached analysis, EQ band frames, stereo frames, and envelope frames; bounced through the native DSP with `bounce_mix`. Normal strength unless stated.
+
+**Deliberately problematic mix.** `make-full-mix-problem.py` builds six stems from the Generated 5 proxies: Kick (PunchBox), Bass (Bass Bus 4 dB louder in the drops with irregular note-level jumps), Lead (Bleeps Bus gated into phrases in the drops, Focal there), Pad (MasterEQ with a +7 dB presence bell), Synth (Stutter Expression), Atmosphere (Skimming Air). The scenario sets Synth to width 160% and 30% right and Pad to 20% right, so the two crowd the right-center and the synth loses 2.6 dB in mono.
+
+The four planners on their own propose 11 changes: Level 5 (Bass −1.5 dB, a Bass Outro row, Lead +4 dB in Drop and Drop 2 for review, Pad −1.9 dB), EQ 1 (Pad −2.6 dB at 2.1 kHz), Space 1 (Synth 160% → 100%, 50% right), Dynamics 4 (Bass compressor, Bass duck from Kick, Pad dynamic EQ keyed from Lead, Synth dynamic EQ keyed from Lead).
+
+Full Mix found 9 significant issues and selected 6 changes in 4.2 s (44 planner runs):
+
+| Problem | Severity before → after | Selected | Considered and rejected |
+| --- | --- | --- | --- |
+| Kick/Bass low-end collision | 0.89 → 0.04, solved | Bass duck from Kick, up to −2.0 dB (with the Bass level fix below crediting 46% of it) | Bass bell −1.5 dB at 55 Hz: removes 32% against 54%, costs more outside the conflict |
+| Bass too loud for its role | 0.50 → 0.05, solved | Bass −1.5 dB | Bass compressor: a comparable result for more processing |
+| Pad too loud for its role | 0.63 → 0.47, improved | Pad −1.9 dB | — |
+| Pad masks Lead around 2.1 kHz (lead rests 43% of the pad's time) | 0.77 → 0.32, improved | Pad bell −2.6 dB at 2.1 kHz, Q 1.0 | Pad dynamic EQ: a comparable result (35% against 34%) for more processing; EQ + dynamic EQ: one processor already does enough |
+| Synth masks Lead around 1.8 kHz | 0.71 → 0.42, improved | Synth dynamic EQ 2.0 kHz, up to −2.5 dB, keyed from Lead | Synth −2.0 dB: would change it everywhere it plays |
+| Synth too wide for mono | 0.58 → 0.24, solved | Synth width 160% → 100%, 50% right | — |
+| Synth crowds Pad in the field | 0.42 → 0.29, improved | (served by the Synth width change: one change, two problems) | — |
+| Bass level unstable | 1.00 → 0.80, left alone | — | Bass compressor 1.5:1: removes 31% of the swing; benefit 0.25 against cost 0.16 and 0.06 of side effects |
+| Lead too quiet in the drops | 1.00 → 1.00, left alone | — | Lead +4 dB in Drop and Drop 2: AutoBalance marked them for review (the uncapped correction was past 6 dB), so Full Mix does not choose them |
+
+Two weaker relationships (Atmosphere over Lead 0.53, Lead over Kick 0.47) were read and left alone with no move worth making. Re-measured: problem score 7.09 → 4.43, open problems 11 → 6, mix correlation 0.679 → 0.726, mono fold-down loss 0.76 → 0.64 dB, largest gain reduction on one stem 2.5 dB, processing cost 0.72 (moderate). The three first-pass candidates scored minimal 1.18 (7 changes), balanced 1.82 (6, kept), assertive 1.00 (8); the second pass found nothing worth its cost. Review as in the milestone's demonstration: the duck edited to −1.4 dB, everything else accepted. Conservative selected 3 changes (Lead +2 dB in the Drop, Pad −1.7 dB, the duck at −1.5 dB), Strong 5.
+
+**Already-good mix (the producer's Generated 5 stems).** Same roles and sections as Milestones 3–6, faders at 0 dB, saved processing cleared. The four planners propose 9 (Level 5, EQ 2, Space 1, Dynamics 1); Full Mix found 7 issues and selected 5 in 3.6 s: Bass Bus −1.1 dB and a duck from PunchBox (−2.5 dB), Bleeps Bus +4 dB in Drop 2, MasterEQ bell −2.3 dB at 1.6 kHz, and Subway bell −1.7 dB at 2.2 kHz. MasterEQ −4 dB in the Intro was left out once the rest of the plan covered it; Stutter Expression's masking of Bleeps Bus and Skimming Air's three crowding pairs were read and left alone. Conservative selected 3 (MasterEQ −0.7 dB, Bleeps Bus +2 dB in Drop 2, Bass Bus −1.0 dB), Strong 6. These are measured relationships the four planners also act on, not invented moves; whether five changes is "few" for this mix is a listening call that is still open.
+
+**Independent vs integrated.**
+
+| Mix | Level | EQ | Space | Dynamics | Four planners | Full Mix selected | The four planners' rows Full Mix left out |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Problematic | 5 | 1 | 1 | 4 | 11 | 6 | 5: Bass compressor, Pad dynamic EQ, Lead +4 dB in Drop and Drop 2, the Bass Outro section row |
+| Already good | 5 | 2 | 1 | 1 | 9 | 5 | 4: MasterEQ −0.6 dB and −4 dB in the Intro, Bass Bus −2.1 dB in the Outro, Skimming Air 25% right |
+
+**Bounces** (141 s, native DSP from the proxies; `bounce_mix --wav` writes them to `target/acceptance/m7-problem` and `target/acceptance/m7-good`):
+
+| Mix | Variant | Peak | RMS | 400 ms spread | Mono loss | Correlation |
+| --- | --- | --- | --- | --- | --- | --- |
+| Problematic | Current | −1.54 dBFS | −21.70 dB | 11.5 dB | 0.92 dB | 0.620 |
+| Problematic | Four planners combined (Apply all, one after another) | −4.05 dBFS | −24.34 dB | 10.6 dB | 0.78 dB | 0.676 |
+| Problematic | Full Mix Candidate | −4.05 dBFS | −23.62 dB | 11.3 dB | 0.76 dB | 0.682 |
+| Problematic | Full Mix Candidate, loudness-matched (+2.04 dB) | −2.01 dBFS | −21.58 dB | 11.3 dB | 0.76 dB | 0.682 |
+| Problematic | Reviewed (duck −1.4 dB), loudness-matched | −2.09 dBFS | −21.58 dB | 11.3 dB | 0.75 dB | 0.683 |
+| Already good | Current | −2.95 dBFS | −22.04 dB | 9.2 dB | 0.82 dB | 0.658 |
+| Already good | Four planners combined | −4.31 dBFS | −23.35 dB | 10.0 dB | 0.84 dB | 0.650 |
+| Already good | Full Mix Candidate | −3.72 dBFS | −23.07 dB | 8.6 dB | 0.85 dB | 0.647 |
+| Already good | Full Mix Candidate, loudness-matched (+0.96 dB) | −2.76 dBFS | −22.11 dB | 8.6 dB | 0.85 dB | 0.647 |
+
+The loudness-matched candidate renders within 0.12 dB (problematic) and 0.07 dB (good) of Current's RMS, so the A/B is not won by loudness. Nothing clips; mono fold-down improves on the problematic mix and moves 0.03 dB on the good one. Full Mix reaches the four planners' mono and correlation improvement on the problematic mix with about half the changes, and keeps 0.7 dB more level before matching because it does not stack every planner's cut.
+
+**Planning time** (Node on this machine, the same code the desktop runs in a worker):
+
+| Project | Conservative | Normal | Strong |
+| --- | --- | --- | --- |
+| Generated 5, 11 stems | 0.6 s (12 planner runs) | 3.7 s (64) | 5.1 s (87) |
+| Problematic mix, 6 stems | 1.2 s (12) | 4.2 s (44) | 5.4 s (48) |
+| Synthetic, 32 stems | | 6.2 s (8) | |
+| Synthetic, 64 stems | | 27.2 s (8) | |
+
+At 64 stems one EQ planner run alone takes 6.7 s (Space 3.8 s, Dynamics 3.6 s): Full Mix's time is the four planners' time, run a few times. The four planners on their own take 0.25–0.6 s on the 11- and 6-stem projects.
+
+The first 32-stem run took 27.8 s with 32 planner runs; caching each planner's reading by its own state identity of the view it sees brought it to 7.8 s with 8 runs and the same plan.
+
+**Audio engine.** Release build, stereo noise stems paced in real time, 512-frame callbacks (10.67 ms budget), tests run one at a time. "Full" is every processor a Full Mix candidate can write at once: high-pass, two bells, and a section bell; pan and width with a section window; a dynamic EQ keyed from stem 0, a compressor, a transient shaper, a duck keyed from stem 0, and a section compressor; and two Track × Section gain windows, on every stem (more than any plan proposes):
+
+| Stems | None | EQ + spatial | EQ + spatial + dynamics | Full |
+| --- | --- | --- | --- | --- |
+| 11 | 0.05–0.08 ms (worst 0.09–0.19) | 0.14–0.16 ms (worst 0.21–0.36) | 0.36–0.37 ms (worst 0.85–1.09) | 0.33 ms (worst 0.56–0.83), 3.1% |
+| 32 | 0.14–0.15 ms (worst 0.25–0.32) | 0.37–0.44 ms (worst 0.57–1.11) | 0.99–1.37 ms (worst 1.29–3.56) | 1.03–1.20 ms (worst 1.62–1.67), 9.7–11.2% |
+| 64 | 0.26–0.31 ms (worst 0.58–0.73) | 0.59–1.92 ms (worst 1.02–3.12) | 1.73–4.79 ms (worst 2.27–6.56) | 2.35–3.20 ms (worst 3.15–7.75), 22–30% |
+
+Ranges are two runs: once alone, once inside the full `npm run stress:audio`. The 64-stem runs vary more between runs than between loads; the second run's worst callback (7.75 ms) is still under the budget. Every run had 0 underruns. The rest of `npm run stress:audio` was unchanged in kind: EQ cost 0.06–0.68 ms for 11–64 stems; the plain-mix throughput test (256 frames) 32×48 kHz 0.060 ms, 32×96 kHz 0.061 ms, 11×192 kHz 0.018 ms, 64×48 kHz 0.129 ms of 5.33 ms; spatial up to 1.30 ms at 64 stems; the Generated 5 and Generated2 soaks played 141 s each with seeks, a loop, and gain moves, 0 underruns, callback 0.20 and 0.19 ms. Planning runs in a worker and never on the audio thread.
+
+**Still open before Milestone 7 is complete:**
+- a physical listening pass on Current, the four planners combined, the Full Mix Candidate, and the reviewed plan for both mixes (the `bounce_mix --wav` bounces, and the desktop app), judging whether the candidate is clearer, more coherent, and less processed, and whether five changes on the already-good mix are right;
+- a GUI walk-through in the desktop app: run Full Mix, inspect problems, expand one, view evidence, preview one solution and the whole mix, reject a change, edit a change, accept a problem's solution, Apply accepted, Ctrl+Z, regenerate, change an EQ so the plan goes stale, Cancel.
+
 ## Explicitly later
 
 Multiband compression, de-essing, lookahead, gain-reduction automation editing, frequency-dependent width, stereo synthesis (delay, Haas, chorus, decorrelation), saturation, reverb, delay, limiting, mastering, final render, VST hosting, reference matching, LLM mixing, preference learning, accounts, collaboration, and source separation.

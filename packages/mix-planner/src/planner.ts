@@ -157,16 +157,18 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
     best = revise(best, known1);
     const gain = best.result.score - current!.score;
     const added = best.changes.filter((change) => !chosen.some((item) => item.id === change.id)).length;
+    // Taking out an earlier change the mix no longer misses is progress too.
+    const removed = chosen.filter((change) => !best.changes.some((item) => item.id === change.id)).length;
     trace(`pass${pass}:best`, { policy: best.policy, score: best.result.score, gain, changes: best.changes.map((change) => change.id), regressions: best.result.regressions });
-    if (gated && (added === 0 || gain < limits.minPassGain)) {
+    if (gated && (added + removed === 0 || gain < limits.minPassGain)) {
       // The level pass found nothing worth doing; the next pass looks at everything.
       for (const decision of best.decisions) if (!decisions.has(decision.problem.id)) decisions.set(decision.problem.id, { ...decision, selected: null, changeIds: [], outcome: decision.outcome === "selected" ? "left-alone" : decision.outcome, note: decision.selected ? "Not worth its cost when the whole mix was re-measured." : decision.note });
       passes.push({ pass, problems: open.length, selected: 0, scoreBefore: current!.score, scoreAfter: best.result.score, kept: false, note: "Level-first pass: nothing worth keeping; the next pass looks at every problem." });
       continue;
     }
-    if (added === 0 || gain < limits.minPassGain) {
+    if (added + removed === 0 || gain < limits.minPassGain) {
       stopReason =
-        added === 0
+        added + removed === 0
           ? pass === 1
             ? "No change was worth its cost: every alternative removed too little of its problem for the processing it adds."
             : "No further change was worth its cost."
@@ -175,7 +177,15 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
       passes.push({ pass, problems: open.length, selected: 0, scoreBefore: current!.score, scoreAfter: best.result.score, kept: false, note: stopReason });
       break;
     }
-    passes.push({ pass, problems: open.length, selected: added, scoreBefore: current!.score, scoreAfter: best.result.score, kept: true, note: `${best.policy} candidate kept: ${added} new ${added === 1 ? "change" : "changes"}.` });
+    passes.push({
+      pass,
+      problems: open.length,
+      selected: added,
+      scoreBefore: current!.score,
+      scoreAfter: best.result.score,
+      kept: true,
+      note: `${best.policy} candidate kept: ${added} new ${added === 1 ? "change" : "changes"}${removed > 0 ? `, ${removed} earlier ${removed === 1 ? "change" : "changes"} taken out` : ""}.`,
+    });
     for (const [problemId, decision] of pruned) decisions.set(problemId, decision);
     for (const decision of best.decisions) {
       const previous = decisions.get(decision.problem.id);

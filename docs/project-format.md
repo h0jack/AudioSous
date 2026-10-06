@@ -185,6 +185,10 @@ Pan and width are not processing nodes. They are track state like the fader, wit
 
 The spatial plan writes these fields directly: a whole-song row sets `track.pan` and/or `track.width`, a section row sets the overrides. It never writes a node and never duplicates a value. Width and pan are rate-independent, so a later export applies them to the original source unchanged.
 
+### What Full Mix writes
+
+Milestone 7 adds no field and no schema version. A Full Mix plan is ephemeral, like the four plans it coordinates, and Apply writes only the representations above, in one update: `track.gainDb` and `overrides.gainDb` for gain changes and the safety trim; EQ nodes with `origin: "eq-plan"`; `pan`, `width`, and their overrides; dynamics nodes with `origin: "dynamics-plan"`. Each planned node keeps the first reason in `note`, and its id starts `fm-`. A node a change edits is replaced in place, never stacked. A file written after Full Mix opens in a Milestone 6 build.
+
 ### Mix variants and comparison
 
 New projects contain two variants: `Original` and `Working Mix`. `activeMixVariantId` is the variant the transport will play. `comparison.scope` is one of:

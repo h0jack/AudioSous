@@ -3486,9 +3486,21 @@ mod tests {
                     track
                 })
                 .collect();
-            for load in ["none", "eq+spatial", "eq+spatial+dynamics"] {
+            // "full" is what a Full Mix candidate can write at once: every processor above plus Track × Section
+            // gain windows on every stem.
+            for load in ["none", "eq+spatial", "eq+spatial+dynamics", "full"] {
                 let engine = Engine::offline();
                 engine.load(loaded.clone()).unwrap();
+                if load == "full" {
+                    engine.set_gain_regions(
+                        loaded
+                            .iter()
+                            .flat_map(|track| {
+                                [(0.5, 1.5, -13.0), (2.0, 3.0, -10.5)].map(|(start_seconds, end_seconds, gain_db)| TrackGainRegion { track_id: track.id.clone(), start_seconds, end_seconds, gain_db })
+                            })
+                            .collect(),
+                    );
+                }
                 if load != "none" {
                     engine.set_eq(
                         loaded
@@ -3513,7 +3525,7 @@ mod tests {
                             .collect(),
                     );
                 }
-                if load == "eq+spatial+dynamics" {
+                if load == "eq+spatial+dynamics" || load == "full" {
                     let key = loaded[0].id.clone();
                     engine.set_dynamics(
                         loaded

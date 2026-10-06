@@ -16,7 +16,8 @@ Audiosous/
 │   ├── balance-planner/   Deterministic gain-only AutoBalance. No DSP and no network.
 │   ├── eq-planner/        Frequency interaction analysis and deterministic static-EQ planning. No network.
 │   ├── spatial-planner/   Stereo-field interaction analysis and deterministic pan/width planning. No network.
-│   └── dynamics-planner/  Time-domain dynamics analysis and deterministic compressor/duck/transient/dynamic-EQ planning. No network.
+│   ├── dynamics-planner/  Time-domain dynamics analysis and deterministic compressor/duck/transient/dynamic-EQ planning. No network.
+│   └── mix-planner/       Full Mix: problems, interventions, cost, and re-measured whole-mix planning across the four planners. No network.
 ├── services/analysis/     Python sidecar. Tauri spawns it and exchanges JSON.
 ├── docs/
 └── test-assets/           Reserved for generated stems in a later slice
@@ -36,11 +37,13 @@ apps/desktop
   → eq-planner
   → spatial-planner
   → dynamics-planner
+  → mix-planner
 
 balance-planner → project-model, analysis-contract
 eq-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom)
 spatial-planner → project-model, analysis-contract, balance-planner (tiers, intent, headroom), eq-planner (spectral model, pairs)
 dynamics-planner → project-model, analysis-contract, balance-planner (tiers, intent clauses), eq-planner (spectral model, pairs, responses)
+mix-planner → project-model, analysis-contract, and all four planners (as measurement, as the source of candidate changes, and for their evaluators)
 audio-engine → project-model
 services/analysis  has no dependency on the UI
 ```
@@ -784,7 +787,7 @@ There are at most two planning passes (each stem on its own, then relationships 
 
 ### Plan contract
 
-`packages/dynamics-planner/src/plan.ts`: `planVersion` 1, `plannerVersion` 6.0.0, `kind: "dynamics-balance"`, the same envelope as the other plans. Each recommendation has the track, the scope, the problem class, `processing` (the node's values: `compressor`, `ducking`, `transient`, or `dynamic-eq`), the values as planned, the saved node it edits, the target reduction (compressors), related stems and interactions, confidence, status, an edited flag, 1–6 reasons, warnings, the evaluation, and the evidence (base64 envelope series or per-step band levels, the check windows, and the conflict band). The plan also carries the dynamics interactions (key and target, onset overlap, low-band competition, level masking, free share, the recommended tool, confidence, outcome, explanation) and per-stem readings, for the review panel and for later planning. Everything is plain JSON validated with zod.
+`packages/dynamics-planner/src/plan.ts`: `planVersion` 1, `plannerVersion` 6.1.0 (6.1.0 adds `levelGapDb` to each interaction, the measured gap Full Mix reads), `kind: "dynamics-balance"`, the same envelope as the other plans. Each recommendation has the track, the scope, the problem class, `processing` (the node's values: `compressor`, `ducking`, `transient`, or `dynamic-eq`), the values as planned, the saved node it edits, the target reduction (compressors), related stems and interactions, confidence, status, an edited flag, 1–6 reasons, warnings, the evaluation, and the evidence (base64 envelope series or per-step band levels, the check windows, and the conflict band). The plan also carries the dynamics interactions (key and target, onset overlap, low-band competition, level masking, free share, the recommended tool, confidence, outcome, explanation) and per-stem readings, for the review panel and for later planning. Everything is plain JSON validated with zod.
 
 **Stale identity** covers the project id, the analysis, EQ band, and envelope versions, the planner version, strength, every stem's id, name, label, role, gain, mute, duration, and file identity, sections (bounds, type, intent), Track × Section prominence, notes, and gain overrides, and every saved EQ node, pan and width, and dynamics node. Selecting a row or moving the playhead is not an edit.
 
@@ -827,6 +830,179 @@ services/analysis/.venv/bin/python packages/dynamics-planner/scripts/make-proble
 
 The scenario edits roles, gains, saved EQ and dynamics, sections, prominence, and notes in memory and can script a review; it writes the plan, the proxy-check requests, and engine settings for Current, Dynamics Candidate, the level-matched candidate, and the reviewed plan. `bounce_mix` runs every row's proxy check and bounces each variant through an offline mixer that drives the engine's own runtimes (`bounce.rs`, tested equal to the engine within 1e-4), so the bounces are the playback DSP. `make-problem-mix.py` builds the deliberately problematic project from the Generated 5 proxies.
 
+## Full Mix planning
+
+Milestone 7 turns the four planners into one coordinated plan. The question it answers is: given everything Audiosous measures about the song, what is the smallest coherent set of changes across gain, static EQ, space, compression, ducking, transient shaping, and dynamic EQ that improves the mix? It adds no DSP category, does not master, limit, add effects, host plugins, match a reference, or call a model. Level, EQ, Space, and Dynamics stay separately usable; Full Mix sits above them in `packages/mix-planner`.
+
+```text
+saved project ──► the four planners (as measurement) ──► problems ──► alternatives per problem (≤ 4, and "no change")
+ + analysis,        Level · EQ · Space · Dynamics        one per stem      each judged on the problem's own evidence,
+   bands, stereo,                                        pair or stem      cost, side effects, other problems served
+   envelopes                                                                         │
+                                                                                     ▼
+          ┌──────────── re-measure: the four planners again on the candidate ◄── whole-mix candidates
+          │             (problems, regressions, headroom, mono, GR, steps)       minimal · balanced · assertive
+          ▼
+   keep the best ─► prune what the mix does not miss ─► revise regressions ─► next pass on the candidate (2–4 passes)
+          │
+          ├─► render check (Current and candidate through the native DSP on the proxies)
+          ├─► candidate overlay ─► native engine ─► A/B: whole mix, one problem, one change (loudness-matched)
+          └─► apply ─► faders, section gain, EQ nodes, pan/width, dynamics nodes (one update, one undo step)
+```
+
+### Problem model
+
+`detectMixProblems` reads one survey (the four plans of one mix) into problems. A problem has an id, a type, a scope (global or one section), the sections where it was measured, its stems, the protected and the yielding stem, a severity and a confidence (0–1), a priority group, the subsystem interactions and rows it was read from, and evidence lines naming which planner measured what. However many planners see one relationship, it is one problem: a kick and a bass are one low-end problem whether EQ, Dynamics, or both saw it; a pad and a lead are one masking problem whatever EQ, Space, and Dynamics each say.
+
+| Type | Read from | Measured as |
+| --- | --- | --- |
+| headroom | a rendered peak of the current mix over −0.3 dBFS | the rendered peak, moved by the candidate's estimated peak change |
+| level-hierarchy | AutoBalance rows (a stem off its role's level) | the largest remaining move AutoBalance wants on that stem, over 3 dB |
+| frequency-conflict, event-masking | EQ interactions (recommendation, review, no-benefit, level), Dynamics masking, Space pairs | the masker over the protected stem inside the conflict region (dB, from the EQ planner's band evidence), and the Space conflict |
+| low-end-collision | Dynamics low-end interactions (kick hits), EQ kick-bass overlap | the bass's low band minus the kick's on the kick's hits (dB) |
+| dynamic-instability | Dynamics compressor rows and readings | the sustained-level spread against the role's line |
+| transient-problem | Dynamics transient rows | attack over body |
+| center-congestion | Space interactions and separation or widen rows not part of a masking problem | the Space conflict |
+| excessive-width | Space narrow and mono-safety rows | the stem's mono fold-down loss and correlation, as heard |
+| section-contrast | a section note asking for width, punch, or a lead in front, compared with the section before | supporting stereo parts' side share, drum attacks over the mix, lead over the supporting parts |
+| intent | EQ and Space rows a note asked for | the rows themselves |
+
+Event masking is the masking problem when Dynamics finds the protected stem silent for much of the masker's time (the static cut would be paid while nothing needs it); otherwise it is a frequency conflict. Ids are order-independent (`masking:a|b`, `space:a|b`, `low-end:kick|bass`), so one relationship keeps one id from pass to pass.
+
+Every problem keeps its measure in a form that can be read again from another survey (`readMetric`). Gaps are dB of one stem over another, against the target the subsystem itself aims for (bass 3 dB under the kick on its hits, a supporting part 4 dB under a lead or 6 dB under a Focal one), and a cap on how much one plan may be asked to close (4 / 6 / 8 dB by strength) so a deliberately extreme mix is not "unsolvable". A gap is measured over the region where the conflict was found, from the band levels, so a candidate is read over the same frequencies as the baseline.
+
+**Why not the planners' own severities?** The first experiment applied the EQ planner's −2.6 dB pad cut and ran it again: its interaction severity moved from 0.794 to 0.786, and it proposed a deeper cut, because a planner run on its own output plans again. A duck that pulled the bass 1.6 dB further under the kick changed the share of colliding hits from 59% to 51%. Continuous gaps move with the change (the pad's 9.4 dB gap fell to 7.8 dB; the bass went from +0.3 to −1.4 dB against the kick), so problems are measured as gaps and "the planner still proposes something" is never read as "the problem remains". The dynamics planner now reports that gap with each interaction (`levelGapDb`, plan version 6.1.0).
+
+### Intervention model
+
+For each problem, `generateAlternatives` turns the planners' rows into changes (`MixChange`: the stem, scope, domain, processing in the project's own representation, the saved node it edits, the evidence its planner judged it on, confidence, status, reasons, and its evaluation) and offers at most four alternatives:
+
+- every row a planner offered for it (an EQ cut on the masker or a presence boost on the protected stem, a pan or width move, a duck, a dynamic EQ, a compressor, a transient move, a fader move);
+- a fader move on the yielding stem, only where it is a level problem (a planner says so, or the gap is past what EQ can close) or a kick/bass collision;
+- a small static cut on the bass at the kick's fundamental where the EQ planner left a kick/bass overlap undecided;
+- the two best singles together, each at reduced depth (60–70%), when no single one removes 80%.
+
+A change another problem already chose is credited, not offered again: if the Pad's −1.9 dB level fix closes part of the Lead/Pad gap, that part is subtracted before the alternatives are judged, and a problem whose remaining share is under 30% gets nothing more. A row that edits a node an earlier pass wrote becomes that change again, never a second node. A planner's needs-review row is shown as an alternative and never chosen automatically.
+
+Every alternative is judged on the problem's own evidence, so a static cut, a dynamic EQ, a duck, and a fader move are compared on the same numbers: a filter (static, or a dynamic EQ at its typical depth while the protected stem plays) through the pair's band levels with the EQ planner's evaluator; a duck by how far it moves the gap where they meet; a fader by its dB; a pan or width move by the Space evaluator's conflict, of which 35% counts toward a frequency conflict (moving a supporting part in the field releases only part of its masking of a centred lead). Its share of the problem removed is the dB closed over the dB needed.
+
+### Cost and regularization
+
+Benefit and cost share one unit: benefit is the problem's weight × severity × (0.5 + 0.5 × confidence) × share removed, plus half of what it removes from other open problems, minus what it adds to them. Cost is per processor (`cost.ts`):
+
+| Change | Cost |
+| --- | --- |
+| gain | 0.02 + 0.012 per dB |
+| safety trim | 0.03 |
+| static EQ cut | 0.04 + 0.012 per dB (a boost 0.06 + 0.025 per dB) |
+| pan | 0.05 + 0.06 per unit moved |
+| width | 0.07 + 0.10 per unit changed |
+| compressor | 0.08 + 0.012 per dB of GR (p95) |
+| transient | 0.08 + 0.15 per unit |
+| duck | 0.11 + 0.015 per dB |
+| dynamic EQ | 0.13 + 0.015 per dB |
+
+plus 0.03 for a section-only change, 0.03 for a second processor on one problem, ×1.4 on an anchor (kick, bass, snare, lead, vocal, or a stem marked Focal), −0.02 for editing a saved node instead of adding one, and the goal's lean (Punchy makes transients and ducks cheaper, Intimate makes widening and compression dearer, Wide and Open make widening cheaper, Controlled makes compression cheaper). Side effects are priced too: a fader move is heard everywhere, not only where the conflict is; a static cut on an event-masking problem is paid while the protected stem rests (in proportion to that share); a duck pays for its level between hits and a slow recovery; a dynamic EQ for its change while the key rests; a compressor for crest lost past 1 dB; a pan or width move for the conflict it adds elsewhere and mono loss.
+
+"No change" is always an alternative with net 0, and an alternative must beat it: net over the strength's minimum (0.1 / 0.06 / 0.03) and at least 30 / 20 / 15% of the problem removed. Under 45% confidence a problem is left alone; under the strength's low-confidence line (0.65 / 0.6 / 0.55) it may only get one cheap single (cost ≤ 0.1) at 70% depth. A plan carries at most 3 / 8 / 12 changes and a total cost of 0.6 / 1.2 / 2.0; problems are taken in priority order (level and headroom, then persistent frequency and low end, then time-domain problems, then space, then contrast and intent), so the most important get the budget.
+
+### Integrated planner
+
+`planFullMix` runs at most 2 / 3 / 4 passes. Each pass:
+
+1. **Problems.** Pass 1 reads the saved mix; a later pass reads the candidate so far. A problem first seen on a candidate is restated against the saved mix (`rebase`), so a problem the plan itself caused counts against the plan. The first pass is spent on level problems alone when a stem is far off its level (severity ≥ 0.75) and AutoBalance offers an automatic fix, so nothing is judged around it.
+2. **Candidates.** Three whole-mix candidates are built problem by problem in priority order: *minimal* (only clear-cut problems, the cheapest alternative that removes enough), *balanced* (the best net), *assertive* (the most removed among alternatives that are worth it).
+3. **Re-measure.** Each candidate is written into a copy of the project and measured by all four planners again (below). The score is the confidence- and priority-weighted severity removed, minus processing cost, minus side effects, minus 0.1 for each safety regression and the full weight of any problem the candidate creates. It ranks candidates of one project; it is not a quality score and is not shown as one.
+4. **Prune.** Leave-one-out on every solution that shares a stem with another change, including an earlier pass's: if the re-measured mix scores as well without it, it goes, and the plan says why ("the rest of the plan already covers what it would do", or which problem got worse with it).
+5. **Revise.** A change on a stem involved in a regression (a problem that got worse by 0.08, a new problem, mono fold-down up 0.5 dB or correlation down 0.1, more than 8 dB of combined gain reduction on one stem, more than 4 dB of side-effect level change, a section step that changes by more than 1.5 dB) is halved, and removed if halving does not clear it.
+6. **Stop** when no problem past the threshold remains, when the pass adds nothing worth its cost, when it improves the score by less than 0.08 / 0.05 / 0.03, or after the last pass. The reason is stated in the plan.
+
+Cross-planner contradictions are resolved by construction: one problem gets one solution, an alternative that sets a different value for a change another problem already chose is not offered, and a change is credited to every problem it measurably helps (a Synth narrowed for mono safety that also relieves the Synth/Pad crowding is one change serving two problems). Everything is deterministic: no randomness, the same inputs give byte-identical plans.
+
+### Evaluation
+
+The planners are the measurement. `Surveyor` writes a candidate into a copy of the project and runs the four planners on it, giving each the view it can measure:
+
+- Dynamics reads the candidate as written (it simulates compressors and ducks itself, and saved EQ's level change).
+- EQ and Space do not model dynamics. A dynamic EQ keyed from a stem acts while that stem plays, which is when the two compete, so for them it is folded in as a static bell at its full depth; a phrase duck as 80% of its range; a hit duck, compressor, or transient shaper as its predicted average level change.
+- AutoBalance sees gain only, so every other change is folded in as its predicted level change. This is how a compressor that lowers the bass 2.1 dB reads as also fixing "Bass is too loud", and how compressing the bass (the hierarchy's reference) is caught making the Pad read too loud.
+
+These views are only for measuring; nothing folded is written. Each planner's reading is cached by its own state identity of the view, so two candidates that differ only in what a planner does not read share its run; a 32-stem plan went from 32 planner runs to 8 with the same result.
+
+The evaluation reports, before and after: problem score and open problems; estimated peak (power sum of stem peaks + 1 dB, the AutoBalance estimate); estimated loudness (power sum of each stem's integrated loudness at its fader plus each change's predicted level change); mix correlation, mono fold-down loss, and center load (Space's mix statistics); the largest combined gain reduction on one stem; the largest side-effect level shift; processing cost; change count. It also keeps the first pass's three candidates and their scores, each pass and why it was kept or not, the stop reason, every regression and how it was resolved, the four planners' own counts on the same project, and the number of planner runs.
+
+**Headroom.** The candidate's estimated peak may not pass the current mix's or −1 dBFS, whichever is higher; otherwise a uniform safety trim (≤ 6 dB) is added on every fader. On the desktop, the render check below measures the real peak and deepens the trim if the rendered candidate still peaks past that line. No limiter, no loudness target. A current mix that clips when rendered (over −0.3 dBFS) is a headroom problem whose only alternative is that trim.
+
+**Render check.** After planning, the desktop renders Current and the candidate as Apply would write it through the native DSP from the playback proxies (`mix_check`, `crates/audio-engine/src/mixcheck.rs`), over a 6-second stretch of every section, every boundary ±2 s, and up to three windows where each change acts, at most 90 s per variant. Each window starts one second early, cold like after a seek, and that second is dropped; a window equals the same span of a full render to 1e-6 (tested). It measures sample peak, RMS, mono fold-down loss (stereo power over the power of (L + R) / 2), correlation, and the level of each section, and the plan notes the peak, the level change, mono, and any boundary whose step changes by more than 1.5 dB. The same render of Current before planning supplies the rendered peak for the headroom problem. The renders use the offline bounce's runtimes (`bounce.rs`, tested equal to the engine within 1e-4), so the check hears the playback DSP, not a parallel model.
+
+### Processing order
+
+Unchanged from Milestone 6, and Full Mix writes only existing representations, so nothing it plans depends on order:
+
+```text
+source → static EQ (track, then section) → dynamic EQ → compressor → transient → ducking → width → pan / balance → fader or section gain → (safety trim on every fader) → mix
+```
+
+Sidechain keys are still the key track's own source, before its EQ, dynamics, and fader.
+
+### Plan contract
+
+`packages/mix-planner/src/model.ts`: `kind: "full-mix"`, `planVersion` 1, `plannerVersion` 7.0.0, plain JSON validated with zod. It holds the problems (with evidence, severity before and after, outcome: solved, improved, unchanged, left alone, or deferred, the selected intervention, and an explanation), the interventions (selected and up to three considered alternatives per problem, each with its items, cost, confidence, expected reduction, net, outcome: selected, rejected, redundant, regression, or not needed, and the reason), the changes, the evaluation, the safety trim (and the least trim the render check asked for, which an edit never undercuts), and per-stem loudness and peak for re-checking after edits.
+
+**Stale identity** covers the project id, the four analysis versions (sidecar, EQ bands, stereo frames, envelopes), all five planner versions, the strength and goal, every stem's id, name, label, role, fader, pan, width, mute, duration, and file identity, sections (bounds, type, intent), Track × Section prominence, notes, and gain, pan, and width overrides, and every saved EQ, spatial, and dynamics node. Selection, the playhead, loop, and zoom are not in it.
+
+**Open subsystem plans** are not inputs. Full Mix plans from the saved project only; a Level, EQ, Space, or Dynamics candidate that is open but not applied never feeds it, and applying Full Mix makes those plans stale.
+
+### Preview, A/B, apply, undo
+
+The candidate plays through the shared monitor path: while a Full Mix audition is live, the monitor builds the engine state from a copy of the project with the auditioned changes written in (gain, EQ, space, and dynamics together) plus a uniform offset, so nothing reloads, no proxy is rebuilt, and the device does not restart. Starting a Full Mix audition stops any other plan's audition and the other way round, so one comparison plays at a time.
+
+- **Current** plays the saved mix. **Full Mix Candidate** plays every included change and the safety trim.
+- **Per problem:** *Only this fix* plays the saved mix with only that problem's solution; *Candidate without it* plays the whole candidate without it.
+- **Per change:** *Only this* and *Without*, the same for one change.
+- **Edits** use the planners' own bounds (gain −24 to +12 dB; EQ 20 Hz–20 kHz, −12 to +6 dB, Q 0.3–6; pan, width 0–200%; duck and dynamic EQ range, threshold, release; compressor threshold, ratio, attack, release; transient attack and sustain) and the existing slider control. An edit is re-checked from the change's evidence with its own planner's evaluator, its warnings and review status updated, and the plan's trim, combined gain reduction, and mono notes re-read; the planner does not run again. The edited change plays at once.
+
+**Loudness fairness.** The A/B plays the candidate (or the focused variant) at the current mix's estimated loudness by default: a uniform offset on every fader (at most ±3 dB) equal to the difference between the two estimates above. It removes overall loudness bias without touching the balance the candidate changed, and without matching peaks. The panel's "Loudness-match A/B" box turns it off. On the acceptance mixes the matched candidate rendered within 0.12 dB RMS of Current. Nothing is matched when the plan is applied.
+
+**Accept, reject, apply.** Changes can be accepted, rejected, or edited one by one, or a whole problem's solution at once (*Accept solution*, *Reject solution*). **Apply all** writes proposed and accepted changes, **Apply accepted** accepted ones: faders and Track × Section gain, EQ nodes (`origin: "eq-plan"`), pan and width, and dynamics nodes (`origin: "dynamics-plan"`), each with its first reason as the note, then the safety trim, in one `replaceDocument` with history, so Ctrl+Z restores the whole previous mix. If any change cannot be stored (a graph is full, a key would loop), nothing is written and the panel names the change. Source files, proxies, and caches are not touched.
+
+### Review UI
+
+Plans has five tabs: Gain, EQ, Space, Dynamics, and Full Mix. The Full Mix tab has Strength (Conservative, Normal, Strong) and Goal (Balanced, Punchy, Open, Intimate, Wide, Controlled; it only re-weights problems and costs), the A/B and Apply bar, a summary (issues, selected changes, rejected alternatives, overall confidence, the processing by kind, the four planners' own count, cost, and safety), and "How it was decided" (the before/after table, the three candidates, the passes, regressions, and notes). Problems are listed first, each with its severity, outcome, selected solution, and problem-level buttons; selecting one shows its evidence, every alternative considered with why it was selected or not, and its changes with Accept / Reject / Edit / Only this / Without. Planning runs in a Web Worker, so the window stays responsive.
+
+### Confidence
+
+Each change keeps its planner's confidence; a problem's comes from the planners that saw it. The plan's confidence combines the problems' confidence (45%), the agreement between what each selected change was expected to remove locally and what the re-measured candidate shows (35%), and the share of changes under 60% confidence (20%). Low confidence makes a problem smaller, not busier (see Cost).
+
+### Performance
+
+Full Mix plans in seconds: 11 stems (Generated 5) 0.6 / 3.7 / 5.1 s at Conservative / Normal / Strong, the 6-stem problematic mix 1.2 / 4.2 / 5.4 s, a synthetic 32-stem song 6.2 s, and 64 stems 27 s, where one EQ planner run alone is 6.7 s (measured in Node on the development machine). Planning never touches the audio thread: it runs in a worker, and the callback only plays the existing DSP. The combined DSP callback (EQ, pan, width, section windows, every dynamics processor, and section gain on every stem) is in [Milestone 7](milestones.md#milestone-7).
+
+### Known limitations
+
+- Full Mix measures through the four planners, so it inherits their models and limits: band frames of 0.25–0.4 s, 10 ms envelopes, the EQ planner's spectral model of masking, AutoBalance's loudness readings. It does not hear the mix; the render check measures peak, level, mono, and section steps, not clarity.
+- The folds that let EQ, Space, and AutoBalance see dynamics are approximations: a dynamic EQ is read at full depth where it competes and is credited the same against every stem it shares bands with; a hit duck is read as its average level change.
+- Severity scales are calibrated per problem type, on the fixtures and the two acceptance mixes, not on listening. A gap's cap means a very large conflict reads as "improved", not "solved", after a plan-sized move.
+- Leave-one-out pruning covers at most six solutions per pass, and only those that share a stem with another change.
+- Section contrast reads width, punch, and a lead in front only, and only when a section note asks for them. It never raises a section's level to make it bigger.
+- A fader move offered for a conflict is priced as heard everywhere, but AutoBalance's ceilings do not penalize a quieter supporting stem, so a gain alternative relies on its side-effect price, not on the hierarchy, to stay honest.
+- Section-scoped dynamics and section EQ from the planners are passed through; Full Mix does not invent new section scopes.
+- The goal is a lean on weights and costs. It is not interpreted from text.
+- The browser preview and the legacy engine do not plan Full Mix (they have no proxies, envelopes, or bands) and do not play width or dynamics.
+
+### Acceptance harness
+
+```sh
+services/analysis/.venv/bin/python packages/mix-planner/scripts/make-full-mix-problem.py "test-assets/Generated 5" "target/acceptance/Generated 5 Full Mix"
+cargo run --release -p audiosous-audio --example eq_bands -- "target/acceptance/Generated 5 Full Mix"
+cargo run --release -p audiosous-audio --example stereo_frames -- "target/acceptance/Generated 5 Full Mix"
+cargo run --release -p audiosous-audio --example envelope_frames -- "target/acceptance/Generated 5 Full Mix"
+npx vite-node packages/mix-planner/scripts/plan-full-mix-project.ts -- scenario.json
+cargo run --release -p audiosous-audio --example bounce_mix -- OUT_DIR [--wav]
+```
+
+The scenario edits roles, faders, pan and width, saved processing (or clears it with `clearProcessing`), sections, prominence, and notes in memory, and can script a review. The harness prints the four planners on their own next to the Full Mix plan (problems, every alternative and why, the selected changes, the re-measured evaluation) and writes the plan, the reviewed plan, and bounce variants for Current, the four planners' Apply all combined, the Full Mix Candidate raw and loudness-matched, and the reviewed plan. `bounce_mix` renders them through the playback DSP and reports peak, RMS, crest, level spread, mono fold-down, and correlation.
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.
@@ -840,7 +1016,7 @@ The legacy webview clock remains for the browser preview and for `AUDIOSOUS_AUDI
 
 ## Logging
 
-Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`, and `dynamicsplan.start`, `dynamicsplan.complete`, `dynamicsplan.verify`, `dynamicsplan.preview`, `dynamicsplan.apply`, `dynamicsplan.cancel`, and `dynamicsplan.stale`. `dynamicsplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the other plans. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, envelopes, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
+Structured events include `project.create`, `project.open`, `project.save`, `track.import`, `track.decode.failure`, the analysis cache events, `autobalance.start`, `autobalance.complete`, `autobalance.apply`, `autobalance.cancel`, `autobalance.stale`, and `eqplan.start`, `eqplan.complete`, `eqplan.verify`, `eqplan.preview`, `eqplan.apply`, `eqplan.cancel`, and `eqplan.stale`, and `spatialplan.start`, `spatialplan.complete`, `spatialplan.verify`, `spatialplan.preview`, `spatialplan.apply`, `spatialplan.cancel`, and `spatialplan.stale`, and `dynamicsplan.start`, `dynamicsplan.complete`, `dynamicsplan.verify`, `dynamicsplan.preview`, `dynamicsplan.apply`, `dynamicsplan.cancel`, and `dynamicsplan.stale`, and `fullmix.start`, `fullmix.complete`, `fullmix.check`, `fullmix.preview`, `fullmix.apply`, `fullmix.cancel`, and `fullmix.stale`. `fullmix.complete` records `analysisMs` (loading and measuring, including the render of Current), `durationMs` (planning in the worker), `checkMs` (the render check), the problem, change, and independent counts, and the number of planner runs. `dynamicsplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the other plans. `spatialplan.complete` records `analysisMs`, `durationMs`, and `verifyMs` like the EQ plan. `eqplan.complete` records `analysisMs`, `durationMs` (the planner alone), and `verifyMs` (the proxy check). No log line carries PCM, band frames, stereo frames, envelopes, or a plan body. `autobalance.complete` records `analysisMs` (loading or measuring every stem) and `durationMs` (the planner alone) separately. The desktop shell appends JSON lines to the application log directory. Playhead motion is not logged, and AutoBalance logs do not include the plan body.
 
 ## Milestone 1
 

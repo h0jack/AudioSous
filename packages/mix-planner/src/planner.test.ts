@@ -4,7 +4,7 @@ import { fixtureA, fixtureB, fixtureC, fixtureD, fixtureE, fixtureF, fixtureG, f
 import { evaluateCandidate } from "./evaluate";
 import { MIX_LIMITS_BY_STRENGTH, PLANNERS, Surveyor, applyFullMixPlan, detectMixProblems, fullMixPlanSchema, planFullMix, processorKind, type FullMixPlan, type FullMixSettings, type MixChange } from "./index";
 import { fromBalanceRow, gainChange } from "./rows";
-import { LEAD, PAD_MASKING, bassTrack, kickTrack, mixSong, unstableBass, wholeSong, type MixSong, type MixTrackInput } from "./testing";
+import { LEAD, PAD_MASKING, PAD_SEPARATED, bassTrack, kickTrack, mixSong, unstableBass, wholeSong, type MixSong, type MixTrackInput } from "./testing";
 
 const NOW = "2026-10-05T00:00:00.000Z";
 
@@ -182,6 +182,27 @@ describe("integrated planning", () => {
     expect(problem.severityAfter).not.toBeNull();
     expect(problem.severityAfter!).toBeLessThan(problem.severity);
     expect(result.evaluation.after.problemScore).toBeLessThan(result.evaluation.before.problemScore);
+  });
+});
+
+describe("intent", () => {
+  const trumpet = (extra: Partial<MixTrackInput> = {}): MixTrackInput => ({ id: "trumpet", name: "Trumpet", role: "brass", fixture: { shape: LEAD }, ...extra });
+  const note = (text: string) => [{ id: "all", name: "Chorus", type: "chorus" as const, start: 0, end: 60, intent: text }];
+
+  it("turns 'make the trumpet stand out' into the cheapest effective move, not automatically a trumpet boost", () => {
+    const song = mixSong({ tracks: [trumpet(), { id: "pad", name: "Pad", role: "pad", fixture: { shape: PAD_MASKING }, stereo: { correlation: 0.7 } }], sections: note("Make the trumpet stand out.") });
+    const result = plan(song);
+    expect(result.problems.some((problem) => problem.trackIds.includes("trumpet"))).toBe(true);
+    expect(result.changes.length).toBeGreaterThan(0);
+    expect(result.changes.length).toBeLessThanOrEqual(2);
+    // Whatever was chosen, it was weighed against the alternatives, and the trumpet is not simply turned up by several dB.
+    const boost = result.changes.find((change) => change.trackId === "trumpet" && change.processing.type === "gain");
+    if (boost && boost.processing.type === "gain") expect(boost.processing.deltaDb).toBeLessThanOrEqual(2);
+  });
+
+  it("does nothing when the stem a note asks to stand out already does", () => {
+    const song = mixSong({ tracks: [trumpet(), { id: "pad", name: "Pad", role: "pad", fixture: { shape: PAD_SEPARATED }, gainDb: -6 }], sections: note("Make the trumpet stand out.") });
+    expect(plan(song).changes).toEqual([]);
   });
 });
 
