@@ -4,7 +4,7 @@
     "id": "e858fe67-13d4-4db3-9048-ec2efec72b32",
     "name": "Work 1",
     "createdAt": "2026-10-05T21:44:57.203Z",
-    "updatedAt": "2026-10-05T23:12:44.916Z",
+    "updatedAt": "2026-10-06T01:21:07.170Z",
     "sampleRate": 192000,
     "durationSeconds": 241.40609895833333
   },
@@ -26,7 +26,7 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1.5,
       "pan": 0,
       "width": 1,
       "muted": false,
@@ -54,7 +54,7 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1,
       "pan": 0,
       "width": 1,
       "muted": false,
@@ -82,15 +82,29 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
-      "pan": 0,
-      "width": 1,
+      "gainDb": -1,
+      "pan": 0.25,
+      "width": 0.7,
       "muted": false,
       "solo": false,
       "processing": {
         "schemaVersion": 2,
         "nodes": [],
-        "dynamics": []
+        "dynamics": [
+          {
+            "id": "dyn-0190d211",
+            "enabled": true,
+            "origin": "dynamics-plan",
+            "note": "Ducks Generated From Generated From Notes V.0.29 Mid High Arps by up to 1.5 dB only while Generated From Generated From Notes V.0.29 Melodic Gnat plays: there Generated From Generated From Notes V.0.29 Mid High Arps covers 45% of Generated From Generated From Notes V.0.29 Melodic Gnat's defining range (474 Hz–632 Hz matters most), but Generated From Generated From Notes V.0.29 Melodic Gnat is sile",
+            "type": "ducking",
+            "keyTrackId": "deeb0377-52a4-4e38-91b5-83f2743f72d1",
+            "keyDetector": "smooth",
+            "thresholdDb": -42,
+            "rangeDb": -1.5,
+            "attackMs": 40,
+            "releaseMs": 300
+          }
+        ]
       }
     },
     {
@@ -110,14 +124,28 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": 2.9,
       "pan": 0,
       "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
         "schemaVersion": 2,
-        "nodes": [],
+        "nodes": [
+          {
+            "id": "eq-6776e994",
+            "type": "eq",
+            "enabled": true,
+            "filter": {
+              "kind": "bell",
+              "frequencyHz": 550,
+              "gainDb": 1.5,
+              "q": 0.8
+            },
+            "origin": "eq-plan",
+            "note": "Generated From Generated From Notes V.0.29 Melodic Gnat is the Primary lead part, but the rest of the mix sits +2.0 dB against it in 470–630 Hz while it plays."
+          }
+        ],
         "dynamics": []
       }
     },
@@ -138,14 +166,28 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1,
       "pan": 0,
       "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
         "schemaVersion": 2,
-        "nodes": [],
+        "nodes": [
+          {
+            "id": "eq-3368c70c",
+            "type": "eq",
+            "enabled": true,
+            "filter": {
+              "kind": "bell",
+              "frequencyHz": 970,
+              "gainDb": 1.5,
+              "q": 0.8
+            },
+            "origin": "eq-plan",
+            "note": "Generated From Generated From Notes V.0.29 Melodic Fly is the Primary lead part, but the rest of the mix sits -0.7 dB against it in 840 Hz–1.1 kHz while it plays."
+          }
+        ],
         "dynamics": []
       }
     },
@@ -166,14 +208,28 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": 2,
       "pan": 0,
       "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
         "schemaVersion": 2,
-        "nodes": [],
+        "nodes": [
+          {
+            "id": "eq-8a4d5001",
+            "type": "eq",
+            "enabled": true,
+            "filter": {
+              "kind": "bell",
+              "frequencyHz": 970,
+              "gainDb": 1.5,
+              "q": 0.8
+            },
+            "origin": "eq-plan",
+            "note": "Generated From Generated From Notes V.0.29 Fly Gnat Automation is the Primary lead part, but the rest of the mix sits +4.6 dB against it in 840 Hz–1.1 kHz while it plays."
+          }
+        ],
         "dynamics": []
       }
     },
@@ -194,7 +250,7 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1,
       "pan": 0,
       "width": 1,
       "muted": false,
@@ -222,7 +278,7 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1,
       "pan": 0,
       "width": 1,
       "muted": false,
@@ -250,7 +306,7 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1,
       "pan": 0,
       "width": 1,
       "muted": false,
@@ -278,7 +334,7 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1,
       "pan": 0,
       "width": 1,
       "muted": false,
@@ -306,14 +362,28 @@
         "durationSeconds": 241.40609895833333,
         "fileSizeBytes": 370800502
       },
-      "gainDb": 0,
+      "gainDb": -1,
       "pan": 0,
       "width": 1,
       "muted": false,
       "solo": false,
       "processing": {
         "schemaVersion": 2,
-        "nodes": [],
+        "nodes": [
+          {
+            "id": "eq-9ba178e7",
+            "type": "eq",
+            "enabled": true,
+            "filter": {
+              "kind": "bell",
+              "frequencyHz": 57,
+              "gainDb": -1.5,
+              "q": 1.2
+            },
+            "origin": "eq-plan",
+            "note": "Generated From Generated From Notes V.0.29 BD 2 and Generated From Generated From Notes V.0.29 Bass Arps are both Primary and both strong around 36–110 Hz while they play together, so neither yields automatically."
+          }
+        ],
         "dynamics": []
       }
     }
@@ -347,7 +417,12 @@
     "selectedTrackId": null,
     "selectedSectionId": null,
     "timeRange": null,
-    "loop": null,
+    "loop": {
+      "enabled": false,
+      "start": 88.55173396318568,
+      "end": 122.27860848477046,
+      "sectionId": null
+    },
     "playheadSeconds": 0,
     "timelineZoom": 1,
     "timelineScroll": 0
