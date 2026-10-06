@@ -315,19 +315,27 @@ impl AudioWriter for FlacWriter {
             let mut pcm = pcm;
             pcm.flush().map_err(|error| error.to_string())?;
             drop(pcm);
+            let total = fs::metadata(&pcm_path).map_err(|error| error.to_string())?.len() / (channels as u64 * 4);
             let config = flacenc::config::Encoder::default().into_verified().map_err(|(_, error)| format!("FLAC encoder setup failed: {error:?}"))?;
             let block = config.block_size;
             let mut info = StreamInfo::new(rate as usize, channels, usize::from(bits)).map_err(|error| format!("FLAC setup failed: {error:?}"))?;
             let digest: [u8; 16] = md5.finalize().into();
             info.set_md5_digest(&digest);
-            let mut stream = Stream::with_stream_info(info);
+            info.set_total_samples(total as usize);
+            // The header (STREAMINFO with the length and MD5, and the tags) goes first; frames are written as they are
+            // encoded, so memory holds one block, and the block and frame sizes are filled in at the end.
+            let mut header = Stream::with_stream_info(info.clone());
             if let Some(comment) = comment {
-                stream.add_metadata_block(MetadataBlockData::new_unknown(4, &comment).map_err(|error| format!("FLAC tags failed: {error:?}"))?);
+                header.add_metadata_block(MetadataBlockData::new_unknown(4, &comment).map_err(|error| format!("FLAC tags failed: {error:?}"))?);
             }
+            let mut sink = flacenc::bitsink::ByteSink::new();
+            header.write(&mut sink).map_err(|error| format!("FLAC encoding failed: {error:?}"))?;
+            let mut file = BufWriter::with_capacity(1 << 20, File::create(&path).map_err(|error| error.to_string())?);
+            file.write_all(sink.as_slice()).map_err(|error| error.to_string())?;
             let mut reader = BufReader::with_capacity(1 << 20, File::open(&pcm_path).map_err(|error| error.to_string())?);
             let mut bytes = vec![0_u8; block * channels * 4];
             let mut samples: Vec<i32> = Vec::with_capacity(block * channels);
-            let mut frame_number = 0;
+            let (mut frame_number, mut min_frame, mut max_frame) = (0_usize, u32::MAX, 0_u32);
             loop {
                 let mut filled = 0;
                 while filled < bytes.len() {
@@ -347,26 +355,30 @@ impl AudioWriter for FlacWriter {
                 }
                 let mut framebuf = FrameBuf::with_size(channels, frames).map_err(|error| format!("FLAC encoding failed: {error:?}"))?;
                 framebuf.fill_interleaved(&samples).map_err(|error| format!("FLAC encoding failed: {error:?}"))?;
-                let frame = flacenc::encode_fixed_size_frame(&config, &framebuf, frame_number, stream.stream_info()).map_err(|error| format!("FLAC encoding failed: {error:?}"))?;
-                stream.add_frame(frame);
+                let frame = flacenc::encode_fixed_size_frame(&config, &framebuf, frame_number, &info).map_err(|error| format!("FLAC encoding failed: {error:?}"))?;
+                let mut sink = flacenc::bitsink::ByteSink::new();
+                frame.write(&mut sink).map_err(|error| format!("FLAC encoding failed: {error:?}"))?;
+                let size = sink.as_slice().len() as u32;
+                min_frame = min_frame.min(size);
+                max_frame = max_frame.max(size);
+                file.write_all(sink.as_slice()).map_err(|error| error.to_string())?;
                 frame_number += 1;
                 if frames < block {
                     break;
                 }
             }
-            let mut sink = flacenc::bitsink::ByteSink::new();
-            stream.write(&mut sink).map_err(|error| format!("FLAC encoding failed: {error:?}"))?;
-            let mut bytes = sink.as_slice().to_vec();
-            // STREAMINFO (after "fLaC" and its 4-byte block header): a fixed-blocksize stream states its block size as
-            // both minimum and maximum; only the last frame may be shorter. flacenc counts the last frame in the
-            // minimum, which makes decoders read the stream as variable-blocksize, so state it as the format expects.
-            if frame_number > 1 && bytes.len() > 12 && &bytes[..4] == b"fLaC" {
-                let (max_hi, max_lo) = (bytes[10], bytes[11]);
-                bytes[8] = max_hi;
-                bytes[9] = max_lo;
-            }
-            let mut file = File::create(&path).map_err(|error| error.to_string())?;
-            file.write_all(&bytes).map_err(|error| error.to_string())?;
+            file.flush().map_err(|error| error.to_string())?;
+            let mut file = file.into_inner().map_err(|error| error.to_string())?;
+            // STREAMINFO (after "fLaC" and its 4-byte block header): the block size as both minimum and maximum (only
+            // the last frame may be shorter in a fixed-blocksize stream), then the smallest and largest frame.
+            let block_size = if frame_number <= 1 { total.max(16) as u16 } else { block as u16 };
+            let mut sizes = Vec::with_capacity(10);
+            sizes.extend_from_slice(&block_size.to_be_bytes());
+            sizes.extend_from_slice(&block_size.to_be_bytes());
+            sizes.extend_from_slice(&(if frame_number == 0 { 0 } else { min_frame }).to_be_bytes()[1..]);
+            sizes.extend_from_slice(&max_frame.to_be_bytes()[1..]);
+            file.seek(SeekFrom::Start(8)).map_err(|error| error.to_string())?;
+            file.write_all(&sizes).map_err(|error| error.to_string())?;
             file.sync_all().map_err(|error| error.to_string())
         })();
         let _ = fs::remove_file(&pcm_path);

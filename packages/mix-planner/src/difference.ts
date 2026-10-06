@@ -64,6 +64,8 @@ export interface EqDifference {
   peakHz: number;
   /** A saved filter in this scope was changed or removed, so the candidate filters alone would mislead. */
   replacesSaved: boolean;
+  /** Interactions the plan row behind this change works on. */
+  interactionIds: string[];
 }
 
 export interface SpaceDifference {
@@ -235,7 +237,8 @@ export function mixDifference(input: DifferenceInput): MixDifference {
       const savedBefore = scope.sectionId ? sectionEqNodes(current, track.id, scope.sectionId) : current.tracks.find((item) => item.id === track.id)!.processing.nodes;
       const savedAfter = scope.sectionId ? sectionEqNodes(candidate, track.id, scope.sectionId) : next.processing.nodes;
       const replacesSaved = savedBefore.some((node) => !savedAfter.some((other) => JSON.stringify(other) === JSON.stringify(node)));
-      eq.push({ trackId: track.id, name: name(track.id), scope, currentFilters: beforeFilters, candidateFilters: afterFilters, current: before.map(roundPoint), candidate: after.map(roundPoint), difference, peakDeltaDb: peak.db, peakHz: Math.round(peak.hz), replacesSaved });
+      const linked = evidence.filter((item) => item.domain === "eq" && item.trackId === track.id && item.sectionId === scope.sectionId).flatMap((item) => item.interactionIds ?? []);
+      eq.push({ trackId: track.id, name: name(track.id), scope, currentFilters: beforeFilters, candidateFilters: afterFilters, current: before.map(roundPoint), candidate: after.map(roundPoint), difference, peakDeltaDb: peak.db, peakHz: Math.round(peak.hz), replacesSaved, interactionIds: [...new Set(linked)] });
     }
 
     // Space: pan and width in each scope.
@@ -464,6 +467,16 @@ function round3(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
+/**
+ * The relationship an EQ change was planned for: an interaction its plan row names, a pair before a single stem;
+ * otherwise any pair the stem is in.
+ */
+export function interactionFor(diff: Pick<MixDifference, "interactions">, row: Pick<EqDifference, "trackId" | "interactionIds">): InteractionDifference | null {
+  const linked = diff.interactions.filter((item) => row.interactionIds.includes(item.id));
+  const pairs = (list: InteractionDifference[]) => list.filter((item) => item.trackIds.length > 1);
+  return pairs(linked)[0] ?? linked[0] ?? pairs(diff.interactions.filter((item) => item.trackIds.includes(row.trackId)))[0] ?? null;
+}
+
 /* ------------------------------------------------------------------ explanation */
 
 /** A plain-language line for one change: what moved, by how much, where, and what it measurably did. */
@@ -539,7 +552,7 @@ export function fullMixDifference(document: ProjectDocument, plan: FullMixPlan, 
       before: round2(problem.severity),
       after: round2(problem.severityAfter!),
       reduction: problem.severity > 0 ? round3((problem.severity - problem.severityAfter!) / problem.severity) : 0,
-      measure: "interaction",
+      measure: problem.trackIds.length > 1 ? "interaction" : "problem severity",
     }));
   const { before, after } = plan.evaluation;
   const metrics: MetricDifference[] = [];

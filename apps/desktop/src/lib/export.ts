@@ -71,8 +71,13 @@ export function rateOptions(document: ProjectDocument, format: ExportFormat): nu
   const project = supportedRate(document.project.sampleRate);
   const base = [44_100, 48_000];
   if (format.kind === "mp3" || project === null || base.includes(project)) return base;
+  // The FLAC encoder goes up to 96 kHz: a higher project rate is offered as the nearest family rate under it.
+  if (format.kind === "flac" && project > MAX_FLAC_RATE) return [project % 44_100 === 0 ? 88_200 : 96_000, ...base];
   return [project, ...base];
 }
+
+/** The FLAC encoder's highest sample rate (the WAV writer has no such limit). */
+export const MAX_FLAC_RATE = 96_000;
 
 export function extensionOf(format: ExportFormat): string {
   return format.kind;

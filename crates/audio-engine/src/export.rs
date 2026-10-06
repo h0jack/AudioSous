@@ -27,6 +27,8 @@ use crate::loudness::{to_db, LoudnessMeter, LoudnessReport, TruePeakDetector};
 use crate::mixcheck::MixVariantSpec;
 use crate::render::{render_mix, FrameSource, GraphTrack, MixGraph, SourceStream, CANCELLED};
 
+/// The FLAC encoder's highest sample rate.
+pub const MAX_FLAC_RATE: u32 = 96_000;
 /// The longest a single export may be, seconds.
 pub const MAX_EXPORT_SECONDS: f64 = 60.0 * 60.0;
 /// Heavy limiting, conservatively: more than this at any moment…
@@ -230,6 +232,9 @@ pub fn prepare_export(job: &ExportJob, progress: &ExportProgress) -> Result<Prep
     }
     if matches!(settings.format, ExportFormat::Mp3 { .. }) && rate != 44_100 && rate != 48_000 {
         return Err("MP3 export is 44.1 or 48 kHz.".into());
+    }
+    if matches!(settings.format, ExportFormat::Flac { .. }) && rate > MAX_FLAC_RATE {
+        return Err(format!("FLAC export goes up to {} kHz. Choose 96 kHz or lower, or WAV for {} kHz.", MAX_FLAC_RATE / 1000, rate / 1000));
     }
     if !(job.duration_seconds > 0.0 && job.duration_seconds <= MAX_EXPORT_SECONDS) {
         return Err("The project has no length to export.".into());
@@ -474,7 +479,7 @@ pub fn finish_export(job: &ExportJob, prepared: &PreparedExport, choice: Option<
         };
         // A lossy encoder can raise peaks; a lossless file can overshoot by an interpolation rounding. Try again a
         // little lower (twice at most) rather than ship a file over the ceiling.
-        let allowed = if lossy { 0.3 } else { 0.1 };
+        let allowed = 0.05;
         let over = decoded.loudness.true_peak_dbtp - ceiling;
         if over > allowed && attempt < 3 && (stats.max_reduction_db > 0.0 || matches!(settings.loudness, LoudnessTarget::Target { .. }) || over > 0.0) {
             internal_ceiling -= over + 0.05;
@@ -501,7 +506,7 @@ pub fn finish_export(job: &ExportJob, prepared: &PreparedExport, choice: Option<
     }
     verification.insert(0, "✓ Decoded completely".into());
     if decoded.loudness.true_peak_dbtp > ceiling + 0.05 {
-        warnings.push(format!("The true peak is {:.1} dBTP, {:.1} dB over the {:.1} dBTP ceiling{}.", decoded.loudness.true_peak_dbtp, decoded.loudness.true_peak_dbtp - ceiling, ceiling, if lossy { " after MP3 encoding; a lower ceiling (for example −1.5 dBTP) leaves the encoder more room" } else { "" }));
+        warnings.push(format!("The true peak is {:.2} dBTP, {:.2} dB over the {:.1} dBTP ceiling{}.", decoded.loudness.true_peak_dbtp, decoded.loudness.true_peak_dbtp - ceiling, ceiling, if lossy { " after MP3 encoding; a lower ceiling (for example −1.5 dBTP) leaves the encoder more room" } else { "" }));
     } else {
         verification.push(format!("✓ True peak {:.1} dBTP, under the {:.1} dBTP ceiling", decoded.loudness.true_peak_dbtp, ceiling));
     }
@@ -871,5 +876,112 @@ mod tests {
         fs::remove_file(&fixture.sources[1].path).unwrap();
         let error = export_mix(&job(&fixture, variant(json!({})), ExportFormat::Wav { depth: WavDepth::Pcm24 }, 48_000, LEAVE_LEVEL), None, &ExportProgress::new()).unwrap_err();
         assert!(error.contains("bass.wav"), "{error}");
+    }
+
+    #[test]
+    fn flac_above_96k_is_refused_before_rendering() {
+        let fixture = fixture("flac-rate", 48_000, 0.5, 0.5);
+        let error = export_mix(&job(&fixture, variant(json!({})), ExportFormat::Flac { bits: 24 }, 192_000, LEAVE_LEVEL), None, &ExportProgress::new()).unwrap_err();
+        assert!(error.contains("96 kHz"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod stress {
+    use super::*;
+    use crate::encode::ExportFormat;
+    use crate::engine::{Engine, LoadedTrack};
+    use crate::proxy::PLAYBACK_RATE;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Plays Generated 5 in real time on the offline engine (readers, rings, mix, every DSP stage) with and without
+    /// an export of the same 192 kHz stems running beside it, and reports underruns, the lowest buffer, and the
+    /// callback cost. Release only: `cargo test -p audiosous-audio --release --lib -- --ignored playback_while_exporting --nocapture`.
+    #[test]
+    #[ignore]
+    fn playback_while_exporting() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let project = root.join("test-assets/Generated 5/project.amix");
+        if !project.is_file() {
+            eprintln!("skip: Generated 5 is not on disk");
+            return;
+        }
+        let doc: serde_json::Value = serde_json::from_str(&fs::read_to_string(&project).unwrap()).unwrap();
+        let bundle = project.parent().unwrap().to_path_buf();
+        let tracks = doc["tracks"].as_array().cloned().unwrap_or_default();
+        let loaded: Vec<LoadedTrack> = tracks
+            .iter()
+            .map(|track| {
+                let id = track["id"].as_str().unwrap().to_string();
+                let source = bundle.join(track["file"]["relativePath"].as_str().unwrap());
+                let meta = fs::metadata(&source).unwrap();
+                let modified_ns = meta.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|duration| u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)).unwrap_or(0);
+                LoadedTrack { id: id.clone(), label: id.clone(), source_path: source, proxy_path: bundle.join("cache/playback").join(format!("{id}.proxy")), source_size: meta.len(), source_modified_ns: modified_ns, gain_db: 0.0, pan: 0.0, width: 1.0, muted: false, solo: false }
+            })
+            .collect();
+        let sources: Vec<ExportSource> = loaded.iter().map(|track| ExportSource { track_id: track.id.clone(), path: track.source_path.clone() }).collect();
+        let mix: MixVariantSpec = serde_json::from_value(serde_json::json!({
+            "name": "export",
+            "tracks": loaded.iter().map(|track| serde_json::json!({ "id": track.id, "gainDb": 0.0, "muted": false })).collect::<Vec<_>>(),
+            "gainRegions": [], "eq": [], "spatial": [], "dynamics": []
+        }))
+        .unwrap();
+        let seconds = 60.0;
+        let run = |exporting: bool| {
+            let engine = Engine::offline();
+            engine.load(loaded.clone()).unwrap();
+            engine.play(0.0).unwrap();
+            let progress = Arc::new(ExportProgress::new());
+            let output = std::env::temp_dir().join(format!("audiosous-contention-{}.flac", std::process::id()));
+            let worker = exporting.then(|| {
+                let job = ExportJob { sources: sources.clone(), mix: mix.clone(), duration_seconds: 141.0, settings: ExportSettings { format: ExportFormat::Flac { bits: 24 }, sample_rate: 48_000, loudness: LoudnessTarget::Target { integrated_lufs: -14.0, ceiling_dbtp: -1.0 }, metadata: Default::default() }, output: output.clone() };
+                let progress = Arc::clone(&progress);
+                std::thread::spawn(move || export_mix(&job, None, &progress).map(|report| report.render_speed))
+            });
+            let mut block = vec![0.0_f32; 1_024];
+            let block_duration = Duration::from_secs_f64(512.0 / f64::from(PLAYBACK_RATE));
+            let started = Instant::now();
+            let (mut worst, mut total, mut blocks, mut lowest) = (Duration::ZERO, Duration::ZERO, 0_u32, f64::MAX);
+            while started.elapsed().as_secs_f64() < seconds {
+                let due = started + block_duration * blocks;
+                if let Some(wait) = due.checked_duration_since(Instant::now()) {
+                    std::thread::sleep(wait);
+                }
+                let tick = Instant::now();
+                engine.render_block(&mut block);
+                let spent = tick.elapsed();
+                worst = worst.max(spent);
+                total += spent;
+                blocks += 1;
+                if blocks % 200 == 0 {
+                    lowest = lowest.min(engine.status().buffered_ahead_min);
+                }
+            }
+            let status = engine.status();
+            engine.shutdown();
+            progress.cancel.store(true, Ordering::Relaxed);
+            let speed = worker.map(|handle| handle.join().unwrap());
+            let _ = fs::remove_file(&output);
+            eprintln!(
+                "{}: underruns {}, lowest buffer {:.2} s, render_block avg {:.3} ms, worst {:.3} ms (budget {:.2} ms){}",
+                if exporting { "with export" } else { "playback only" },
+                status.underruns,
+                lowest,
+                total.as_secs_f64() * 1000.0 / f64::from(blocks.max(1)),
+                worst.as_secs_f64() * 1000.0,
+                block_duration.as_secs_f64() * 1000.0,
+                match speed {
+                    Some(Ok(speed)) => format!(", export rendered at {speed:.1}× real time"),
+                    Some(Err(error)) => format!(", export stopped: {error}"),
+                    None => String::new(),
+                }
+            );
+            status.underruns
+        };
+        let alone = run(false);
+        let with_export = run(true);
+        assert_eq!(alone, 0);
+        assert_eq!(with_export, 0, "playback underran while exporting");
     }
 }

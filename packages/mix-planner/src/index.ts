@@ -85,6 +85,7 @@ export {
   explainSpace,
   fullMixDifference,
   gainPlanDifference,
+  interactionFor,
   keyHits,
   mixDifference,
   panLabel,

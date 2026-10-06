@@ -79,6 +79,9 @@ describe("export", () => {
     const document = { ...song.document, project: { ...song.document.project, sampleRate: 96_000 } };
     expect(rateOptions(document, { kind: "flac", bits: 24 })).toEqual([96_000, 44_100, 48_000]);
     expect(rateOptions(document, { kind: "mp3", quality: "cbr320" })).toEqual([44_100, 48_000]);
+    const high = { ...song.document, project: { ...song.document.project, sampleRate: 192_000 } };
+    expect(rateOptions(high, { kind: "wav", depth: "pcm24" })).toEqual([192_000, 44_100, 48_000]);
+    expect(rateOptions(high, { kind: "flac", bits: 24 })).toEqual([96_000, 44_100, 48_000]);
   });
 
   it("exports the applied mix, not an open candidate, and says a candidate is open", async () => {

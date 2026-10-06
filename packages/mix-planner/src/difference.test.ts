@@ -160,7 +160,7 @@ describe("plan adapters", () => {
     expect(diff.counts.gain).toBeGreaterThanOrEqual(byDomain("gain"));
     expect(diff.interactions.length).toBeGreaterThan(0);
     for (const interaction of diff.interactions) {
-      expect(interaction.measure).toBe("interaction");
+      expect(interaction.measure).toBe(interaction.trackIds.length > 1 ? "interaction" : "problem severity");
       expect(interaction.after).toBeLessThanOrEqual(interaction.before + 0.2);
     }
     expect(diff.metrics.map((metric) => metric.label)).toContain("Open problems");

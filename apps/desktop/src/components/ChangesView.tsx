@@ -3,6 +3,7 @@ import {
   explainEq,
   explainGain,
   explainSpace,
+  interactionFor,
   panLabel,
   type CurvePoint,
   type DifferenceDomain,
@@ -73,7 +74,7 @@ export function ChangesView({ document, diff, label }: { document: ProjectDocume
   const total = diff.counts.gain + diff.counts.eq + diff.counts.space + diff.counts.dynamics + (diff.trimDb ? 1 : 0);
   const focusSection = focus?.sectionId ?? null;
   const inFocus = (row: { scope: { sectionId: string | null }; trackId?: string }) => !focus || ((focusSection === null || row.scope.sectionId === focusSection) && (!focus.trackId || row.trackId === focus.trackId));
-  const interactionFor = (row: EqDifference) => diff.interactions.find((item) => item.trackIds.includes(row.trackId)) ?? null;
+  const linkedInteraction = (row: EqDifference) => interactionFor(diff, row);
   if (total === 0) {
     return (
       <section className="rounded-md border border-line p-3 text-sm text-muted" aria-label="Changes">
@@ -116,7 +117,7 @@ export function ChangesView({ document, diff, label }: { document: ProjectDocume
         <Group title="Frequency">
           <div className="grid gap-3 lg:grid-cols-2">
             {diff.eq.filter(inFocus).map((row) => (
-              <EqCard key={`${row.trackId}:${row.scope.sectionId ?? "song"}`} row={row} mode={mode} scaleDb={diff.eqDifferenceScaleDb} interaction={interactionFor(row)} />
+              <EqCard key={`${row.trackId}:${row.scope.sectionId ?? "song"}`} row={row} mode={mode} scaleDb={diff.eqDifferenceScaleDb} interaction={linkedInteraction(row)} />
             ))}
           </div>
         </Group>

@@ -38,7 +38,7 @@ pub use spatial::{process_interleaved as spatial_process_interleaved, SpatialPar
 pub use loudness::{to_db, true_peak_factor, LoudnessMeter, LoudnessReport, TruePeakDetector};
 pub use limiter::{LimiterStats, TruePeakLimiter, LIMITER_LOOKAHEAD_MS, LIMITER_RELEASE_MS};
 pub use encode::{decode_and_measure, lame_available, open_writer, AudioWriter, DecodedFile, ExportFormat, ExportMetadata, Mp3Quality, WavDepth};
-pub use export::{export_mix, finish_export, plan_master, prepare_export, ExportJob, ExportProgress, ExportReport, ExportSettings, ExportSource, ExportStage, LimitingChoice, LoudnessTarget, MasterPlan, MixAnalysis, PreparedExport, HEAVY_MAX_REDUCTION_DB, HEAVY_SHARE_OVER_3DB};
+pub use export::{export_mix, finish_export, plan_master, prepare_export, ExportJob, ExportProgress, ExportReport, ExportSettings, ExportSource, ExportStage, LimitingChoice, LoudnessTarget, MasterPlan, MixAnalysis, PreparedExport, MAX_FLAC_RATE, HEAVY_MAX_REDUCTION_DB, HEAVY_SHARE_OVER_3DB};
 pub use render::{render_mix, FrameSource, GraphTrack, MixGraph, ProxySource, RenderProgress, SourceStream, CANCELLED};
 pub use proxy::{ensure_proxy, proxy_file_name, PLAYBACK_RATE, PROXY_VERSION, RESAMPLER_ID};
 pub use stereo::{cached_stereo_frames, measure_stereo_frames, stereo_band_edges, StereoFrames, STEREO_BANDS, STEREO_VERSION};
