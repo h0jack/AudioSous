@@ -5,16 +5,14 @@
 //! width and pan, and the fader with its 10 ms slew and section gain windows. It does not open a device or use the
 //! reader threads, so a 141 s project bounces in a few seconds.
 //!
-//! It is not an export. It plays the playback proxies, not the original sources.
+//! It is not an export. It plays the playback proxies, not the original sources; `export.rs` renders the same graph
+//! (`render.rs`) from the original stems at the export rate.
 
 use std::path::PathBuf;
 
-use crate::dynamics::{DynamicsRuntime, PublishedDynamics};
-use crate::engine::{dynamics_table_for, eq_table_for, gain_schedule_for, spatial_regions_for, TrackDynamics, TrackEq, TrackGainRegion, TrackSpatial};
-use crate::eq::{EqRuntime, PublishedEq};
-use crate::mix::linear_gain;
-use crate::proxy::{ProxyReader, PLAYBACK_RATE};
-use crate::spatial::{PublishedSpatial, SpatialParams, SpatialRuntime, SpatialTable};
+use crate::engine::{TrackDynamics, TrackEq, TrackGainRegion, TrackSpatial};
+use crate::proxy::PLAYBACK_RATE;
+use crate::render::{FrameSource, GraphTrack, MixGraph, ProxySource};
 
 const CHUNK: usize = 4_096;
 
@@ -41,99 +39,25 @@ pub fn bounce(tracks: &[BounceTrack], settings: BounceSettings, seconds: f64) ->
 /// Interleaved stereo for `seconds` from `start_seconds`. Filters, detectors, and ramps start cold at the start,
 /// as after a seek; a caller that measures a window renders a little before it and drops that part.
 pub fn bounce_range(tracks: &[BounceTrack], settings: BounceSettings, start_seconds: f64, seconds: f64) -> Result<Vec<f32>, String> {
-    let ids: Vec<String> = tracks.iter().map(|track| track.id.clone()).collect();
-    let published_eq = PublishedEq::empty();
-    published_eq.publish(&eq_table_for(&ids, settings.eq));
-    let published_dynamics = PublishedDynamics::empty();
-    published_dynamics.publish(&dynamics_table_for(&ids, settings.dynamics));
-    let base: Vec<(usize, SpatialParams)> = tracks
-        .iter()
-        .enumerate()
-        .map(|(index, track)| {
-            let spatial = settings.spatial.iter().find(|item| item.track_id == track.id);
-            (index, SpatialParams { pan: spatial.map(|item| item.pan).unwrap_or(0.0), width: spatial.map(|item| item.width).unwrap_or(1.0) })
-        })
-        .collect();
-    let regions: Vec<(String, crate::engine::TrackSpatialRegion)> = settings
-        .spatial
-        .iter()
-        .flat_map(|track| track.regions.iter().map(move |region| (track.track_id.clone(), region.clone())))
-        .collect();
-    let published_spatial = PublishedSpatial::empty();
-    published_spatial.publish(&SpatialTable::build(&base, &spatial_regions_for(&ids, &regions)));
-    let schedule = gain_schedule_for(&ids, settings.gain_regions);
-
-    let mut eq = EqRuntime::new();
-    eq.refresh(&published_eq);
-    let mut dynamics = DynamicsRuntime::new();
-    dynamics.refresh(&published_dynamics);
-    let mut spatial = SpatialRuntime::new();
-    spatial.refresh(&published_spatial);
-
-    let start = (start_seconds.max(0.0) * f64::from(PLAYBACK_RATE)) as usize;
-    let mut readers = Vec::with_capacity(tracks.len());
+    let graph_tracks: Vec<GraphTrack> = tracks.iter().map(|track| GraphTrack { id: track.id.clone(), gain_db: track.gain_db, muted: track.muted }).collect();
+    let mut graph = MixGraph::new(&graph_tracks, settings, PLAYBACK_RATE);
+    let start = (start_seconds.max(0.0) * f64::from(PLAYBACK_RATE)) as u64;
+    let mut sources: Vec<Box<dyn FrameSource>> = Vec::with_capacity(tracks.len());
     for track in tracks {
-        let (header, mut reader) = ProxyReader::open(&track.proxy)?;
-        if start > 0 {
-            reader.seek_frame(start.min(header.frames as usize) as u64)?;
-        }
-        readers.push((usize::from(header.channels).clamp(1, 2), header.frames, reader));
+        sources.push(Box::new(ProxySource::open(&track.proxy, start)?));
     }
     let total = (seconds.max(0.0) * f64::from(PLAYBACK_RATE)) as usize;
     let mut out = Vec::with_capacity(total * 2);
-    let step = 1.0 / (0.01 * PLAYBACK_RATE as f32);
-    let mut gains: Vec<f32> = tracks.iter().map(|track| if track.muted { 0.0 } else { linear_gain(track.gain_db) }).collect();
     let mut buffers: Vec<Vec<f32>> = vec![Vec::new(); tracks.len()];
     let mut got = vec![0_usize; tracks.len()];
-    let mut keys = vec![0.0_f32; tracks.len()];
     let mut position = 0_usize;
     while position < total {
         let frames = (total - position).min(CHUNK);
-        for (index, (_, length, reader)) in readers.iter_mut().enumerate() {
-            let wanted = frames.min((*length as usize).saturating_sub(start + position));
-            got[index] = if wanted > 0 { reader.read_interleaved(wanted, &mut buffers[index])? } else { 0 };
+        for (index, source) in sources.iter_mut().enumerate() {
+            got[index] = source.read(frames, &mut buffers[index])?;
         }
-        for frame in 0..frames {
-            let file_frame = (start + position + frame) as u64;
-            for (index, (channels, _, _)) in readers.iter().enumerate() {
-                keys[index] = if frame < got[index] {
-                    let at = frame * channels;
-                    if *channels > 1 { 0.5 * (buffers[index][at] + buffers[index][at + 1]) } else { buffers[index][at] }
-                } else {
-                    0.0
-                };
-            }
-            let (mut left, mut right) = (0.0_f32, 0.0_f32);
-            for (index, track) in tracks.iter().enumerate() {
-                let target = if track.muted {
-                    0.0
-                } else {
-                    schedule
-                        .iter()
-                        .find(|region| region.track_index as usize == index && file_frame >= region.start_frame && file_frame < region.end_frame)
-                        .map(|region| region.gain)
-                        .unwrap_or_else(|| linear_gain(track.gain_db))
-                };
-                gains[index] += (target - gains[index]).clamp(-step, step);
-                if frame >= got[index] {
-                    continue;
-                }
-                let channels = readers[index].0;
-                let at = frame * channels;
-                let mut sample = [buffers[index][at], if channels > 1 { buffers[index][at + 1] } else { 0.0 }];
-                if eq.track_live(index) {
-                    eq.process(index, file_frame, channels, &mut sample);
-                }
-                if dynamics.track_live(index) {
-                    dynamics.process(index, file_frame, channels, &mut sample, &keys);
-                }
-                let (placed_left, placed_right) = spatial.process(index, file_frame, channels, sample);
-                left += placed_left * gains[index];
-                right += placed_right * gains[index];
-            }
-            out.push(left);
-            out.push(right);
-        }
+        let inputs: Vec<(usize, &[f32], usize)> = sources.iter().zip(buffers.iter()).zip(got.iter()).map(|((source, buffer), got)| (source.channels(), buffer.as_slice(), *got)).collect();
+        graph.render(start + position as u64, frames, &inputs, &mut out);
         position += frames;
     }
     Ok(out)

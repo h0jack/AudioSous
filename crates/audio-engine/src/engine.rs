@@ -1273,6 +1273,10 @@ impl Control {
 
 /// Section gain windows for the loaded tracks, by track id. Unknown tracks and empty windows are dropped.
 pub(crate) fn gain_schedule_for(ids: &[String], regions: Vec<TrackGainRegion>) -> Vec<GainRegion> {
+    gain_schedule_for_at(ids, regions, PLAYBACK_RATE)
+}
+
+pub(crate) fn gain_schedule_for_at(ids: &[String], regions: Vec<TrackGainRegion>, rate: u32) -> Vec<GainRegion> {
     let mut scheduled = Vec::new();
     for region in regions {
         let Some(index) = ids.iter().position(|id| id == &region.track_id) else {
@@ -1281,8 +1285,8 @@ pub(crate) fn gain_schedule_for(ids: &[String], regions: Vec<TrackGainRegion>) -
         if index >= MAX_TRACKS || scheduled.len() >= MAX_GAIN_REGIONS {
             continue;
         }
-        let start = seconds_to_frame(region.start_seconds);
-        let end = seconds_to_frame(region.end_seconds);
+        let start = seconds_to_frame_at(rate, region.start_seconds);
+        let end = seconds_to_frame_at(rate, region.end_seconds);
         if end <= start {
             continue;
         }
@@ -1293,6 +1297,10 @@ pub(crate) fn gain_schedule_for(ids: &[String], regions: Vec<TrackGainRegion>) -
 
 /// The EQ table for the loaded tracks, by track id.
 pub(crate) fn eq_table_for(ids: &[String], tracks: Vec<TrackEq>) -> EqTable {
+    eq_table_for_at(ids, tracks, PLAYBACK_RATE)
+}
+
+pub(crate) fn eq_table_for_at(ids: &[String], tracks: Vec<TrackEq>, rate: u32) -> EqTable {
     let mut owned: Vec<(usize, Vec<FilterSpec>, Vec<(u64, u64, Vec<FilterSpec>)>)> = Vec::new();
     for track in tracks {
         let Some(index) = ids.iter().position(|id| id == &track.track_id) else {
@@ -1304,7 +1312,7 @@ pub(crate) fn eq_table_for(ids: &[String], tracks: Vec<TrackEq>) -> EqTable {
         let regions = track
             .regions
             .into_iter()
-            .map(|region| (seconds_to_frame(region.start_seconds), seconds_to_frame(region.end_seconds), region.filters))
+            .map(|region| (seconds_to_frame_at(rate, region.start_seconds), seconds_to_frame_at(rate, region.end_seconds), region.filters))
             .filter(|(start, end, _)| end > start)
             .collect();
         owned.push((index, track.filters, regions));
@@ -1318,11 +1326,15 @@ pub(crate) fn eq_table_for(ids: &[String], tracks: Vec<TrackEq>) -> EqTable {
         .zip(borrowed.iter())
         .map(|((index, filters, _), regions)| TrackEqInput { track_index: *index, filters, regions })
         .collect();
-    EqTable::design(&inputs)
+    EqTable::design_at(&inputs, rate)
 }
 
 /// The dynamics table for the loaded tracks, by track id. Keys resolve to track indices; a missing key drops the node.
 pub(crate) fn dynamics_table_for(ids: &[String], tracks: Vec<TrackDynamics>) -> DynamicsTable {
+    dynamics_table_for_at(ids, tracks, PLAYBACK_RATE)
+}
+
+pub(crate) fn dynamics_table_for_at(ids: &[String], tracks: Vec<TrackDynamics>, rate: u32) -> DynamicsTable {
     let index_of = |id: &str| ids.iter().position(|item| item == id).filter(|index| *index < MAX_TRACKS);
     let mut owned: Vec<(usize, Vec<DynSpec>, Vec<(u64, u64, Vec<DynSpec>)>)> = Vec::new();
     for track in tracks {
@@ -1334,7 +1346,7 @@ pub(crate) fn dynamics_table_for(ids: &[String], tracks: Vec<TrackDynamics>) -> 
         let regions = track
             .regions
             .iter()
-            .map(|region| (seconds_to_frame(region.start_seconds), seconds_to_frame(region.end_seconds), resolve(&region.nodes)))
+            .map(|region| (seconds_to_frame_at(rate, region.start_seconds), seconds_to_frame_at(rate, region.end_seconds), resolve(&region.nodes)))
             .filter(|(start, end, nodes)| end > start && !nodes.is_empty())
             .collect();
         owned.push((index, nodes, regions));
@@ -1348,19 +1360,23 @@ pub(crate) fn dynamics_table_for(ids: &[String], tracks: Vec<TrackDynamics>) -> 
         .zip(borrowed.iter())
         .map(|((index, nodes, _), regions)| TrackDynamicsInput { track_index: *index, nodes, regions })
         .collect();
-    DynamicsTable::build(&inputs)
+    DynamicsTable::build_at(&inputs, rate)
 }
 
 /// Section pan/width windows for the loaded tracks, by track id.
 pub(crate) fn spatial_regions_for(ids: &[String], regions: &[(String, TrackSpatialRegion)]) -> Vec<SpatialRegionInput> {
+    spatial_regions_for_at(ids, regions, PLAYBACK_RATE)
+}
+
+pub(crate) fn spatial_regions_for_at(ids: &[String], regions: &[(String, TrackSpatialRegion)], rate: u32) -> Vec<SpatialRegionInput> {
     regions
         .iter()
         .filter_map(|(id, region)| {
             let index = ids.iter().position(|item| item == id)?;
             Some(SpatialRegionInput {
                 track_index: index,
-                start_frame: seconds_to_frame(region.start_seconds),
-                end_frame: seconds_to_frame(region.end_seconds),
+                start_frame: seconds_to_frame_at(rate, region.start_seconds),
+                end_frame: seconds_to_frame_at(rate, region.end_seconds),
                 params: SpatialParams { pan: region.pan, width: region.width },
             })
         })
@@ -2032,10 +2048,15 @@ fn frame_region(region: Option<(f64, f64)>) -> Option<(u64, u64)> {
 }
 
 pub(crate) fn seconds_to_frame(seconds: f64) -> u64 {
+    seconds_to_frame_at(PLAYBACK_RATE, seconds)
+}
+
+/// Seconds as a frame index at `rate`.
+pub(crate) fn seconds_to_frame_at(rate: u32, seconds: f64) -> u64 {
     if !seconds.is_finite() || seconds <= 0.0 {
         0
     } else {
-        (seconds * f64::from(PLAYBACK_RATE)).round() as u64
+        (seconds * f64::from(rate)).round() as u64
     }
 }
 

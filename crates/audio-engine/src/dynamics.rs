@@ -335,6 +335,9 @@ fn coefficient(ms: f32, rate: f32, step: f32) -> f32 {
 #[derive(Clone, Copy)]
 struct Slot {
     spec: DynSpec,
+    /// Frames per transient hold block (1 ms) and the mix fade per control step (a 30 ms fade), at the runtime's rate.
+    hold_block: u32,
+    ramp_step: f32,
     active: bool,
     mix: f32,
     target: f32,
@@ -374,6 +377,8 @@ impl Slot {
     fn idle() -> Self {
         Self {
             spec: DynSpec::OFF,
+            hold_block: HOLD_BLOCK,
+            ramp_step: CONTROL_FRAMES as f32 / DYNAMICS_RAMP_FRAMES as f32,
             active: false,
             mix: 0.0,
             target: 0.0,
@@ -408,6 +413,9 @@ impl Slot {
 
     fn configure(&mut self, spec: DynSpec, rate: f32) {
         self.spec = spec;
+        let scale = rate / PLAYBACK_RATE as f32;
+        self.hold_block = ((HOLD_BLOCK as f32 * scale).round() as u32).max(1);
+        self.ramp_step = CONTROL_FRAMES as f32 / (DYNAMICS_RAMP_FRAMES as f32 * scale).max(1.0);
         let control = CONTROL_FRAMES as f32;
         self.att = coefficient(spec.attack_ms, rate, control);
         self.rel = coefficient(spec.release_ms, rate, control);
@@ -511,7 +519,7 @@ impl Slot {
     /// Once per control step. Returns false when a faded-out node has finished and stopped.
     #[inline]
     fn advance_mix(&mut self) -> bool {
-        let step = CONTROL_FRAMES as f32 / DYNAMICS_RAMP_FRAMES as f32;
+        let step = self.ramp_step;
         if self.mix < self.target {
             self.mix = (self.mix + step).min(self.target);
         } else if self.mix > self.target {
@@ -604,7 +612,7 @@ impl Slot {
                 let peak = if channels > 1 { sample[0].abs().max(sample[1].abs()) } else { sample[0].abs() };
                 self.block_peak = self.block_peak.max(peak);
                 self.block_count += 1;
-                if self.block_count == HOLD_BLOCK {
+                if self.block_count >= self.hold_block {
                     self.held[self.held_at] = self.block_peak;
                     self.held_at = (self.held_at + 1) % HOLD_BLOCKS;
                     self.level = self.held.iter().copied().fold(0.0, f32::max);
@@ -739,8 +747,14 @@ impl DynamicsTable {
         Self { table: Box::new(Table::empty()) }
     }
 
+    #[cfg(test)]
     pub fn build(tracks: &[TrackDynamicsInput<'_>]) -> Self {
-        let rate = PLAYBACK_RATE as f32;
+        Self::build_at(tracks, PLAYBACK_RATE)
+    }
+
+    /// The table for audio at `rate` (an offline render at the source rate; region frames at that rate too).
+    pub fn build_at(tracks: &[TrackDynamicsInput<'_>], rate: u32) -> Self {
+        let rate = rate as f32;
         let mut table = Box::new(Table::empty());
         for track in tracks {
             if track.track_index >= ENGINE_TRACKS {
@@ -940,7 +954,8 @@ impl DynamicsRuntime {
         Self::with_rate(PLAYBACK_RATE as f32)
     }
 
-    fn with_rate(rate: f32) -> Self {
+    /// A runtime for audio at `rate`: every time constant, hold, and fade keeps its duration.
+    pub fn with_rate(rate: f32) -> Self {
         Self {
             seen: u64::MAX,
             table: Box::new(Table::empty()),

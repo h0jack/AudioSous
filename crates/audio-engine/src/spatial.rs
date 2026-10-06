@@ -219,6 +219,8 @@ struct TrackRamp {
     from: SpatialParams,
     to: SpatialParams,
     remaining: u32,
+    /// Frames one change ramps over: 30 ms at the runtime's rate.
+    ramp_frames: u32,
     /// Pan coefficients for `current.pan`, recomputed only while pan moves.
     coefs: (f32, f32),
     coefs_pan: f32,
@@ -235,6 +237,7 @@ impl TrackRamp {
             from: SpatialParams::NEUTRAL,
             to: SpatialParams::NEUTRAL,
             remaining: 0,
+            ramp_frames: SPATIAL_RAMP_FRAMES,
             coefs: equal_power_pan(0.0),
             coefs_pan: 0.0,
             span_start: 1,
@@ -257,7 +260,7 @@ impl TrackRamp {
         }
         self.from = self.current;
         self.to = target;
-        self.remaining = SPATIAL_RAMP_FRAMES;
+        self.remaining = self.ramp_frames;
     }
 
     #[inline(always)]
@@ -269,7 +272,7 @@ impl TrackRamp {
         if self.remaining == 0 {
             self.current = self.to;
         } else {
-            let left = self.remaining as f32 / SPATIAL_RAMP_FRAMES as f32;
+            let left = self.remaining as f32 / self.ramp_frames as f32;
             self.current = SpatialParams {
                 pan: self.to.pan + (self.from.pan - self.to.pan) * left,
                 width: self.to.width + (self.from.width - self.to.width) * left,
@@ -284,15 +287,22 @@ pub struct SpatialRuntime {
     seen: u64,
     table: Box<Table>,
     tracks: Box<[TrackRamp]>,
+    ramp_frames: u32,
 }
 
 impl SpatialRuntime {
     pub fn new() -> Self {
-        Self {
-            seen: u64::MAX,
-            table: Box::new(Table::empty()),
-            tracks: (0..ENGINE_TRACKS).map(|_| TrackRamp::idle()).collect(),
+        Self::with_rate(crate::proxy::PLAYBACK_RATE)
+    }
+
+    /// A runtime for audio at `rate`: ramps last 30 ms whatever the rate. At 48 kHz this is `new()`.
+    pub fn with_rate(rate: u32) -> Self {
+        let ramp_frames = crate::eq::scaled_frames(SPATIAL_RAMP_FRAMES, rate);
+        let mut runtime = Self { seen: u64::MAX, table: Box::new(Table::empty()), tracks: (0..ENGINE_TRACKS).map(|_| TrackRamp::idle()).collect(), ramp_frames };
+        for track in runtime.tracks.iter_mut() {
+            track.ramp_frames = ramp_frames;
         }
+        runtime
     }
 
     /// Picks up a new table once per block. Changed values ramp; nothing switches.
@@ -324,6 +334,7 @@ impl SpatialRuntime {
         *self.table = Table::empty();
         for track in self.tracks.iter_mut() {
             *track = TrackRamp::idle();
+            track.ramp_frames = self.ramp_frames;
         }
     }
 

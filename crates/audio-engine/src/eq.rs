@@ -203,6 +203,8 @@ struct Slot {
     target: SvfCoefs,
     taps: Taps,
     ramp: u32,
+    /// Frames one change ramps over: 30 ms at the rate the runtime plays (EQ_RAMP_FRAMES at 48 kHz).
+    ramp_frames: u32,
     ramping: bool,
     active: bool,
     state: [SvfState; 2],
@@ -216,6 +218,7 @@ impl Slot {
             target: SvfCoefs::IDENTITY,
             taps: Taps::of(&SvfCoefs::IDENTITY),
             ramp: 0,
+            ramp_frames: EQ_RAMP_FRAMES,
             ramping: false,
             active: false,
             state: [SvfState::default(); 2],
@@ -254,7 +257,7 @@ impl Slot {
             return;
         }
         self.ramp += 1;
-        if self.ramp >= EQ_RAMP_FRAMES {
+        if self.ramp >= self.ramp_frames {
             self.current = self.target;
             self.ramping = false;
             if self.current.is_identity() {
@@ -263,7 +266,7 @@ impl Slot {
         } else {
             self.current = self
                 .start
-                .lerp(&self.target, self.ramp as f32 / EQ_RAMP_FRAMES as f32);
+                .lerp(&self.target, self.ramp as f32 / self.ramp_frames as f32);
         }
         self.taps = Taps::of(&self.current);
     }
@@ -330,9 +333,15 @@ impl EqTable {
     }
 
     /// Designs every band at the playback rate. Extra filters past the slot count are ignored.
+    #[cfg(test)]
     pub fn design(tracks: &[TrackEqInput<'_>]) -> Self {
+        Self::design_at(tracks, PLAYBACK_RATE)
+    }
+
+    /// Designs every band at `rate` (an offline render at the source rate; region frames must be at that rate too).
+    pub fn design_at(tracks: &[TrackEqInput<'_>], rate: u32) -> Self {
         let mut table = Box::new(Table::empty());
-        let rate = PLAYBACK_RATE as f32;
+        let rate = rate as f32;
         for track in tracks {
             if track.track_index >= ENGINE_TRACKS {
                 continue;
@@ -502,15 +511,34 @@ pub struct EqRuntime {
     table: Box<Table>,
     tracks: Box<[TrackEq]>,
     first: bool,
+    ramp_frames: u32,
 }
 
 impl EqRuntime {
     pub fn new() -> Self {
-        Self {
+        Self::with_rate(PLAYBACK_RATE)
+    }
+
+    /// A runtime for audio at `rate`: ramps last 30 ms whatever the rate. At 48 kHz this is `new()`.
+    pub fn with_rate(rate: u32) -> Self {
+        let ramp_frames = scaled_frames(EQ_RAMP_FRAMES, rate);
+        let mut runtime = Self {
             seen: u64::MAX,
             table: Box::new(Table::empty()),
             tracks: (0..ENGINE_TRACKS).map(|_| TrackEq::idle()).collect(),
             first: true,
+            ramp_frames,
+        };
+        runtime.apply_ramp();
+        runtime
+    }
+
+    fn apply_ramp(&mut self) {
+        let frames = self.ramp_frames;
+        for track in self.tracks.iter_mut() {
+            for slot in track.slots.iter_mut() {
+                slot.ramp_frames = frames;
+            }
         }
     }
 
@@ -544,6 +572,7 @@ impl EqRuntime {
         for track in self.tracks.iter_mut() {
             *track = TrackEq::idle();
         }
+        self.apply_ramp();
     }
 
     #[inline(always)]
@@ -648,6 +677,14 @@ impl EqChain {
 }
 
 /// RBJ cookbook magnitude in dB at `hz`, the reference the tests hold the SVF to.
+/// A frame count defined at 48 kHz, for audio at `rate` (the same duration), at least one frame.
+pub fn scaled_frames(frames_at_48k: u32, rate: u32) -> u32 {
+    if rate == PLAYBACK_RATE {
+        return frames_at_48k;
+    }
+    ((f64::from(frames_at_48k) * f64::from(rate) / f64::from(PLAYBACK_RATE)).round() as u32).max(1)
+}
+
 pub fn cookbook_magnitude_db(spec: FilterSpec, hz: f64, sample_rate: f64) -> f64 {
     let Some(spec) = spec.sanitized(sample_rate as f32) else {
         return 0.0;
