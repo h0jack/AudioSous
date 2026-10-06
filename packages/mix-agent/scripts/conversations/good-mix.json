@@ -1,0 +1,15 @@
+{
+  "title": "Already-good mix (the producer's Generated 5 stems, M7 scenario)",
+  "scenario": "target/acceptance/m7-good.json",
+  "out": "target/acceptance/m8-good",
+  "turns": [
+    { "say": "Should the bass be louder?", "script": [{ "tool": "detect_mix_problems", "args": { "tracks": ["Bass Bus"], "dimensions": ["level", "dynamics"] } }, { "respond": "auto" }] },
+    { "say": "Make the kick punchier.", "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusTracks": ["kick"], "goal": "punchy" } }, { "clarify": "Three stems are kicks: SideKick6, PunchBox, and 2nd BD. Which one?", "options": ["SideKick6", "PunchBox", "2nd BD"] }] },
+    { "say": "PunchBox.", "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusTracks": ["PunchBox"], "goal": "punchy" } }, { "respond": "auto" }] },
+    { "say": "Make this stand out more here.", "select": { "track": "Trumpets", "section": "Drop 2", "playhead": 100 }, "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusTracks": ["this"], "focusSections": ["here"], "intents": [{ "note": "more prominent", "track": "this", "section": "here" }] } }, { "respond": "auto" }] },
+    { "say": "Make the drop wider without changing the lead.", "script": [{ "tool": "plan_mix", "args": { "route": "space", "focusSections": ["Drop"], "intents": [{ "note": "wider", "section": "Drop" }] } }, { "respond": "auto" }] },
+    { "say": "No stereo changes. Just make the drop less crowded.", "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusSections": ["Drop"] } }, { "respond": "auto" }] },
+    { "say": "What processing is on the bass bus?", "script": [{ "tool": "get_track_details", "args": { "tracks": ["Bass Bus"] } }, { "respond": "auto" }] },
+    { "say": "Why does the breakdown feel crowded?", "script": [{ "tool": "detect_mix_problems", "args": { "sections": ["breakdown"] } }, { "respond": "auto" }] }
+  ]
+}

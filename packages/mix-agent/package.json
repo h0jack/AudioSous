@@ -1,0 +1,28 @@
+{
+  "name": "@audiosous/mix-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./anthropic": "./src/providers/anthropic.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@audiosous/analysis-contract": "0.1.0",
+    "@audiosous/balance-planner": "0.1.0",
+    "@audiosous/dynamics-planner": "0.1.0",
+    "@audiosous/eq-planner": "0.1.0",
+    "@audiosous/mix-planner": "0.1.0",
+    "@audiosous/project-model": "0.1.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "title": "Deliberately problematic mix (6 stems from Generated 5, M7 scenario)",
+  "scenario": "target/acceptance/m7-problem.json",
+  "out": "target/acceptance/m8-problem",
+  "turns": [
+    { "say": "What's wrong with the mix?", "script": [{ "tool": "detect_mix_problems" }, { "respond": "auto" }] },
+    { "say": "The kick is getting buried.", "script": [{ "tool": "detect_mix_problems", "args": { "tracks": ["kick"] } }, { "tool": "plan_mix", "args": { "route": "full", "focusTracks": ["kick"], "intent": "kick clarity" } }, { "respond": "auto" }] },
+    { "say": "Why did you use ducking instead of lowering the bass?", "script": [{ "tool": "explain_problem", "args": { "problemId": "$problem:low-end-collision" } }, { "respond": "auto" }] },
+    { "say": "A little less on the duck.", "script": [{ "tool": "refine_candidate", "args": { "operations": [{ "action": "scale", "target": { "processors": ["ducking"] }, "amount": "slightly-less" }] } }, { "respond": "auto" }] },
+    { "say": "Let's hear it.", "script": [{ "tool": "preview", "args": { "what": "candidate" } }, { "respond": "auto" }] },
+    { "say": "Apply it.", "script": [{ "tool": "apply_candidate" }, { "respond": "auto" }] },
+    { "say": "Undo that.", "script": [{ "tool": "undo_last_apply" }, { "respond": "auto" }] },
+    { "say": "Make the lead clearer, but don't touch the lead itself.", "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusTracks": ["lead"], "intent": "lead clarity" } }, { "respond": "auto" }] },
+    { "say": "That's better. Keep the pad change but lose the synth change.", "editCandidate": { "track": "Pad", "domain": "gain", "patch": { "gainDb": -1.2 } }, "script": [{ "tool": "refine_candidate", "args": { "operations": [{ "action": "remove", "target": { "tracks": ["synth"] } }, { "action": "accept", "target": { "tracks": ["pad"] } }] } }, { "respond": "auto" }] },
+    { "say": "Give me another option, more conservative.", "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusTracks": ["lead"], "strength": "conservative", "intent": "lead clarity" } }, { "respond": "auto" }] },
+    { "say": "What's the difference between these two?", "script": [{ "tool": "compare_candidates", "args": { "a": "B", "b": "C" } }, { "respond": "auto" }] },
+    { "say": "Go back to the previous one.", "script": [{ "tool": "select_candidate", "args": { "candidate": "previous" } }, { "respond": "auto" }] },
+    { "say": "Clean the whole mix up.", "script": [{ "tool": "plan_mix", "args": { "route": "full" } }, { "respond": "auto" }] },
+    { "say": "This sounds better, but maybe too processed.", "script": [{ "tool": "simplify_candidate" }, { "respond": "auto" }] },
+    { "say": "Only change Drop 2: the synth is too wide there.", "script": [{ "tool": "plan_mix", "args": { "route": "space", "focusTracks": ["synth"] } }, { "respond": "auto" }] },
+    { "say": "Pan the pad 20% left.", "script": [{ "tool": "set_track_control", "args": { "track": "pad", "control": "pan", "mode": "set", "value": -20 } }, { "respond": "auto" }] },
+    { "say": "Make the chorus punchier.", "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusSections": ["chorus"] } }, { "respond": "auto" }] },
+    { "say": "Fix the low end, no compression.", "script": [{ "tool": "plan_mix", "args": { "route": "full", "focusTracks": ["kick", "bass"] } }, { "respond": "auto" }] },
+    { "say": "Apply it.", "manual": { "track": "Bass", "gainDb": -3 }, "script": [{ "tool": "apply_candidate" }, { "respond": "auto" }] }
+  ]
+}
