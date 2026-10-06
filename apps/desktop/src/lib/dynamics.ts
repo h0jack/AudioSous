@@ -16,6 +16,7 @@ import { getPlatform } from "../platform";
 import type { DesktopPlatform, DynamicsCheckRequest } from "../platform/types";
 import { useAppStore, type DynamicsSession } from "../state/app-store";
 import { loadBandFrames } from "./eq";
+import { shareInFlight } from "./inflight";
 import { logEvent } from "./log";
 import { loadTrackAnalysis } from "./track-analysis";
 
@@ -106,7 +107,13 @@ export async function runDynamicsPlan(): Promise<void> {
 }
 
 /** Proxy envelope frames per track. Muted stems are measured too: a muted kick can still key a duck. */
-export async function loadEnvelopeFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EnvelopeFrames | null>> {
+/** Shared with any caller already measuring the same stems (`inflight.ts`). */
+export function loadEnvelopeFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): ReturnType<typeof loadEnvelopeFramesNow> {
+  const key = `envelopes\n${projectFile}\n${document.tracks.map((track) => `${track.id}:${track.file.relativePath}:${track.muted}`).join("|")}`;
+  return shareInFlight(key, () => loadEnvelopeFramesNow(platform, projectFile, document));
+}
+
+async function loadEnvelopeFramesNow(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EnvelopeFrames | null>> {
   const out: Record<string, EnvelopeFrames | null> = {};
   try {
     const responses = await platform.envelopeFrames(

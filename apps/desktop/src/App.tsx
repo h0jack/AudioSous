@@ -2,6 +2,7 @@ import { formatClock, formatSampleRate } from "@audiosous/project-model";
 import { useEffect, useRef, useState } from "react";
 import { Button, HoverTip } from "./components/ui";
 import { ProcessingBanner } from "./components/ProcessingStatus";
+import { AutoMixButton } from "./components/AutoMix";
 import { editProjectName, saveOpenProject } from "./lib/project-actions";
 import { getPlatform, isTauri } from "./platform";
 import { NewProjectScreen } from "./screens/NewProjectScreen";
@@ -129,6 +130,7 @@ export function App() {
         )}
         {projectOpen ? (
           <div className="ml-auto flex shrink-0 items-center gap-3">
+            <AutoMixButton disabled={preparing} />
             <ViewToggle disabled={preparing} />
             <AssistantToggle disabled={preparing} />
             <HoverTip label="Close this project">

@@ -30,7 +30,8 @@ import { logEvent } from "../lib/log";
 import { currentFullMixAudition } from "../lib/monitor";
 import type { usePlayback } from "../lib/playback";
 import { getPlatform } from "../platform";
-import { useAppStore, type FullMixSession } from "../state/app-store";
+import { idleAutoMix, useAppStore, type AutoMixSession, type FullMixSession } from "../state/app-store";
+import { AutoMixProgress, RecommendedMixCard } from "./AutoMix";
 import { NumberSlider } from "./DynamicsPanel";
 import { PlannerStatus } from "./ProcessingStatus";
 import { Button } from "./ui";
@@ -50,11 +51,12 @@ const SOURCE_LABELS: Record<MixChange["source"], string> = { level: "Level", eq:
 
 export function FullMixPanel({ document, playback }: { document: ProjectDocument; playback: Playback }) {
   const fullMix = useAppStore((state) => state.fullMix);
-  return <FullMixPanelView document={document} playback={playback} fullMix={fullMix} />;
+  const autoMix = useAppStore((state) => state.autoMix);
+  return <FullMixPanelView document={document} playback={playback} fullMix={fullMix} autoMix={autoMix} />;
 }
 
 /** The Full Mix session. Reads nothing from the store, so it renders the same in a test. */
-export function FullMixPanelView({ document, playback, fullMix }: { document: ProjectDocument; playback: Playback; fullMix: FullMixSession }) {
+export function FullMixPanelView({ document, playback, fullMix, autoMix = idleAutoMix() }: { document: ProjectDocument; playback: Playback; fullMix: FullMixSession; autoMix?: AutoMixSession }) {
   const plan = fullMix.plan;
   const stale = plan ? fullMixPlanIsStale(plan, document, fullMix.fingerprints, fullMix.settings) : false;
   const loggedStale = useRef<string | null>(null);
@@ -63,6 +65,14 @@ export function FullMixPanelView({ document, playback, fullMix }: { document: Pr
     loggedStale.current = plan.stateIdentity;
     void logEvent(getPlatform(), "info", "fullmix.stale", "Full Mix plan is out of date.", { projectId: document.project.id });
   }, [plan, stale, document.project.id]);
+
+  if (!fullMix.open && autoMix.phase === "failed") {
+    return (
+      <div className="border-t border-line px-4 py-3">
+        <AutoMixProgress autoMix={autoMix} />
+      </div>
+    );
+  }
 
   if (!fullMix.open) {
     return (
@@ -83,6 +93,7 @@ export function FullMixPanelView({ document, playback, fullMix }: { document: Pr
   const audition = ready ? currentFullMixAudition(document, fullMix) : null;
   const selected = plan?.problems.find((problem) => problem.id === fullMix.selectedProblemId) ?? null;
   const native = playback.engineKind === "native";
+  const fromAutoMix = Boolean(plan && autoMix.phase === "ready" && autoMix.planCreatedAt === plan.createdAt && fullMix.phase === "ready");
 
   return (
     <section className="flex min-h-0 flex-1 flex-col border-t border-line bg-panel" aria-label="Full Mix plan">
@@ -147,6 +158,16 @@ export function FullMixPanelView({ document, playback, fullMix }: { document: Pr
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3 group-data-[collapsed=true]:hidden">
+        {autoMix.phase === "running" ? (
+          <div className="mb-3">
+            <AutoMixProgress autoMix={autoMix} />
+          </div>
+        ) : null}
+        {fromAutoMix ? (
+          <div className="mb-3">
+            <RecommendedMixCard autoMix={autoMix} preview={fullMix.preview && !fullMix.focus} stale={stale} disabled={!ready} />
+          </div>
+        ) : null}
         <p className="mb-2 max-w-3xl text-xs text-faint">{fullMixScope(document)}</p>
         {!native ? <p className="mb-2 max-w-3xl text-xs text-danger">This audio engine does not play dynamics or width. Use the native engine to hear the whole candidate.</p> : null}
         <PlannerStatus kind="full-mix" />

@@ -14,6 +14,7 @@ import { eqChainForSection, type ProjectDocument } from "@audiosous/project-mode
 import { getPlatform } from "../platform";
 import type { DesktopPlatform, EqCheckRequest } from "../platform/types";
 import { useAppStore, type EqSession } from "../state/app-store";
+import { shareInFlight } from "./inflight";
 import { logEvent } from "./log";
 import { loadTrackAnalysis } from "./track-analysis";
 
@@ -103,7 +104,13 @@ export async function runEqPlan(): Promise<void> {
 }
 
 /** Proxy band frames per track; a track that fails falls back to the sidecar spectrogram in the planner. */
-export async function loadBandFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EqBandFrames | null>> {
+/** Shared with any caller already measuring the same stems (`inflight.ts`). */
+export function loadBandFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): ReturnType<typeof loadBandFramesNow> {
+  const key = `bands\n${projectFile}\n${document.tracks.map((track) => `${track.id}:${track.file.relativePath}:${track.muted}`).join("|")}`;
+  return shareInFlight(key, () => loadBandFramesNow(platform, projectFile, document));
+}
+
+async function loadBandFramesNow(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, EqBandFrames | null>> {
   const out: Record<string, EqBandFrames | null> = {};
   try {
     const responses = await platform.eqBandFrames(

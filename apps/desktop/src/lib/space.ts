@@ -14,6 +14,7 @@ import { getPlatform } from "../platform";
 import type { DesktopPlatform, SpatialCheckRequest } from "../platform/types";
 import { useAppStore, type SpaceSession } from "../state/app-store";
 import { loadBandFrames } from "./eq";
+import { shareInFlight } from "./inflight";
 import { logEvent } from "./log";
 import { loadTrackAnalysis } from "./track-analysis";
 
@@ -106,7 +107,13 @@ export async function runSpacePlan(): Promise<void> {
 }
 
 /** Proxy stereo frames per track; a track that fails falls back to its whole-file stereo figures in the planner. */
-export async function loadStereoFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, StereoFrames | null>> {
+/** Shared with any caller already measuring the same stems (`inflight.ts`). */
+export function loadStereoFrames(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): ReturnType<typeof loadStereoFramesNow> {
+  const key = `stereo\n${projectFile}\n${document.tracks.map((track) => `${track.id}:${track.file.relativePath}:${track.muted}`).join("|")}`;
+  return shareInFlight(key, () => loadStereoFramesNow(platform, projectFile, document));
+}
+
+async function loadStereoFramesNow(platform: DesktopPlatform, projectFile: string, document: ProjectDocument): Promise<Record<string, StereoFrames | null>> {
   const out: Record<string, StereoFrames | null> = {};
   try {
     const responses = await platform.stereoFrames(

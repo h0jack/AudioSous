@@ -17,7 +17,7 @@ import { setSectionSpatial, setTrackSpatial, type ProjectDocument } from "@audio
 import { getPlatform } from "../platform";
 import type { SaveAgentSettings } from "../platform/types";
 import { useAppStore, type FullMixCheck } from "../state/app-store";
-import { applyFullMix, auditionFullMix, finalCheck, fullMixHearing, loadMixInputs, runOffThread, setFullMixPreview, type LoadedMixInputs } from "./full-mix";
+import { applyFullMix, auditionFullMix, clearMixInputsCache, finalCheck, fullMixHearing, loadMixInputs, runOffThread, setFullMixPreview, type LoadedMixInputs } from "./full-mix";
 import { logEvent, type LogEvent } from "./log";
 
 /**
@@ -63,12 +63,11 @@ export function desktopEnvironment(isCurrent: () => boolean): AgentEnvironment {
       const document = store().document;
       const projectFile = store().projectFilePath;
       if (!document || !projectFile) throw new Error("No project is open.");
+      // The shared loader reuses analysis, frames, and the rendered peak while they are current.
       const key = sourcesKey(document);
-      if (!inputsCache || inputsCache.key !== key) {
-        const loaded = await loadMixInputs(platform, projectFile, document, { current: isCurrent, progress: (label) => store().setAssistant({ activity: label }) });
-        if (!loaded) throw new Error("Cancelled.");
-        inputsCache = { key, inputs: loaded };
-      }
+      const loaded = await loadMixInputs(platform, projectFile, document, { current: isCurrent, progress: (label) => store().setAssistant({ activity: label }) });
+      if (!loaded) throw new Error("Cancelled.");
+      inputsCache = { key, inputs: loaded };
       const inputs = inputsCache.inputs;
       return { ...inputs, missing: missingOf(document, inputs) };
     },
@@ -305,6 +304,7 @@ export function resetAssistantConversation(): void {
 
 /** For tests: forget cached inputs. */
 export function clearAssistantCache(): void {
+  clearMixInputsCache();
   inputsCache = null;
   lastCheck = null;
 }

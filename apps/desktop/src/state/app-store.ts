@@ -207,6 +207,49 @@ export function idleFullMix(): FullMixSession {
   };
 }
 
+export type AutoMixStageId = "prepare" | "levels" | "frequency" | "space" | "dynamics" | "plan" | "verify";
+
+export interface AutoMixStage {
+  id: AutoMixStageId;
+  label: string;
+  status: "pending" | "running" | "done" | "reused" | "failed" | "skipped";
+  detail: string | null;
+}
+
+/**
+ * One-click Auto Mix: the evidence stages, then Full Mix, then the render check. Its candidate lives in the Full
+ * Mix session (`planCreatedAt` names it); this records how it was built and the summary shown above it.
+ */
+export interface AutoMixSession {
+  generation: number;
+  phase: "idle" | "running" | "ready" | "failed" | "cancelled";
+  stages: AutoMixStage[];
+  /** The Full Mix plan Auto Mix produced, by its createdAt; null until ready. */
+  planCreatedAt: string | null;
+  summary: AutoMixSummary | null;
+  error: string | null;
+  durationMs: number | null;
+}
+
+/** What Auto Mix read and what it kept, for the Recommended Mix card. Counts only; the plan holds the detail. */
+export interface AutoMixSummary {
+  tracks: number;
+  sections: number;
+  detected: { level: number; frequency: number; space: number; dynamics: number; contrast: number };
+  kept: { gain: number; eq: number; ducking: number; compressor: number; transient: number; dynamicEq: number; space: number; trim: number };
+  changeCount: number;
+  /** What the four planners would have proposed on their own, minus what the coordinated plan kept. */
+  omitted: number;
+  rejectedAlternatives: number;
+  /** Stages whose results were current and reused. */
+  reused: AutoMixStageId[];
+  strength: FullMixSettings["strength"];
+}
+
+export function idleAutoMix(): AutoMixSession {
+  return { generation: 0, phase: "idle", stages: [], planCreatedAt: null, summary: null, error: null, durationMs: null };
+}
+
 /**
  * The conversational assistant. The session is scoped to the open project and lives only in memory: it is never
  * written to the project file.
@@ -255,6 +298,7 @@ interface AppState {
   space: SpaceSession;
   dynamics: DynamicsSession;
   fullMix: FullMixSession;
+  autoMix: AutoMixSession;
   assistant: AssistantState;
   planTab: PlanTab;
   /** Every long-running piece of work, by id (`lib/tasks.ts`). The banner, Play, and the action buttons read it. */
@@ -278,6 +322,7 @@ interface AppState {
   setSpace: (patch: Partial<SpaceSession>) => void;
   setDynamics: (patch: Partial<DynamicsSession>) => void;
   setFullMix: (patch: Partial<FullMixSession>) => void;
+  setAutoMix: (patch: Partial<AutoMixSession>) => void;
   setAssistant: (patch: Partial<AssistantState>) => void;
   setPlanTab: (tab: PlanTab) => void;
 }
@@ -298,6 +343,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   space: idleSpace(),
   dynamics: idleDynamics(),
   fullMix: idleFullMix(),
+  autoMix: idleAutoMix(),
   assistant: idleAssistant(),
   planTab: "gain",
   tasks: {},
@@ -310,7 +356,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = removeTask(get().tasks, id);
     if (next !== get().tasks) set({ tasks: next });
   },
-  goWelcome: () => set({ tasks: cancelActive(get().tasks), screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), assistant: idleAssistant(false, get().assistant.settings) }),
+  goWelcome: () => set({ tasks: cancelActive(get().tasks), screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), autoMix: idleAutoMix(), assistant: idleAssistant(false, get().assistant.settings) }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
@@ -331,6 +377,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       space: idleSpace(),
       dynamics: idleDynamics(),
       fullMix: idleFullMix(),
+      autoMix: idleAutoMix(),
       // A new project starts a new conversation; the panel stays where the person left it.
       assistant: idleAssistant(get().assistant.open, get().assistant.settings),
       planTab: "gain",
@@ -389,6 +436,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const tasks = get().tasks["auto-mix"] && isActive(get().tasks["auto-mix"]!) ? removeTask(get().tasks, "full-mix") : planTasks(get().tasks, "full-mix", fullMix);
     set({ fullMix, tasks });
   },
+  setAutoMix: (patch) => set({ autoMix: { ...get().autoMix, ...patch } }),
   setAssistant: (patch) => {
     const assistant = { ...get().assistant, ...patch };
     set({ assistant, tasks: assistantTasks(get().tasks, assistant) });

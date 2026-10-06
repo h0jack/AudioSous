@@ -111,40 +111,99 @@ export interface LoadedMixInputs {
   mixPeakDbfs: number | null;
 }
 
+/** The evidence stages Full Mix and Auto Mix measure, in order. */
+export type MixInputStage = "levels" | "frequency" | "space" | "dynamics" | "peak";
+export type MixInputStageState = "running" | "done" | "reused";
+
+export interface LoadMixInputsOptions {
+  current: () => boolean;
+  progress: (label: string) => void;
+  /** Called as each stage starts and ends; "reused" when its results were already current. */
+  stage?: (stage: MixInputStage, state: MixInputStageState) => void;
+}
+
+/**
+ * Measurements and frames per set of source files (ids, paths, size, modification time, mute), and the rendered
+ * peak per mix state. Full Mix, Auto Mix, and the assistant all read through these, so a second request on an
+ * unchanged project measures nothing again. The disk caches stay the source of truth; this saves the reading.
+ */
+let sourcesCache: { key: string; measurements: LoadedMixInputs["measurements"]; fingerprints: LoadedMixInputs["fingerprints"]; bands: LoadedMixInputs["bands"]; stereo: LoadedMixInputs["stereo"]; envelopes: LoadedMixInputs["envelopes"] } | null = null;
+let peakCache: { key: string; mixPeakDbfs: number | null } | null = null;
+
+export function clearMixInputsCache(): void {
+  sourcesCache = null;
+  peakCache = null;
+}
+
+function sourcesKey(document: ProjectDocument, fingerprints: LoadedMixInputs["fingerprints"]): string {
+  const stamp = new Map(fingerprints.map((item) => [item.trackId, `${item.fileSizeBytes}:${item.modifiedAtNs}`]));
+  return `${document.project.id}|${document.tracks.map((track) => `${track.id}:${track.file.relativePath}:${stamp.get(track.id) ?? "?"}:${track.muted}`).join(",")}`;
+}
+
 /**
  * Everything Full Mix measures from: each stem's analysis, band, stereo, and envelope frames from the proxies, and
- * the current mix's rendered peak. Shared by the Full Mix button and the assistant. Null when `current` went false.
+ * the current mix's rendered peak. Shared by Full Mix, Auto Mix, and the assistant. Null when `current` went false.
  */
-export async function loadMixInputs(
-  platform: DesktopPlatform,
-  projectFile: string,
-  document: ProjectDocument,
-  options: { current: () => boolean; progress: (label: string) => void },
-): Promise<LoadedMixInputs | null> {
+export async function loadMixInputs(platform: DesktopPlatform, projectFile: string, document: ProjectDocument, options: LoadMixInputsOptions): Promise<LoadedMixInputs | null> {
   if (platform.kind !== "tauri") throw new Error("Full Mix reads the desktop analysis cache and the playback proxies. Open this project in the desktop app.");
   const { current, progress } = options;
-  const measurements: Record<string, TrackFileMeasurement | null> = {};
-  const fingerprints: FullMixSession["fingerprints"] = [];
-  for (const [index, track] of document.tracks.entries()) {
-    if (!current()) return null;
-    progress(`Analyzing ${index + 1} of ${document.tracks.length}: ${track.name}`);
-    const loaded = await loadTrackAnalysis(platform, projectFile, { id: track.id, filename: track.file.filename, relativePath: track.file.relativePath }, undefined, 15);
-    if (!current()) return null;
-    measurements[track.id] = loaded.measurement;
-    const [status] = await platform.projectMediaStatus(projectFile, [track.file.relativePath]);
+  const stage = options.stage ?? (() => undefined);
+  const statuses = await platform.projectMediaStatus(projectFile, document.tracks.map((track) => track.file.relativePath));
+  if (!current()) return null;
+  const fingerprints: LoadedMixInputs["fingerprints"] = [];
+  for (const track of document.tracks) {
+    const status = statuses.find((item) => item.relativePath === track.file.relativePath);
     if (status) fingerprints.push({ trackId: track.id, fileSizeBytes: status.fileSizeBytes, modifiedAtNs: status.modifiedAtNs });
   }
-  if (!current()) return null;
-  progress("Measuring bands, stereo, and envelopes on the playback proxies…");
-  const bands = await loadBandFrames(platform, projectFile, document);
-  if (!current()) return null;
-  const stereo = await loadStereoFrames(platform, projectFile, document);
-  if (!current()) return null;
-  const envelopes = await loadEnvelopeFrames(platform, projectFile, document);
-  if (!current()) return null;
-  progress("Rendering the current mix for its peak…");
-  const before = await renderCheck(platform, projectFile, document, null, songWindows(document));
-  return { measurements, bands, stereo, envelopes, fingerprints, mixPeakDbfs: before?.[0]?.peakDbfs ?? null };
+  const key = sourcesKey(document, fingerprints);
+  let sources = sourcesCache?.key === key ? sourcesCache : null;
+  if (sources) {
+    for (const reused of ["levels", "frequency", "space", "dynamics"] as const) stage(reused, "reused");
+  } else {
+    stage("levels", "running");
+    const measurements: LoadedMixInputs["measurements"] = {};
+    for (const [index, track] of document.tracks.entries()) {
+      if (!current()) return null;
+      progress(`Analyzing ${index + 1} of ${document.tracks.length}: ${track.name}`);
+      const loaded = await loadTrackAnalysis(platform, projectFile, { id: track.id, filename: track.file.filename, relativePath: track.file.relativePath }, undefined, 15);
+      if (!current()) return null;
+      measurements[track.id] = loaded.measurement;
+    }
+    stage("levels", "done");
+    stage("frequency", "running");
+    progress("Measuring frequency bands on the playback audio…");
+    const bands = await loadBandFrames(platform, projectFile, document);
+    if (!current()) return null;
+    stage("frequency", "done");
+    stage("space", "running");
+    progress("Measuring the stereo field on the playback audio…");
+    const stereo = await loadStereoFrames(platform, projectFile, document);
+    if (!current()) return null;
+    stage("space", "done");
+    stage("dynamics", "running");
+    progress("Measuring level envelopes on the playback audio…");
+    const envelopes = await loadEnvelopeFrames(platform, projectFile, document);
+    if (!current()) return null;
+    stage("dynamics", "done");
+    sources = { key, measurements, fingerprints, bands, stereo, envelopes };
+    // A stem whose analysis failed is measured again next time rather than remembered as missing.
+    if (document.tracks.every((track) => measurements[track.id])) sourcesCache = sources;
+  }
+  const mixKey = `${key}|${JSON.stringify(engineVariant("current", document))}`;
+  let mixPeakDbfs: number | null;
+  if (peakCache?.key === mixKey) {
+    stage("peak", "reused");
+    mixPeakDbfs = peakCache.mixPeakDbfs;
+  } else {
+    stage("peak", "running");
+    progress("Rendering the current mix for its peak…");
+    const before = await renderCheck(platform, projectFile, document, null, songWindows(document));
+    if (!current()) return null;
+    mixPeakDbfs = before?.[0]?.peakDbfs ?? null;
+    if (mixPeakDbfs !== null) peakCache = { key: mixKey, mixPeakDbfs };
+    stage("peak", "done");
+  }
+  return { measurements: sources.measurements, bands: sources.bands, stereo: sources.stereo, envelopes: sources.envelopes, fingerprints: sources.fingerprints, mixPeakDbfs };
 }
 
 /** Work the planning worker can do: Full Mix, the agent's mix reading, and simplification. */
