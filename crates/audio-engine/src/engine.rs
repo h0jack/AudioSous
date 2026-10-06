@@ -116,6 +116,18 @@ pub struct LoadedTrack {
     pub solo: bool,
 }
 
+/// Where one stem's playback proxy is: queued, being built, ready, or failed (with the reason).
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyTrackStatus {
+    pub id: String,
+    pub label: String,
+    pub state: String,
+    /// Build progress of this stem, 0–100.
+    pub percent: f32,
+    pub error: String,
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineStatus {
@@ -138,6 +150,8 @@ pub struct EngineStatus {
     pub device_format: String,
     pub proxy_percent: f32,
     pub message: String,
+    /// Every loaded stem's proxy state, in load order. Read on the control thread only.
+    pub proxy_tracks: Vec<ProxyTrackStatus>,
 }
 
 const FORMAT_F32: u8 = 1;
@@ -302,6 +316,8 @@ struct Realtime {
     device_fault: AtomicU8,
     ids: Mutex<Vec<String>>,
     message: Mutex<String>,
+    /// Per-stem proxy state for the status poll. Written by the builder and the control thread, never the callback.
+    proxy_tracks: Mutex<Vec<ProxyTrackStatus>>,
 }
 
 impl Realtime {
@@ -349,6 +365,7 @@ impl Realtime {
             device_fault: AtomicU8::new(0),
             ids: Mutex::new(Vec::new()),
             message: Mutex::new(String::new()),
+            proxy_tracks: Mutex::new(Vec::new()),
         }
     }
 
@@ -750,6 +767,10 @@ impl Control {
             self.rt.consumed[index].store(0, Ordering::Relaxed);
         }
         *self.rt.ids.lock().expect("ids") = tracks.iter().map(|track| track.id.clone()).collect();
+        *self.rt.proxy_tracks.lock().expect("proxy tracks") = tracks
+            .iter()
+            .map(|track| ProxyTrackStatus { id: track.id.clone(), label: track.label.clone(), state: "queued".into(), percent: 0.0, error: String::new() })
+            .collect();
         self.publish_spatial();
         self.set_state(STATE_STOPPED);
         self.set_message("");
@@ -780,6 +801,7 @@ impl Control {
                         } else {
                             track.label.clone()
                         };
+                        set_proxy_track(&rt, load_id, index, "building", 0.0, "");
                         let result = ensure_proxy(
                             &track.source_path,
                             &track.proxy_path,
@@ -791,6 +813,7 @@ impl Control {
                                     .store((ratio * 1000.0) as u32, Ordering::Relaxed);
                                 *rt.message.lock().expect("message") =
                                     format!("Converting {label} {:.0}%", ratio * 100.0);
+                                set_proxy_track(&rt, load_id, index, "building", (ratio * 100.0) as f32, "");
                             },
                         )
                         .map(|info| (info.channels, info.frames));
@@ -822,9 +845,11 @@ impl Control {
                 track.error = None;
                 self.rt.proxy_ready.fetch_add(1, Ordering::Release);
                 self.rt.duration_frames.fetch_max(frames, Ordering::Relaxed);
+                set_proxy_track(&self.rt, load_id, index, "ready", 100.0, "");
             }
             Err(error) => {
                 if error != "Playback proxy build was cancelled." {
+                    set_proxy_track(&self.rt, load_id, index, "failed", 0.0, &error);
                     track.error = Some(error);
                 }
             }
@@ -1340,6 +1365,20 @@ pub(crate) fn spatial_regions_for(ids: &[String], regions: &[(String, TrackSpati
             })
         })
         .collect()
+}
+
+/// Records one stem's proxy state, unless a newer load replaced the track list.
+fn set_proxy_track(rt: &Realtime, load_id: u64, index: usize, state: &str, percent: f32, error: &str) {
+    if load_id != rt.load_id.load(Ordering::Acquire) {
+        return;
+    }
+    if let Ok(mut tracks) = rt.proxy_tracks.lock() {
+        if let Some(track) = tracks.get_mut(index) {
+            track.state = state.into();
+            track.percent = percent;
+            track.error = error.into();
+        }
+    }
 }
 
 fn worker_loop(id: usize, rt: Arc<Realtime>, tracks: Arc<RwLock<Vec<Mutex<TrackState>>>>) {
@@ -2104,6 +2143,7 @@ fn status_from(rt: &Realtime) -> EngineStatus {
         device_format: device_format.into(),
         proxy_percent: rt.proxy_percent.load(Ordering::Relaxed) as f32 / 10.0,
         message,
+        proxy_tracks: rt.proxy_tracks.lock().map(|tracks| tracks.clone()).unwrap_or_default(),
     }
 }
 
@@ -2168,6 +2208,45 @@ mod tests {
             muted: false,
             solo: false,
         }
+    }
+
+    /// The status poll names each stem's proxy state, so a slow or broken stem can be found and retried.
+    #[test]
+    fn status_reports_each_stems_proxy_state_and_a_failure() {
+        let dir = env::temp_dir().join(format!("audiosous-proxy-state-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let good = track(&dir, "good", 4_800, |_| 0.1);
+        let broken_source = dir.join("broken.wav");
+        fs::write(&broken_source, b"not audio").unwrap();
+        let broken = LoadedTrack {
+            id: "broken".into(),
+            label: "Broken.wav".into(),
+            source_path: broken_source,
+            proxy_path: dir.join("broken.proxy"),
+            source_size: 9,
+            source_modified_ns: 1,
+            ..good.clone()
+        };
+        let engine = Engine::offline();
+        engine.load(vec![good, broken]).unwrap();
+        let started = Instant::now();
+        let status = loop {
+            let status = engine.status();
+            let settled = status.proxy_tracks.iter().all(|track| track.state == "ready" || track.state == "failed");
+            if settled || started.elapsed() > Duration::from_secs(10) {
+                break status;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        engine.shutdown();
+        assert_eq!(status.proxy_tracks.len(), 2);
+        assert_eq!(status.proxy_tracks[0].id, "good");
+        assert_eq!(status.proxy_tracks[0].state, "ready");
+        assert_eq!(status.proxy_tracks[1].label, "Broken.wav");
+        assert_eq!(status.proxy_tracks[1].state, "failed");
+        assert!(!status.proxy_tracks[1].error.is_empty());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

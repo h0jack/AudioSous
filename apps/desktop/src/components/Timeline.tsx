@@ -41,6 +41,7 @@ import { isTauri } from "../platform";
 import { useAppStore } from "../state/app-store";
 import { describeFilter } from "@audiosous/eq-planner";
 import { HoverTip, RoleSelect } from "./ui";
+import { useGate } from "./ProcessingStatus";
 
 const NAME_WIDTH = 232;
 const ROW_HEIGHT = 156;
@@ -65,6 +66,7 @@ export function Timeline({
   const focusToken = useAppStore((state) => state.balance.focusToken);
   const duration = Math.max(document.project.durationSeconds, 0.001);
   const { playhead, playing, seek } = playback;
+  const playGate = useGate("playback");
   const [zoom, setZoom] = useState(() => clampTimelineZoom(document.uiState.timelineZoom));
   const [scrollSeconds, setScrollSeconds] = useState(document.uiState.timelineScroll);
   const [range, setRange] = useState(document.uiState.timeRange);
@@ -335,9 +337,10 @@ export function Timeline({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
         <TipButton
-          label={playback.preparing ? "Preparing playback" : playing ? "Pause (Space)" : "Play from the playhead (Space)"}
-          aria-label={playing ? "Pause" : "Play"}
+          label={playGate.blocked && !playing ? (playGate.reason ?? "Preparing playback") : playback.preparing ? "Preparing playback…" : playing ? "Pause (Space)" : "Play from the playhead (Space)"}
+          aria-label={playing ? "Pause" : playGate.blocked ? `Play unavailable: ${playGate.reason ?? "preparing playback"}` : "Play"}
           className={ICON_BUTTON}
+          disabled={playGate.blocked && !playing}
           onClick={() => void playback.toggle()}
         >
           {playback.preparing ? <span className="text-xs">…</span> : playing ? <PauseIcon /> : <PlayIcon />}
@@ -446,8 +449,14 @@ export function Timeline({
           {range ? ` · Range ${formatClock(range.start)}–${formatClock(range.end)}` : ""}
           {document.uiState.loop?.enabled ? ` · Loop ${formatClock(document.uiState.loop.start)}–${formatClock(document.uiState.loop.end)}` : ""}
         </p>
-        {playback.preparing || playback.engineStatus?.message ? (
-          <p className="text-xs text-muted">{playback.engineStatus?.message || "Preparing playback…"}</p>
+        {playback.preparing ? (
+          <p className="rounded bg-accent/15 px-2 py-0.5 text-xs font-medium text-accent" role="status">
+            Preparing playback…
+          </p>
+        ) : playGate.blocked ? (
+          <p className="text-xs text-muted" role="status">
+            {playGate.reason}
+          </p>
         ) : null}
         {playback.engineStatus ? <EngineDetails kind={playback.engineKind} status={playback.engineStatus} /> : null}
         {playback.error ? <p className="text-xs text-danger">{playback.error}</p> : null}

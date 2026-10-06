@@ -33,6 +33,7 @@ import type { DynamicsMeterReading } from "../lib/native-playback";
 import type { usePlayback } from "../lib/playback";
 import { getPlatform } from "../platform";
 import { useAppStore, type DynamicsSession } from "../state/app-store";
+import { PlannerStatus } from "./ProcessingStatus";
 import { Button } from "./ui";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -130,11 +131,7 @@ export function DynamicsPanelView({ document, playback, dynamics }: { document: 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3 group-data-[collapsed=true]:hidden">
         <p className="mb-2 max-w-3xl text-xs text-faint">{dynamicsScope(document)}</p>
         {!native ? <p className="mb-2 max-w-3xl text-xs text-danger">This audio engine does not play dynamics. Use the native engine to hear compression, ducking, transient shaping, and dynamic EQ.</p> : null}
-        {dynamics.progress ? (
-          <p className="text-sm text-muted" role="status">
-            {dynamics.progress}
-          </p>
-        ) : null}
+        <PlannerStatus kind="dynamics-plan" />
         {dynamics.error ? <p className="text-sm text-danger">{dynamics.error}</p> : null}
         {stale ? (
           <p className="mb-2 text-sm text-danger" role="status">

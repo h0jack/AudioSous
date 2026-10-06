@@ -1,4 +1,5 @@
 import type { DesktopPlatform } from "../platform/types";
+import { useAppStore } from "../state/app-store";
 import { runAnalysis, type AnalysisJobStatus, type AnalysisTarget, type LoadedTrackAnalysis } from "./track-analysis";
 
 export class AnalysisCancelled extends Error {
@@ -120,6 +121,7 @@ async function pump(): Promise<void> {
       slot.state = "running";
       slot.jobId = nextJobId;
       nextJobId += 1;
+      publishTask();
       try {
         const loaded = await runAnalysis(slot.platform, slot.projectFile, slot.target, slot.jobId, (status) => slot.onStatus?.(status));
         if (slot.preempted && slot.holders > 0) {
@@ -151,8 +153,21 @@ async function pump(): Promise<void> {
     }
   } finally {
     pumping = false;
+    publishTask();
     if (pending.length > 0) void pump();
   }
+}
+
+/** The measurement in flight, as one informational task: it never blocks playback. */
+function publishTask(): void {
+  const store = useAppStore.getState();
+  const slot = running;
+  if (!slot || pumping === false) {
+    store.dropTask("analysis");
+    return;
+  }
+  const queued = pending.filter((item) => item.holders > 0).length;
+  store.setTask({ id: "analysis", kind: "analysis", label: "Analyzing audio", status: "running", detail: `${slot.target.label}${queued > 0 ? ` · ${queued} more queued` : ""}`, blocks: [], major: false });
 }
 
 function isCancellation(error: unknown): boolean {

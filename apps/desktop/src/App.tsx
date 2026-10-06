@@ -1,6 +1,7 @@
 import { formatClock, formatSampleRate } from "@audiosous/project-model";
 import { useEffect, useRef, useState } from "react";
 import { Button, HoverTip } from "./components/ui";
+import { ProcessingBanner } from "./components/ProcessingStatus";
 import { editProjectName, saveOpenProject } from "./lib/project-actions";
 import { getPlatform, isTauri } from "./platform";
 import { NewProjectScreen } from "./screens/NewProjectScreen";
@@ -148,6 +149,7 @@ export function App() {
           </div>
         ) : null}
       </header>
+      {projectOpen ? <ProcessingBanner /> : null}
       {error ? <p className="border-b border-line px-5 py-2 text-sm text-danger">{error}</p> : null}
       <main className="min-h-0 flex-1 overflow-auto">
         {screen === "welcome" ? <WelcomeScreen /> : null}

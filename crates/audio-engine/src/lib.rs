@@ -23,7 +23,7 @@ pub use bounce::{bounce, bounce_range, BounceSettings, BounceTrack};
 pub use mixcheck::{check_mix, merge_windows, MixCheck, MixSectionSpec, MixVariantSpec, SectionLevel, MIX_CHECK_PREROLL};
 pub use dynamics::{reduction_db, DynKind, DynSpec, DynamicsChain, DynamicsNodeSpec, KeyDetectorKind, CONTROL_FRAMES, DYNAMICS_RAMP_FRAMES, KEY_SPAN_DB};
 pub use envelope::{cached_envelope_frames, dequantize_db, measure_envelope_frames, EnvelopeFrames, ENVELOPE_HOP, ENVELOPE_VERSION};
-pub use engine::{DynamicsMeter, Engine, EngineStatus, LoadedTrack, TrackDynamics, TrackDynamicsRegion, TrackEq, TrackEqRegion, TrackGainRegion, TrackSpatial, TrackSpatialRegion};
+pub use engine::{DynamicsMeter, Engine, EngineStatus, LoadedTrack, ProxyTrackStatus, TrackDynamics, TrackDynamicsRegion, TrackEq, TrackEqRegion, TrackGainRegion, TrackSpatial, TrackSpatialRegion};
 pub use eq::{
     cookbook_magnitude_db, EqChain, FilterKind, FilterSpec, EQ_RAMP_FRAMES, MAX_SECTION_BANDS,
     MAX_TRACK_BANDS,

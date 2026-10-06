@@ -6,9 +6,11 @@ import { PlansPanel } from "../components/PlansPanel";
 import { SpatialInteractionView } from "../components/SpatialInteractionView";
 import { Timeline } from "../components/Timeline";
 import { usePlayback } from "../lib/playback";
-import { loadProjectWaveforms, waveformLoadRatio, type LoadedWaveform, type WaveformLoadProgress } from "../lib/waveforms";
+import { waveformTaskPatch } from "../lib/preparation";
+import { loadProjectWaveforms, type LoadedWaveform, type WaveformLoadProgress } from "../lib/waveforms";
 import { getPlatform } from "../platform";
 import { useAppStore } from "../state/app-store";
+import { PreparationGate } from "../components/ProcessingStatus";
 
 export function ProjectScreen() {
   const document = useAppStore((state) => state.document);
@@ -45,12 +47,20 @@ export function ProjectScreen() {
       fileRatio: 0,
     });
     useAppStore.getState().setPreparing(true);
+    const names = document.tracks.map((track) => track.name);
+    const publish = (next: WaveformLoadProgress | null, failed: string | null = null) => {
+      const patch = waveformTaskPatch(next, names, failed);
+      if (patch) useAppStore.getState().setTask(patch);
+      else useAppStore.getState().dropTask("waveform");
+    };
+    publish({ index: 0, total: names.length, filename: document.tracks[0]?.file.filename ?? "", fileRatio: 0 });
     void loadProjectWaveforms(getPlatform(), projectFilePath, document, {
       shouldCancel: () => cancelled,
       onProgress: (next) => {
         if (!cancelled) {
           setProgress(next);
           setStatus(`Measuring ${next.index + 1} of ${next.total}: ${next.filename}`);
+          publish(next);
         }
       },
     })
@@ -59,16 +69,19 @@ export function ProjectScreen() {
         setWaveforms(loaded);
         setProgress(null);
         setStatus(null);
+        publish(null);
         finish();
       })
       .catch(() => {
         if (cancelled) return;
         setProgress(null);
         setStatus("Waveforms could not be measured.");
+        publish(null, "Waveforms could not be measured. The timeline draws without them; playback is not affected.");
         finish();
       });
     return () => {
       cancelled = true;
+      useAppStore.getState().dropTask("waveform");
       void getPlatform().cancelWaveform();
     };
   }, [document?.project.id, projectFilePath, trackKey]);
@@ -77,7 +90,7 @@ export function ProjectScreen() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      {progress ? <MeasurementGate progress={progress} /> : null}
+      {progress ? <PreparationGate /> : null}
       <div className="flex min-h-0 flex-1 flex-col" inert={progress ? true : undefined}>
         {warnings.length > 0 ? (
           <ul className="space-y-1 px-5 py-2 text-sm text-danger">
@@ -140,34 +153,4 @@ function initialWaveformProgress(): WaveformLoadProgress | null {
     filename: current.tracks[0]?.file.filename ?? "",
     fileRatio: 0,
   };
-}
-
-function MeasurementGate({ progress }: { progress: WaveformLoadProgress }) {
-  const ratio = waveformLoadRatio(progress);
-  const percent = Math.round(ratio * 100);
-  const label = progress.filename
-    ? `Measuring ${progress.index + 1} of ${progress.total}: ${progress.filename}`
-    : "Measuring waveforms";
-  return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-canvas/90 px-6">
-      <div className="w-full max-w-md rounded-lg border border-line bg-panel px-6 py-5" role="status" aria-live="polite">
-        <h2 className="font-display text-3xl">Measuring waveforms</h2>
-        <p className="mt-2 text-sm text-muted">Playback and editing stay off until every stem has been measured.</p>
-        <div
-          className="mt-5 h-2 overflow-hidden rounded-full bg-panel-2"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-          aria-valuetext={label}
-        >
-          <div className="h-full bg-accent transition-[width] duration-150" style={{ width: `${percent}%` }} />
-        </div>
-        <p className="mt-2 font-mono text-xs text-faint">
-          {label}
-          {percent > 0 ? ` · ${percent}%` : ""}
-        </p>
-      </div>
-    </div>
-  );
 }

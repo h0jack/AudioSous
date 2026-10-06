@@ -22,6 +22,7 @@ import { applySpace, auditionSpace, cancelSpacePlan, hearSpaceRow, runSpacePlan,
 import { getPlatform } from "../platform";
 import { useAppStore, type SpaceSession } from "../state/app-store";
 import { CorrelationMeter, StereoField, type FieldStem } from "./StereoField";
+import { PlannerStatus } from "./ProcessingStatus";
 import { Button } from "./ui";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -109,11 +110,7 @@ export function SpacePanelView({ document, playback, space }: { document: Projec
         {!native ? (
           <p className="mb-2 max-w-3xl text-xs text-danger">This audio engine plays pan and balance but not width. Use the native engine to hear width changes.</p>
         ) : null}
-        {space.progress ? (
-          <p className="text-sm text-muted" role="status">
-            {space.progress}
-          </p>
-        ) : null}
+        <PlannerStatus kind="space-plan" />
         {space.error ? <p className="text-sm text-danger">{space.error}</p> : null}
         {stale ? (
           <p className="mb-2 text-sm text-danger" role="status">

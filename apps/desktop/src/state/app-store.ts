@@ -8,6 +8,7 @@ import type { AgentSettingsInfo } from "../platform/types";
 import type { ImportWarning, ProjectDocument } from "@audiosous/project-model";
 import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
+import { isActive, planTaskPatch, pruneTasks, removeTask, taskActions, upsertTask, type ProcessingTask, type TaskPatch } from "../lib/tasks";
 
 export interface BalanceSession {
   open: boolean;
@@ -256,6 +257,10 @@ interface AppState {
   fullMix: FullMixSession;
   assistant: AssistantState;
   planTab: PlanTab;
+  /** Every long-running piece of work, by id (`lib/tasks.ts`). The banner, Play, and the action buttons read it. */
+  tasks: Record<string, ProcessingTask>;
+  setTask: (patch: TaskPatch) => void;
+  dropTask: (id: string) => void;
   goWelcome: () => void;
   setWorkspace: (workspace: Workspace) => void;
   startImport: () => void;
@@ -295,11 +300,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   fullMix: idleFullMix(),
   assistant: idleAssistant(),
   planTab: "gain",
-  goWelcome: () => set({ screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), assistant: idleAssistant(false, get().assistant.settings) }),
+  tasks: {},
+  setTask: (patch) => {
+    const now = Date.now();
+    const next = upsertTask(pruneTasks(get().tasks, now), patch, now);
+    if (next !== get().tasks) set({ tasks: next });
+  },
+  dropTask: (id) => {
+    const next = removeTask(get().tasks, id);
+    if (next !== get().tasks) set({ tasks: next });
+  },
+  goWelcome: () => set({ tasks: cancelActive(get().tasks), screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), assistant: idleAssistant(false, get().assistant.settings) }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
     set({
+      tasks: cancelActive(get().tasks),
       screen: "project",
       document,
       projectFilePath,
@@ -351,11 +367,54 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWarnings: (warnings) => set({ warnings }),
   setHoldAutosave: (holdAutosave) => set({ holdAutosave }),
   setPreparing: (preparing) => set({ preparing }),
-  setBalance: (patch) => set({ balance: { ...get().balance, ...patch } }),
-  setEq: (patch) => set({ eq: { ...get().eq, ...patch } }),
-  setSpace: (patch) => set({ space: { ...get().space, ...patch } }),
-  setDynamics: (patch) => set({ dynamics: { ...get().dynamics, ...patch } }),
-  setFullMix: (patch) => set({ fullMix: { ...get().fullMix, ...patch } }),
-  setAssistant: (patch) => set({ assistant: { ...get().assistant, ...patch } }),
+  setBalance: (patch) => {
+    const balance = { ...get().balance, ...patch };
+    set({ balance, tasks: planTasks(get().tasks, "gain-plan", balance) });
+  },
+  setEq: (patch) => {
+    const eq = { ...get().eq, ...patch };
+    set({ eq, tasks: planTasks(get().tasks, "eq-plan", eq) });
+  },
+  setSpace: (patch) => {
+    const space = { ...get().space, ...patch };
+    set({ space, tasks: planTasks(get().tasks, "space-plan", space) });
+  },
+  setDynamics: (patch) => {
+    const dynamics = { ...get().dynamics, ...patch };
+    set({ dynamics, tasks: planTasks(get().tasks, "dynamics-plan", dynamics) });
+  },
+  setFullMix: (patch) => {
+    const fullMix = { ...get().fullMix, ...patch };
+    // Auto Mix drives the Full Mix session and publishes its own staged task; it does not show twice.
+    const tasks = get().tasks["auto-mix"] && isActive(get().tasks["auto-mix"]!) ? removeTask(get().tasks, "full-mix") : planTasks(get().tasks, "full-mix", fullMix);
+    set({ fullMix, tasks });
+  },
+  setAssistant: (patch) => {
+    const assistant = { ...get().assistant, ...patch };
+    set({ assistant, tasks: assistantTasks(get().tasks, assistant) });
+  },
   setPlanTab: (planTab) => set({ planTab }),
 }));
+
+/** Keeps a planner's task in step with its session: the one place planner progress reaches the task model. */
+function planTasks(tasks: Record<string, ProcessingTask>, kind: "gain-plan" | "eq-plan" | "space-plan" | "dynamics-plan" | "full-mix", session: Parameters<typeof planTaskPatch>[1]): Record<string, ProcessingTask> {
+  const patch = planTaskPatch(kind, session);
+  return patch ? upsertTask(tasks, patch, Date.now()) : removeTask(tasks, kind);
+}
+
+function assistantTasks(tasks: Record<string, ProcessingTask>, assistant: AssistantState): Record<string, ProcessingTask> {
+  if (!assistant.busy) {
+    const existing = tasks.assistant;
+    if (!existing) return tasks;
+    return assistant.error ? upsertTask(tasks, { id: "assistant", kind: "assistant", status: "failed", error: assistant.error, label: "Assistant request failed" }, Date.now()) : removeTask(tasks, "assistant");
+  }
+  return upsertTask(tasks, { id: "assistant", kind: "assistant", label: "Assistant", status: "running", detail: assistant.activity ?? "Working on your request…", cancellable: true, major: true, blocks: [] }, Date.now());
+}
+
+/** Leaving or replacing a project cancels its work; failures and notes from the old project go too. */
+function cancelActive(tasks: Record<string, ProcessingTask>): Record<string, ProcessingTask> {
+  for (const task of Object.values(tasks)) {
+    if (isActive(task)) taskActions(task.id).cancel?.();
+  }
+  return {};
+}

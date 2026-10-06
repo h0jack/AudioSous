@@ -50,9 +50,20 @@ export async function createProjectFromStems(input: {
       projectJson,
       copies,
       onProgress: (progress) => {
-        input.onProgress(`Copying ${Math.min(progress.completedFiles + 1, progress.totalFiles)} of ${progress.totalFiles}: ${progress.filename}`);
+        const label = `Copying ${Math.min(progress.completedFiles + 1, progress.totalFiles)} of ${progress.totalFiles}: ${progress.filename}`;
+        input.onProgress(label);
+        useAppStore.getState().setTask({
+          id: "import",
+          kind: "import",
+          label: "Copying stems into the project",
+          status: "running",
+          progress: progress.totalFiles > 0 ? progress.completedFiles / progress.totalFiles : null,
+          detail: label,
+          blocks: ["playback", "editing", "planning", "export"],
+          major: true,
+        });
       },
-    });
+    }).finally(() => useAppStore.getState().dropTask("import"));
     projectFile = created.projectFile;
   } else {
     await input.platform.writeProject(projectFile, projectJson, { download: false });

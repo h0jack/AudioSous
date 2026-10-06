@@ -32,6 +32,7 @@ import type { usePlayback } from "../lib/playback";
 import { getPlatform } from "../platform";
 import { useAppStore, type FullMixSession } from "../state/app-store";
 import { NumberSlider } from "./DynamicsPanel";
+import { PlannerStatus } from "./ProcessingStatus";
 import { Button } from "./ui";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -148,11 +149,7 @@ export function FullMixPanelView({ document, playback, fullMix }: { document: Pr
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3 group-data-[collapsed=true]:hidden">
         <p className="mb-2 max-w-3xl text-xs text-faint">{fullMixScope(document)}</p>
         {!native ? <p className="mb-2 max-w-3xl text-xs text-danger">This audio engine does not play dynamics or width. Use the native engine to hear the whole candidate.</p> : null}
-        {fullMix.progress ? (
-          <p className="text-sm text-muted" role="status">
-            {fullMix.progress}
-          </p>
-        ) : null}
+        <PlannerStatus kind="full-mix" />
         {fullMix.error ? <p className="mb-2 text-sm text-danger">{fullMix.error}</p> : null}
         {stale ? (
           <p className="mb-2 text-sm text-danger" role="status">

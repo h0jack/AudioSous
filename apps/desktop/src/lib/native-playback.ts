@@ -22,6 +22,8 @@ export interface NativeEngineStatus {
   deviceFormat: string;
   proxyPercent: number;
   message: string;
+  /** Each stem's playback-audio state, in load order. */
+  proxyTracks: Array<{ id: string; label: string; state: "queued" | "building" | "ready" | "failed"; percent: number; error: string }>;
 }
 
 /** Gain reduction on one track right now, dB: reductions ≥ 0, transient as |gain|. */

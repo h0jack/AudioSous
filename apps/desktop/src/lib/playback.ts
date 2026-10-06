@@ -9,6 +9,8 @@ import { monitorKey, monitorState, publishMonitor } from "./monitor";
 import { logEvent } from "./log";
 import { audioEngineKind, createNativeAudioEngine, type DynamicsMeterReading, type NativeEngineStatus } from "./native-playback";
 import { useAppStore } from "../state/app-store";
+import { proxyTaskPatch } from "./preparation";
+import { gate, registerTaskActions } from "./tasks";
 import { createWebAudioOutput } from "./web-audio-output";
 
 type RunningEngine = AudioEngine & {
@@ -88,6 +90,24 @@ export function arrowSeekStep(event: { shiftKey: boolean; ctrlKey: boolean }): n
   return 1;
 }
 
+/**
+ * Publishes the engine's playback-audio preparation and Play priming into the task model. A preparation that was
+ * already complete when the project opened (every proxy cached) shows no "ready" note.
+ */
+function publishPreparation(status: NativeEngineStatus): void {
+  const store = useAppStore.getState();
+  const song = store.document;
+  const name = (id: string) => song?.tracks.find((track) => track.id === id)?.name ?? "";
+  const patch = proxyTaskPatch(status, name);
+  if (!patch) store.dropTask("playback-proxy");
+  else if (patch.status !== "complete" || store.tasks["playback-proxy"]) store.setTask(patch);
+  if (status.state === "priming" && status.proxyReadyTracks >= status.proxyTotalTracks) {
+    store.setTask({ id: "playback-prime", kind: "playback-prime", label: "Preparing playback…", status: "running", detail: "Filling the playback buffers", blocks: [], major: false });
+  } else if (store.tasks["playback-prime"]) {
+    store.dropTask("playback-prime");
+  }
+}
+
 export function usePlayback(document: ProjectDocument | null, projectFile: string | null) {
   const engineRef = useRef<RunningEngine | null>(null);
   const publishedKey = useRef<string | null>(null);
@@ -149,6 +169,17 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
         });
       } else {
         await engine.loadProject(current, { resolve: (path) => path });
+        registerTaskActions("playback-proxy", {
+          retry: () => {
+            const song = useAppStore.getState().document;
+            if (!song || cancelled) return;
+            useAppStore.getState().dropTask("playback-proxy");
+            void engine.loadProject(song, { resolve: (path) => path }).then(() => {
+              publishedKey.current = null;
+              publish(engine, song, true);
+            });
+          },
+        });
       }
       if (cancelled) return;
       const latest = useAppStore.getState().document;
@@ -165,6 +196,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
           void poll().then((status) => {
             if (cancelled) return;
             setEngineStatus(status);
+            publishPreparation(status);
             if (status.state === "playing") {
               setPlayhead(status.positionSeconds);
               const song = useAppStore.getState().document;
@@ -248,6 +280,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
   async function toggle() {
     const engine = engineRef.current;
     if (!engine || preparingRef.current) return;
+    if (!playingRef.current && gate(useAppStore.getState().tasks, "playback").blocked) return;
     setError(null);
     if (playingRef.current) {
       engine.pause();

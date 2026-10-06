@@ -14,6 +14,7 @@ import { applyAutoBalance, autoBalanceScope, cancelAutoBalance, currentAudition,
 import { logEvent } from "../lib/log";
 import { getPlatform } from "../platform";
 import { useAppStore } from "../state/app-store";
+import { PlannerStatus } from "./ProcessingStatus";
 import { Button } from "./ui";
 
 type Playback = ReturnType<typeof usePlayback>;
@@ -109,11 +110,7 @@ export function AutoBalancePanel({ document, playback }: { document: ProjectDocu
       </div>
       <div className="min-h-0 flex-1 overflow-auto group-data-[collapsed=true]:hidden px-4 py-3">
         <p className="mb-2 max-w-3xl text-xs text-faint">{autoBalanceScope(document)}</p>
-        {balance.progress ? (
-          <p className="text-sm text-muted" role="status">
-            {balance.progress}
-          </p>
-        ) : null}
+        <PlannerStatus kind="gain-plan" />
         {balance.error ? <p className="text-sm text-danger">{balance.error}</p> : null}
         {stale ? (
           <p className="mb-2 text-sm text-danger" role="status">

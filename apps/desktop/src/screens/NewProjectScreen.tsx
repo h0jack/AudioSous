@@ -14,6 +14,7 @@ import { inspectListedFiles } from "../lib/inspect-stems";
 import { createProjectFromStems } from "../lib/project-actions";
 import { demoStems, stemsAsImported, type PendingStem } from "../lib/stems";
 import { browserFilesFromDrop, getPlatform, isTauri } from "../platform";
+import { TaskProgress } from "../components/ProcessingStatus";
 import { useAppStore } from "../state/app-store";
 
 export function NewProjectScreen() {
@@ -206,7 +207,7 @@ export function NewProjectScreen() {
         </div>
       </div>
 
-      {busy ? <p className="text-sm text-accent">{busy}</p> : null}
+      {busy ? <ImportProgress label={busy} /> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       {stems.length > 0 ? (
@@ -274,6 +275,18 @@ export function NewProjectScreen() {
           Create project
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** Copying stems: prominent, with the real count from the shared task when the shell reports it. */
+function ImportProgress({ label }: { label: string }) {
+  const task = useAppStore((state) => state.tasks.import);
+  return (
+    <div className="rounded-lg border border-accent/50 bg-accent/10 px-4 py-3" role="status" aria-live="polite">
+      <p className="text-sm font-medium text-ink">{task?.label ?? "Creating the project"}</p>
+      <p className="text-xs text-muted">{task?.detail ?? label}</p>
+      {task ? <TaskProgress task={task} /> : null}
     </div>
   );
 }
