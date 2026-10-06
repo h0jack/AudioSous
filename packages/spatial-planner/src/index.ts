@@ -23,6 +23,7 @@ export {
   evaluateSpatial,
   recommendationImages,
   resetSpatialRecommendation,
+  safetyWarnings,
   setSpatialRecommendationStatus,
   spatialAudition,
   spatialAuditionAt,

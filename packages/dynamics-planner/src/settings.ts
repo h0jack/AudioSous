@@ -1,5 +1,5 @@
 export const DYNAMICS_PLAN_VERSION = 1;
-export const DYNAMICS_PLANNER_VERSION = "6.0.0";
+export const DYNAMICS_PLANNER_VERSION = "6.1.0";
 
 export const DYNAMICS_STRENGTHS = ["conservative", "normal", "strong"] as const;
 export type DynamicsStrength = (typeof DYNAMICS_STRENGTHS)[number];

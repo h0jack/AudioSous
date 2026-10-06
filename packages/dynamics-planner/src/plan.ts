@@ -276,6 +276,12 @@ export const dynamicsInteractionSchema = z.object({
   levelMasking: finite.min(0).max(1),
   /** Share of B's playing time A is silent: what a static move would cost B. */
   freeShare: finite.min(0).max(1),
+  /**
+   * B over A where they meet, dB, as heard: kick/bass, the bass's low band minus the kick's on the kick's hits (mean);
+   * masking, B minus A in A's most contested region. Null when it was not measured. Later planning reads it as the
+   * continuous size of the conflict, which the shares above round off.
+   */
+  levelGapDb: finite.nullable(),
   recommendedTool: z.enum(["ducking", "dynamic-eq", "static-eq", "none"]),
   confidence: finite.min(0).max(1),
   outcome: z.enum(["recommendation", "review", "below-threshold", "already-separated", "static", "solved", "limit", "no-benefit"]),
