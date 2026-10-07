@@ -311,6 +311,8 @@ const DETECTED: Record<MixProblemType, keyof AutoMixSummary["detected"]> = {
   "transient-problem": "dynamics",
   "section-contrast": "contrast",
   intent: "contrast",
+  "reference-tonal": "frequency",
+  "reference-width": "space",
 };
 
 /** Counts for the Recommended Mix card: what was read, what was found, what was kept, what was left out. */

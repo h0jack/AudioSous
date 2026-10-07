@@ -491,7 +491,8 @@ impl Mp3Writer {
             set(b"lame_set_in_samplerate\0", rate as c_int)?;
             set(b"lame_set_out_samplerate\0", rate as c_int)?;
             set(b"lame_set_mode\0", if channels == 1 { 3 } else { 1 })?;
-            set(b"lame_set_quality\0", 2)?;
+            // 0 is LAME's most thorough psychoacoustic search: slower to encode, the best quality at a given bitrate.
+            set(b"lame_set_quality\0", 0)?;
             set(b"lame_set_bWriteVbrTag\0", 1)?;
             match quality {
                 Mp3Quality::Cbr320 => {

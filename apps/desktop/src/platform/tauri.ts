@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { AgentSettingsInfo, AnalyzeAudioRequest, CopyProgress, DesktopPlatform, DynamicsCheckResponse, EqCheckResponse, ListedFile, MediaStatus, MixCheckResult, SpatialCheckResponse, TrackAnalysisBridgeResult, ExportStatus } from "./types";
+import type { AgentSettingsInfo, AnalyzeAudioRequest, CopyProgress, DesktopPlatform, DynamicsCheckResponse, EqCheckResponse, ListedFile, MediaStatus, MixCheckResult, SpatialCheckResponse, TrackAnalysisBridgeResult, ExportStatus, ReferenceInfo } from "./types";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -197,6 +197,22 @@ export const tauriPlatform: DesktopPlatform = {
   },
   mp3Available() {
     return invoke<string>("export_mp3_available");
+  },
+  async pickReferenceFile() {
+    const selected = await open({ title: "Choose a reference song", multiple: false, filters: [{ name: "Audio", extensions: ["wav", "wave", "aif", "aiff", "flac", "mp3"] }] });
+    return typeof selected === "string" ? selected : null;
+  },
+  importReference(projectFile, sourcePath) {
+    return invoke<ReferenceInfo>("reference_import", { projectFile, sourcePath });
+  },
+  listReferences(projectFile) {
+    return invoke<ReferenceInfo[]>("reference_list", { projectFile });
+  },
+  deleteReference(projectFile, name) {
+    return invoke("reference_delete", { projectFile, name });
+  },
+  mixProfile(projectFile, request) {
+    return invoke("mix_profile", { projectFile, request });
   },
 };
 

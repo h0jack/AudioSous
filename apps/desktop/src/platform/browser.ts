@@ -171,6 +171,19 @@ export const browserPlatform: DesktopPlatform = {
   async mp3Available(): Promise<string> {
     throw new Error("Export needs the desktop app.");
   },
+  async pickReferenceFile() {
+    return null;
+  },
+  async importReference(): Promise<never> {
+    throw new Error("Reference songs need the desktop app.");
+  },
+  async listReferences() {
+    return [];
+  },
+  async deleteReference() {},
+  async mixProfile(): Promise<never> {
+    throw new Error("Reference comparison needs the desktop app.");
+  },
 };
 
 export function browserFilesFromDrop(fileList: FileList | File[]): ListedFile[] {

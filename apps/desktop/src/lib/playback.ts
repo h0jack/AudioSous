@@ -5,9 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { getPlatform } from "../platform";
 import type { DesktopPlatform } from "../platform/types";
 import { refreshLegacyMonitor } from "./autobalance";
-import { monitorKey, monitorState, publishMonitor } from "./monitor";
+import { monitorKey, monitorState, publishMonitor, type ReferenceMonitor } from "./monitor";
 import { logEvent } from "./log";
-import { audioEngineKind, createNativeAudioEngine, type DynamicsMeterReading, type NativeEngineStatus } from "./native-playback";
+import { REFERENCE_TRACK_ID, audioEngineKind, createNativeAudioEngine, type DynamicsMeterReading, type NativeAudioEngine, type NativeEngineStatus } from "./native-playback";
 import { useAppStore } from "../state/app-store";
 import { proxyTaskPatch } from "./preparation";
 import { gate, registerTaskActions } from "./tasks";
@@ -108,6 +108,14 @@ function publishPreparation(status: NativeEngineStatus): void {
   }
 }
 
+/** The reference track's monitor state: loudness-matched to the measured mix (0 dB until both are measured). */
+export function referenceMonitor(reference: ReturnType<typeof useAppStore.getState>["reference"], loaded: boolean): ReferenceMonitor | null {
+  if (!loaded || !reference.selected) return null;
+  const info = reference.references.find((item) => item.name === reference.selected);
+  const gainDb = info && reference.mixProfile ? Math.round((reference.mixProfile.loudness.integratedLufs - info.profile.loudness.integratedLufs) * 100) / 100 : 0;
+  return { trackId: REFERENCE_TRACK_ID, listening: reference.listening, gainDb };
+}
+
 export function usePlayback(document: ProjectDocument | null, projectFile: string | null) {
   const engineRef = useRef<RunningEngine | null>(null);
   const publishedKey = useRef<string | null>(null);
@@ -133,6 +141,7 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
     setPlaying(false);
     setEngineStatus(null);
     setEngineKind("browser");
+    loadedReference.current = null;
     void (async () => {
       const current = useAppStore.getState().document;
       if (!current || !file) return;
@@ -236,21 +245,42 @@ export function usePlayback(document: ProjectDocument | null, projectFile: strin
   const space = useAppStore((state) => state.space);
   const dynamics = useAppStore((state) => state.dynamics);
   const fullMix = useAppStore((state) => state.fullMix);
+  const reference = useAppStore((state) => state.reference);
+  const loadedReference = useRef<string | null>(null);
 
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !document) return;
     publish(engine, document, nativeRef.current);
-  }, [document, balance, eq, space, dynamics, fullMix]);
+  }, [document, balance, eq, space, dynamics, fullMix, reference.listening, reference.mixProfile, reference.selected]);
+
+  // A selected reference plays beside the stems on the same clock: load it into the engine (once per selection).
+  useEffect(() => {
+    const engine = engineRef.current as (RunningEngine & Partial<NativeAudioEngine>) | null;
+    const song = useAppStore.getState().document;
+    if (!engine || !song || !nativeRef.current || !engine.loadWithReference) return;
+    if (loadedReference.current === reference.selected) return;
+    loadedReference.current = reference.selected;
+    if (playingRef.current) {
+      engine.pause();
+      setPlaying(false);
+    }
+    void engine.loadWithReference(song, reference.selected).then(() => {
+      publishedKey.current = null;
+      publish(engine, useAppStore.getState().document ?? song, true);
+      engine.seek(useAppStore.getState().document?.uiState.playheadSeconds ?? 0);
+    });
+  }, [reference.selected, engineKind]);
 
   /** Sends gain, section gain, EQ, pan/width, and dynamics only when what the engine would hear changed. */
   function publish(engine: RunningEngine, song: ProjectDocument, native: boolean): void {
     const state = useAppStore.getState();
     const monitor = monitorState(song, state.balance, state.eq, state.space, state.dynamics, state.fullMix);
-    const key = `${native}:${monitorKey(monitor)}:${song.tracks.map((track) => `${track.muted}:${track.solo}`).join("|")}`;
+    const ref = referenceMonitor(state.reference, native && loadedReference.current !== null);
+    const key = `${native}:${monitorKey(monitor)}:${song.tracks.map((track) => `${track.muted}:${track.solo}`).join("|")}:${JSON.stringify(ref)}`;
     if (key === publishedKey.current) return;
     publishedKey.current = key;
-    publishMonitor(engine, song, monitor, native);
+    publishMonitor(engine, song, monitor, native, ref);
   }
 
   useEffect(() => {

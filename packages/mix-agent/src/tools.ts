@@ -15,8 +15,7 @@ import {
   type MixChange,
   type MixConstraints,
   type MixGoal,
-  type MixStrength,
-} from "@audiosous/mix-planner";
+  type MixStrength, currentSpatialOf } from "@audiosous/mix-planner";
 import { describeFilter } from "@audiosous/eq-planner";
 import { describeProcessing } from "@audiosous/dynamics-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
@@ -148,7 +147,7 @@ function missingNote(document: ProjectDocument, inputs: LoadedInputs | null): st
 /** One change in words, with what it edits and why. `full` adds its predicted effect and the current setting. */
 function changeView(document: ProjectDocument, change: MixChange, detail: "summary" | "full" = "full"): Record<string, unknown> {
   const name = names(document);
-  const current = change.evidence.kind === "space" ? change.evidence.current : undefined;
+  const current = currentSpatialOf(change);
   return {
     id: change.id,
     track: name(change.trackId),
@@ -274,7 +273,7 @@ function candidateCard(document: ProjectDocument, entry: CandidateEntry, plan: F
     candidateId: entry.id,
     label: entry.label,
     headline: plan.summary.headline,
-    changes: includedChanges(plan).map((change) => `${name(change.trackId)}: ${describeChange(change.processing, name, change.evidence.kind === "space" ? change.evidence.current : undefined)}${change.scope.type === "section" ? ` (${scopeName(document, change.scope)})` : ""}`),
+    changes: includedChanges(plan).map((change) => `${name(change.trackId)}: ${describeChange(change.processing, name, currentSpatialOf(change))}${change.scope.type === "section" ? ` (${scopeName(document, change.scope)})` : ""}`),
     stale,
   };
 }
@@ -783,7 +782,7 @@ const refineCandidate = {
       const selected = selectChanges(ctx, plan, operation.target);
       if (!selected.ok) return { ok: false, error: selected.error };
       for (const change of selected.changes) {
-        const before = describeChange(change.processing, name, change.evidence.kind === "space" ? change.evidence.current : undefined);
+        const before = describeChange(change.processing, name, currentSpatialOf(change));
         if (operation.action === "scale") {
           let factor: number;
           if (operation.statedFactor !== undefined) {
@@ -801,7 +800,7 @@ const refineCandidate = {
         else if (operation.action === "accept") plan = setChangeStatus(plan, change.id, "accepted");
         else plan = resetChange(plan, change.id);
         const after = plan.changes.find((item) => item.id === change.id)!;
-        const now = describeChange(after.processing, name, after.evidence.kind === "space" ? after.evidence.current : undefined);
+        const now = describeChange(after.processing, name, currentSpatialOf(after));
         lines.push(`${name(change.trackId)}: ${operation.action === "remove" ? `${before} removed` : operation.action === "restore" ? `${now} restored` : operation.action === "accept" ? `${now} accepted` : `${before} → ${now}`}`);
       }
     }
@@ -899,7 +898,7 @@ const compareCandidates = {
     const document = ctx.env.document();
     const name = names(document);
     const key = (change: MixChange) => `${change.trackId}|${processorKind(change.processing)}|${change.scope.type === "section" ? change.scope.sectionId : "global"}`;
-    const words = (change: MixChange) => `${name(change.trackId)}${change.scope.type === "section" ? ` (${scopeName(document, change.scope)})` : ""}: ${describeChange(change.processing, name, change.evidence.kind === "space" ? change.evidence.current : undefined)}`;
+    const words = (change: MixChange) => `${name(change.trackId)}${change.scope.type === "section" ? ` (${scopeName(document, change.scope)})` : ""}: ${describeChange(change.processing, name, currentSpatialOf(change))}`;
     const a = new Map(includedChanges(left.plan).map((change) => [key(change), change]));
     const b = new Map(includedChanges(right.plan).map((change) => [key(change), change]));
     return {
@@ -976,7 +975,7 @@ export function applyCurrent(ctx: ToolContext, mode: "all" | "accepted"): ToolRe
   const included = plan.changes.filter((change) => (mode === "accepted" ? change.status === "accepted" : change.status === "proposed" || change.status === "accepted"));
   if (included.length === 0) return { ok: false, error: mode === "accepted" ? "No change is accepted yet. Nothing was applied." : "Every change is rejected. Nothing was applied." };
   const name = names(document);
-  const lines = included.map((change) => `${name(change.trackId)}: ${describeChange(change.processing, name, change.evidence.kind === "space" ? change.evidence.current : undefined)}${change.scope.type === "section" ? ` in ${scopeName(document, change.scope)}` : ""}`);
+  const lines = included.map((change) => `${name(change.trackId)}: ${describeChange(change.processing, name, currentSpatialOf(change))}${change.scope.type === "section" ? ` in ${scopeName(document, change.scope)}` : ""}`);
   if (Math.abs(plan.candidateTrim.gainDb) >= 0.05) lines.push(`Safety trim ${plan.candidateTrim.gainDb.toFixed(1)} dB on every stem`);
   const result = ctx.env.apply(plan, mode);
   if (!result.ok) return { ok: false, error: `Nothing was applied. ${result.message}` };

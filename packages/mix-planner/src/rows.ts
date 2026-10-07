@@ -3,7 +3,7 @@ import { dynamicsWarnings, evaluateDynamics, type DynamicsRecommendation } from 
 import { bandPowerGain, evaluateFilter, needsReview as eqNeedsReview, type EqEvidence, type EqRecommendation } from "@audiosous/eq-planner";
 import { normalizeEqFilter, normalizePan, normalizeWidth, type EqFilter, type ProjectDocument } from "@audiosous/project-model";
 import { evaluateSpatial, safetyWarnings, type SpatialRecommendation } from "@audiosous/spatial-planner";
-import { clamp, describeChange, domainOf, fnv1a, nodeIdFor, panWords, round2, round3, scopeKey } from "./changes";
+import { clamp, describeChange, domainOf, fnv1a, nodeIdFor, panWords, round2, round3, scopeKey, currentSpatialOf } from "./changes";
 import { changeCost, type CostContext } from "./cost";
 import type { ChangeEvaluation, ChangeProcessing, MixChange, MixScope, MixSource } from "./model";
 
@@ -184,6 +184,14 @@ export function reevaluate(ctx: CostContext & { names: (trackId: string) => stri
       summary: `${result.regionChangeDb.toFixed(1)} dB on this stem in its range, pulling it ${result.gapReductionDb.toFixed(1)} dB further under the part it protects.`,
     };
     review = review || eqNeedsReview(processing.filter, change.confidence, evidence.evidence.replaces);
+  } else if (evidence.kind === "reference") {
+    // A move toward a reference is re-measured against it by planning again; an edit is checked for its bounds here.
+    const boost = processing.type === "eq" && processing.filter.kind !== "high-pass" && processing.filter.kind !== "low-pass" ? Math.max(0, processing.filter.gainDb) : 0;
+    evaluation = { ...evaluation, levelChangeDb: 0, peakChangeDb: round2(boost * 0.5), summary: `Toward the reference in the ${evidence.region}; this stem carries ${Math.round(evidence.share * 100)}% of the mix there. Plan again to re-measure an edited value.` };
+    if (processing.type === "spatial" && processing.width !== null && processing.width > 1.6) {
+      warnings.push(`Width ${Math.round(processing.width * 100)}% is wider than Audiosous goes on its own; check it in mono.`);
+      review = true;
+    }
   } else if (processing.type === "spatial" && evidence.kind === "space") {
     const pan = processing.pan === null ? null : normalizePan(processing.pan);
     const width = processing.width === null ? null : normalizeWidth(processing.width);
@@ -213,7 +221,7 @@ export function reevaluate(ctx: CostContext & { names: (trackId: string) => stri
     };
     review = review || warnings.length > 0;
   }
-  const current = change.evidence.kind === "space" ? change.evidence.current : undefined;
+  const current = currentSpatialOf(change);
   const cost = changeCost(ctx, { trackId: change.trackId, scope: change.scope, processing, replacesNodeId: change.replacesNodeId, reductionP95Db: reductionP95 }, current);
   const status = change.status === "accepted" || change.status === "rejected" ? change.status : review ? "needs-review" : change.status === "needs-review" && !change.edited ? "needs-review" : "proposed";
   return { ...change, evaluation, warnings: warnings.slice(0, 6), cost, status };
@@ -235,8 +243,8 @@ export function scaled(ctx: CostContext & { names: (trackId: string) => string }
   } else if (processing.type === "eq" && processing.filter.kind !== "high-pass" && processing.filter.kind !== "low-pass") {
     const replaced = change.evidence.kind === "eq" ? (change.evidence.evidence.replaces?.gainDb ?? 0) : 0;
     next = { type: "eq", filter: normalizeEqFilter({ ...processing.filter, gainDb: replaced + (processing.filter.gainDb - replaced) * share }) };
-  } else if (processing.type === "spatial" && change.evidence.kind === "space") {
-    const current = change.evidence.current;
+  } else if (processing.type === "spatial" && currentSpatialOf(change)) {
+    const current = currentSpatialOf(change)!;
     next = {
       type: "spatial",
       pan: processing.pan === null ? null : normalizePan(current.pan + (processing.pan - current.pan) * share),

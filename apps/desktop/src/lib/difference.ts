@@ -37,12 +37,15 @@ function cached(plan: object, document: ProjectDocument, build: () => MixDiffere
 
 export function differenceFor(tab: PlanTab, document: ProjectDocument, state: Sessions): ActiveDifference | null {
   switch (tab) {
+    case "reference":
+      // A plan toward a reference is a Full Mix plan in the Full Mix session.
+      return differenceFor("full", document, state);
     case "full": {
       const full = state.fullMix;
       if (!full.plan || full.phase !== "ready" || fullMixPlanIsStale(full.plan, document, full.fingerprints, full.settings)) return null;
       const diff = cached(full.plan, document, () => fullMixDifference(document, full.plan!, { envelopes: cachedEnvelopes(document.project.id) ?? undefined }));
       const auto = state.autoMix.phase === "ready" && state.autoMix.planCreatedAt === full.plan.createdAt;
-      return diff ? { tab, label: auto ? "Recommended Mix" : "Full Mix Candidate", diff } : null;
+      return diff ? { tab, label: auto ? "Recommended Mix" : full.plan.reference ? `Toward “${full.plan.reference.name}”` : "Full Mix Candidate", diff } : null;
     }
     case "gain": {
       const plan = state.balance.phase === "ready" ? state.balance.plan : null;

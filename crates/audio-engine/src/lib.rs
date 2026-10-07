@@ -18,6 +18,7 @@ mod loudness;
 mod limiter;
 mod encode;
 mod export;
+mod reference;
 mod source;
 mod spatial;
 mod stereo;
@@ -39,6 +40,7 @@ pub use loudness::{to_db, true_peak_factor, LoudnessMeter, LoudnessReport, TrueP
 pub use limiter::{LimiterStats, TruePeakLimiter, LIMITER_LOOKAHEAD_MS, LIMITER_RELEASE_MS};
 pub use encode::{decode_and_measure, lame_available, open_writer, AudioWriter, DecodedFile, ExportFormat, ExportMetadata, Mp3Quality, WavDepth};
 pub use export::{export_mix, finish_export, plan_master, prepare_export, ExportJob, ExportProgress, ExportReport, ExportSettings, ExportSource, ExportStage, LimitingChoice, LoudnessTarget, MasterPlan, MixAnalysis, PreparedExport, MAX_FLAC_RATE, HEAVY_MAX_REDUCTION_DB, HEAVY_SHARE_OVER_3DB};
+pub use reference::{decode_to_48k, import_reference, profile as song_profile, profile_edges, SongProfile, PROFILE_BANDS, PROFILE_RATE, PROFILE_VERSION};
 pub use render::{render_mix, FrameSource, GraphTrack, MixGraph, ProxySource, RenderProgress, SourceStream, CANCELLED};
 pub use proxy::{ensure_proxy, proxy_file_name, PLAYBACK_RATE, PROXY_VERSION, RESAMPLER_ID};
 pub use stereo::{cached_stereo_frames, measure_stereo_frames, stereo_band_edges, StereoFrames, STEREO_BANDS, STEREO_VERSION};

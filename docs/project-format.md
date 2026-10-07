@@ -197,6 +197,10 @@ Auto Mix writes exactly what Full Mix writes, and only on Apply Mix: one update,
 
 Export reads the project and its `media/` stems and writes only the file chosen in the save dialog. Its temporaries (`.<name>.render.partial`, `.<name>.encode.partial`) sit beside that file and are removed when it finishes, fails, or is cancelled. Export settings are not stored in `project.amix` (the dialog remembers the last ones per user, outside the project), and nothing in the bundle changes.
 
+### Reference songs
+
+`references/<name>.wav` holds a reference song decoded to 48 kHz stereo float, and `cache/reference/<name>.json` its measurement. Neither is named in `project.amix`; the Reference tab lists the folder. The file the person chose is only read. Deleting `references/` removes the references and nothing else.
+
 ### Mix variants and comparison
 
 New projects contain two variants: `Original` and `Working Mix`. `activeMixVariantId` is the variant the transport will play. `comparison.scope` is one of:

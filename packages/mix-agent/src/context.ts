@@ -1,4 +1,4 @@
-import { describeChange, processorKind } from "@audiosous/mix-planner";
+import { describeChange, processorKind, currentSpatialOf } from "@audiosous/mix-planner";
 import type { ProjectDocument, Track } from "@audiosous/project-model";
 import { AGENT_LIMITS, type AgentSession, type TranscriptEntry } from "./contract";
 import type { ConstraintReading, DirectEdit } from "./language";
@@ -139,9 +139,9 @@ export function buildContext(input: ContextInput): { text: string; json: string 
                 stem: name(change.trackId),
                 scope: change.scope.type === "section" ? sectionNamesOf(document, [change.scope.sectionId]) : "whole song",
                 kind: processorKind(change.processing),
-                change: describeChange(change.processing, name, change.evidence.kind === "space" ? change.evidence.current : undefined),
+                change: describeChange(change.processing, name, currentSpatialOf(change)),
                 status: change.status,
-                ...(change.edited ? { editedByPerson: true, asPlanned: describeChange(change.planned, name, change.evidence.kind === "space" ? change.evidence.current : undefined) } : {}),
+                ...(change.edited ? { editedByPerson: true, asPlanned: describeChange(change.planned, name, currentSpatialOf(change)) } : {}),
                 problems: change.problemIds,
               })),
             problems: candidate.problems.map((problem) => ({ id: problem.id, title: problem.title, outcome: problem.outcome, severity: problem.severity, after: problem.severityAfter })),

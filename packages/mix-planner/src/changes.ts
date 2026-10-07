@@ -254,3 +254,10 @@ export function round3(value: number): number {
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
+
+/** Pan and width a spatial change starts from: from the Space planner's evidence or a reference plan's. */
+export function currentSpatialOf(change: Pick<MixChange, "evidence">): { pan: number; width: number } | undefined {
+  if (change.evidence.kind === "space") return change.evidence.current;
+  if (change.evidence.kind === "reference") return change.evidence.current ?? undefined;
+  return undefined;
+}

@@ -20,6 +20,7 @@ export type TaskKind =
   | "dynamics-plan"
   | "full-mix"
   | "auto-mix"
+  | "reference"
   | "assistant"
   | "export";
 
@@ -176,6 +177,7 @@ const KIND_ORDER: TaskKind[] = [
   "playback-proxy",
   "export",
   "auto-mix",
+  "reference",
   "full-mix",
   "assistant",
   "gain-plan",

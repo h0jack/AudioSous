@@ -174,15 +174,31 @@ export function monitorPanAt(state: MonitorState, trackId: string, seconds: numb
   return spatialAuditionAt(state.spatialAudition, trackId, seconds).pan;
 }
 
-export function publishMonitor(engine: AudioEngine, document: ProjectDocument, state: MonitorState, native: boolean): void {
+/**
+ * The reference A/B: while `listening`, every project stem is muted and the reference track plays at `gainDb`
+ * (the mix's loudness minus the reference's), on the same clock. Otherwise the reference track is silent.
+ */
+export interface ReferenceMonitor {
+  trackId: string;
+  listening: boolean;
+  gainDb: number;
+}
+
+export function publishMonitor(engine: AudioEngine, document: ProjectDocument, state: MonitorState, native: boolean, reference: ReferenceMonitor | null = null): void {
   const time = engine.getCurrentTime();
   const spatial = native && Boolean(engine.setTrackSpatial);
+  const listening = Boolean(reference?.listening);
   for (const track of document.tracks) {
     const gain = native ? (state.gains.get(track.id) ?? track.gainDb) : monitorGainAt(state, track.id, time);
     engine.setTrackGain(track.id, gain);
     if (!spatial) engine.setTrackPan(track.id, monitorPanAt(state, track.id, time));
-    engine.setMute(track.id, track.muted);
-    engine.setSolo(track.id, track.solo);
+    engine.setMute(track.id, listening || track.muted);
+    engine.setSolo(track.id, listening ? false : track.solo);
+  }
+  if (reference) {
+    engine.setTrackGain(reference.trackId, Math.max(-60, Math.min(12, reference.gainDb)));
+    engine.setMute(reference.trackId, !listening);
+    engine.setSolo(reference.trackId, false);
   }
   engine.setGainRegions?.(native ? state.gainRegions : []);
   engine.setTrackEq?.(state.eq);

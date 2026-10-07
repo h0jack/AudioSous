@@ -1,5 +1,6 @@
 mod agent_host;
 mod export_host;
+mod reference_host;
 mod analysis;
 mod audio_host;
 mod bundle;
@@ -548,6 +549,26 @@ fn export_reveal(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn reference_import(project_file: String, source_path: String) -> Result<reference_host::ReferenceInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || reference_host::import(&project_file, &source_path)).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn reference_list(project_file: String) -> Result<Vec<reference_host::ReferenceInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || reference_host::list(&project_file)).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn reference_delete(project_file: String, name: String) -> Result<(), String> {
+    reference_host::delete(&project_file, &name)
+}
+
+#[tauri::command]
+async fn mix_profile(project_file: String, request: reference_host::MixProfileRequest) -> Result<audiosous_audio::SongProfile, String> {
+    tauri::async_runtime::spawn_blocking(move || reference_host::mix_profile(&project_file, request)).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn export_mp3_available() -> Result<String, String> {
     audiosous_audio::lame_available()
 }
@@ -603,7 +624,11 @@ pub fn run() {
             export_decide,
             export_cancel,
             export_reveal,
-            export_mp3_available
+            export_mp3_available,
+            reference_import,
+            reference_list,
+            reference_delete,
+            mix_profile
         ])
         .run(tauri::generate_context!())
         .expect("Audiosous failed to start");

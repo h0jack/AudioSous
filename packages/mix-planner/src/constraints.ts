@@ -1,6 +1,6 @@
 import { emptyProcessingGraph, type ProjectDocument } from "@audiosous/project-model";
 import { z } from "zod";
-import { clampGain, round3 } from "./changes";
+import { clampGain, round3, currentSpatialOf } from "./changes";
 import { changeCost, type CostContext } from "./cost";
 import type { MixChange } from "./model";
 
@@ -163,7 +163,7 @@ function rescoped(ctx: CostContext, change: MixChange, sectionId: string): MixCh
     replacesNodeId: null,
     reasons: change.reasons.map((reason, index) => (index === 0 ? `${reason} (in this section only)`.slice(0, 600) : reason)),
   };
-  const current = change.evidence.kind === "space" ? change.evidence.current : undefined;
+  const current = currentSpatialOf(change);
   return { ...moved, cost: round3(changeCost(ctx, moved, current)) };
 }
 

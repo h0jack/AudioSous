@@ -8,8 +8,7 @@ import {
   type MixChange,
   type MixGoal,
   type MixProblem,
-  type MixStrength,
-} from "@audiosous/mix-planner";
+  type MixStrength, currentSpatialOf } from "@audiosous/mix-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useDifference } from "../lib/difference";
@@ -49,7 +48,7 @@ const GOAL_LABELS: Record<MixGoal, string> = {
   controlled: "Controlled",
 };
 
-const SOURCE_LABELS: Record<MixChange["source"], string> = { level: "Level", eq: "EQ", space: "Space", dynamics: "Dynamics", "full-mix": "Full Mix" };
+const SOURCE_LABELS: Record<MixChange["source"], string> = { level: "Level", eq: "EQ", space: "Space", dynamics: "Dynamics", "full-mix": "Full Mix", reference: "Reference" };
 
 export function FullMixPanel({ document, playback }: { document: ProjectDocument; playback: Playback }) {
   const fullMix = useAppStore((state) => state.fullMix);
@@ -247,6 +246,7 @@ function Summary({ plan, audition }: { plan: FullMixPlan; audition: string | nul
     <div>
       <p className="max-w-3xl text-sm leading-relaxed text-ink">{summary.headline}</p>
       {plan.constraints ? <ConstraintLine plan={plan} /> : null}
+      {plan.reference ? <p className="mt-1 text-xs text-accent">Planned toward the reference “{plan.reference.name}”. Compare against it in the Reference tab.</p> : null}
       <p className="mt-1 text-xs text-muted" aria-label="Plan summary">
         {summary.problemCount} {summary.problemCount === 1 ? "issue" : "issues"} · {summary.changeCount} selected {summary.changeCount === 1 ? "change" : "changes"} · {summary.rejectedCount} rejected {summary.rejectedCount === 1 ? "alternative" : "alternatives"} · Overall confidence {Math.round(summary.confidence * 100)}%
         {processing ? ` · ${processing}` : ""}
@@ -411,7 +411,7 @@ function ChangeRow({ document, change, fullMix, disabled }: { document: ProjectD
   const names = (id: string) => trackName(document, id);
   const section = change.scope.type === "section" ? document.sections.find((item) => item.id === (change.scope as { sectionId: string }).sectionId)?.name : null;
   const focus = fullMix.focus?.kind === "change" && fullMix.focus.id === change.id ? fullMix.focus.side : null;
-  const current = change.evidence.kind === "space" ? change.evidence.current : undefined;
+  const current = currentSpatialOf(change);
   return (
     <tr className="border-t border-line align-top">
       <td className="py-1 pr-2 text-ink">{change.processing.type === "trim" ? "Every stem" : names(change.trackId)}</td>

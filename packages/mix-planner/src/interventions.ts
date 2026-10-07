@@ -1,7 +1,7 @@
 import { formatSignedDb } from "@audiosous/balance-planner";
 import { bandGrid, evaluateFilter, formatHz, musicalFrequency, type EqEvidence } from "@audiosous/eq-planner";
 import { normalizeEqFilter, type ProjectDocument } from "@audiosous/project-model";
-import { clamp, describeChange, round2, round3, sameScope } from "./changes";
+import { clamp, describeChange, round2, round3, sameScope, currentSpatialOf } from "./changes";
 import { EXTRA_PROCESSOR_COST, isAnchor } from "./cost";
 import type { MixChange, MixProblemType } from "./model";
 import { HEADROOM_PROBLEM_DBFS, widthSeverity, type DetectedProblem } from "./problems";
@@ -59,6 +59,8 @@ export function problemWeight(problem: DetectedProblem, settings: FullMixSetting
     "excessive-width": 0.95,
     "section-contrast": 0.8,
     intent: 0.75,
+    "reference-tonal": 0.8,
+    "reference-width": 0.7,
   };
   let weight = base[problem.type];
   const goal = settings.goal;
@@ -502,7 +504,7 @@ function meanBands(inputs: MixInputs, trackId: string): number[] | null {
 export function changeLabel(ctx: Pick<InterventionContext, "names" | "document">, change: MixChange): string {
   if (change.processing.type === "trim") return describeChange(change.processing, ctx.names);
   const where = change.scope.type === "section" ? ` in ${ctx.document.sections.find((section) => section.id === (change.scope as { sectionId: string }).sectionId)?.name ?? "a section"}` : "";
-  return `${ctx.names(change.trackId)} ${lowerFirst(describeChange(change.processing, ctx.names, change.evidence.kind === "space" ? change.evidence.current : undefined))}${where}`;
+  return `${ctx.names(change.trackId)} ${lowerFirst(describeChange(change.processing, ctx.names, currentSpatialOf(change)))}${where}`;
 }
 
 function lowerFirst(text: string): string {

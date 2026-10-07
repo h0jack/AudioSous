@@ -35,7 +35,12 @@ export interface DynamicsMeterReading {
   transientDb: number;
 }
 
+/** The engine's id for the reference song's track (never a project track id). */
+export const REFERENCE_TRACK_ID = "__reference";
+
 export interface NativeAudioEngine extends AudioEngine {
+  /** Loads the project again with a reference song beside the stems (null: none). */
+  loadWithReference(project: ProjectDocument, reference: string | null): Promise<void>;
   poll(): Promise<NativeEngineStatus>;
   dynamicsMeter(): Promise<DynamicsMeterReading[]>;
 }
@@ -47,7 +52,12 @@ export function audioEngineKind(): Promise<"native" | "legacy"> {
 export function createNativeAudioEngine(projectFile: string): NativeAudioEngine {
   let position = 0;
   let duration = 0;
+  let reference: string | null = null;
   return {
+    async loadWithReference(project: ProjectDocument, name: string | null) {
+      reference = name;
+      await this.loadProject(project, { resolve: (path: string) => path });
+    },
     async loadProject(project: ProjectDocument) {
       duration = project.project.durationSeconds;
       position = project.uiState.playheadSeconds;
@@ -64,6 +74,7 @@ export function createNativeAudioEngine(projectFile: string): NativeAudioEngine 
             muted: track.muted,
             solo: track.solo,
           })),
+          reference,
         },
       });
     },

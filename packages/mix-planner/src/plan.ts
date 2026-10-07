@@ -4,7 +4,7 @@ import { DYNAMICS_PLANNER_VERSION, normalizeProcessing, type DynamicsPatch } fro
 import { EDIT_LIMITS, EQ_PLANNER_VERSION } from "@audiosous/eq-planner";
 import { dynamicsIdentity, normalizeEqFilter, normalizePan, normalizeWidth, processingIdentity, spatialIdentity, withUpdatedAt, type EqFilter, type ProjectDocument } from "@audiosous/project-model";
 import { SPATIAL_PLANNER_VERSION } from "@audiosous/spatial-planner";
-import { addTrim, applyChanges, clamp, clampGain, fnv1a, round2 } from "./changes";
+import { addTrim, applyChanges, clamp, clampGain, fnv1a, round2, currentSpatialOf } from "./changes";
 import { candidatePeak, mixLoudness, type StemLevel } from "./evaluate";
 import type { ChangeProcessing, ChangeStatus, FullMixPlan, MixChange } from "./model";
 import { reevaluate } from "./rows";
@@ -130,8 +130,8 @@ function scalePatch(change: MixChange, factor: number): ChangePatch | null {
       return { gainDb: round2(replaced + (processing.filter.gainDb - replaced) * factor) };
     }
     case "spatial": {
-      if (change.evidence.kind !== "space") return null;
-      const current = change.evidence.current;
+      const current = currentSpatialOf(change);
+      if (!current) return null;
       return {
         pan: processing.pan === null ? null : current.pan + (processing.pan - current.pan) * factor,
         width: processing.width === null ? null : current.width + (processing.width - current.width) * factor,

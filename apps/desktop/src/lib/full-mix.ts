@@ -16,6 +16,7 @@ import {
   type MixInputs,
   type MixStrength,
   type PlanFullMixInput,
+  type PlanReferenceInput,
 } from "@audiosous/mix-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
 import { getPlatform } from "../platform";
@@ -215,7 +216,8 @@ export async function loadMixInputs(platform: DesktopPlatform, projectFile: stri
 export type WorkerJob =
   | { kind: "plan"; input: PlanFullMixInput }
   | { kind: "read"; document: ProjectDocument; inputs: MixInputs & { mixPeakDbfs: number | null }; strength: MixStrength; now: string }
-  | { kind: "simplify"; input: PlanFullMixInput; plan: FullMixPlan; keep: number };
+  | { kind: "simplify"; input: PlanFullMixInput; plan: FullMixPlan; keep: number }
+  | { kind: "reference"; input: PlanReferenceInput };
 
 /** Runs a planning job in a Web Worker in the desktop app; directly where there is no worker (tests). */
 export function runOffThread<T>(job: WorkerJob): Promise<T> {
@@ -263,7 +265,7 @@ export function songWindows(document: ProjectDocument): Array<[number, number]> 
 export function problemWindows(plan: FullMixPlan): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const change of plan.changes.filter((item) => changeIncluded(item, "preview"))) {
-    const windows = change.evidence.kind === "level" ? [] : change.evidence.evidence.windows;
+    const windows = change.evidence.kind === "level" || change.evidence.kind === "reference" ? [] : change.evidence.evidence.windows;
     for (const window of windows.slice(0, 3)) out.push([window[0], Math.min(window[1], window[0] + 8)]);
   }
   return out;

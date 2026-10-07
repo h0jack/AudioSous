@@ -1225,6 +1225,29 @@ original stems (media/) ──► SourceStream: decoded in blocks; resampled onc
 
 **Concurrency with playback.** Export runs on one thread with buffered reads; playback keeps its reader threads and the callback. Allowed at the same time, measured below in the milestone notes. Log events: `export.start`, `export.complete` (format, rate, duration, loudness, true peak, limiter, render speed, timings, peak memory), `export.failed`, `export.cancel`.
 
+## Reference songs
+
+A reference is a finished song the person wants the mix to be like. It is compared with the mix, played beside it, and used to plan stem changes; it never changes the project file.
+
+```text
+song.(wav|aiff|flac|mp3) ──► decoded, resampled once to 48 kHz (256-tap sinc) ──► references/<name>.wav + its profile
+saved mix ──► rendered from the playback proxies through the playback DSP ──► profile (same measurement)
+         ──► comparison: tonal shape per region, sides vs center per region, low-end mono-ness, dynamics, loudness
+         ──► A/B: the reference as a hidden engine track on the same clock, at the mix's loudness
+         ──► planReferenceMatch ──► a Full Mix candidate (reviewed, previewed, applied as one undo step)
+                                ──► rendered and measured against the reference again
+```
+
+**Profile** (`crates/audio-engine/src/reference.rs`): over the body of the song (frames within 20 dB of the loud end, so an intro or a fade does not tilt it), mid and side power on the planners' 24-band grid (20 Hz – 20 kHz), loudness, loudness range, true peak, crest, and the correlation under 120 Hz. **Comparison** (`packages/mix-planner/src/reference.ts`): both tonal shapes are levelled over 100 Hz – 10 kHz, so loudness never reads as tone, and compared in six regions (sub, bass, low-mids, mids, presence, air); width as the side-to-center ratio per region from 150 Hz up; plain sentences for what is past 1 dB (tone), 3 dB (width), 1 LU (loudness), or 2 dB (peak-to-loudness). Loudness and density are export matters: the comparison says so, and Export offers "Match reference loudness" (the reference's integrated loudness, −1 dBTP), still guarded by the heavy-limiting decision.
+
+**Planning toward a reference.** The reference planner uses the planners' own models: the EQ planner's spectral model (each stem's band power as heard) and the Space planner's stereo model, rebuilt on a copy of the project with a candidate written in. Its predicted change of the mix's levelled shape is added to the gap measured on audio, so the model only has to be right about differences. Regions in excess are worked first (cuts), then shortfalls; for each, the stems carrying at least 12% of the region are the candidates (an EQ bell or shelf on one or two of them, or a fader move on a stem that lives in that region), sized from the stem's share and then once more from what the model predicts, inside the strength's limits (Normal: cuts to 4 dB, boosts to 3 dB, width ±30%, at most six changes), and kept only when it closes at least a quarter of the gap for more than its cost (the Full Mix cost model). A saved bell of similar width in the region is edited rather than stacked. A plan closes at most 70% of a gap: a reference is a direction. Protected stems and ruled-out domains are honoured. The result is a Full Mix plan (`reference` holds the region gaps before and predicted after) with problems "Tonal balance vs reference" and "Width vs reference", changes whose evidence is the region, the stem's share, and the gap, and every Full Mix tool (A/B, edit, Changes view, apply, undo, the assistant). After planning, the desktop renders the candidate and measures it against the reference: the Reference tab shows the gap now, as planned, and as measured.
+
+**A/B.** The selected reference is loaded into the native engine as an extra track (`__reference`, never a project track) on the same clock and buffers. "Reference" mutes every stem and plays it at the mix's measured loudness minus its own; "Your mix" mutes it. The playhead does not move. The mix is measured as the engine plays it; a changed mix is measured again.
+
+**Storage.** `references/<name>.wav` (48 kHz float) and `cache/reference/<name>.json` inside the project folder; the chosen file is only read. Log events: `reference.import`, `reference.listen`, `reference.plan`.
+
+**Limits.** The comparison reads long-term averages: arrangement, sound choice, and the reference's mastering (multiband compression, saturation, limiting) are not separated from its mix. Tonal moves are static EQ and faders on stems; width moves are stem width; dynamics are not planned toward a reference. A gap that needs a sound a stem does not have cannot be closed by EQ, and the plan leaves it with the reason.
+
 ## Tauri and Web Audio
 
 The desktop shell owns the device. The webview does not stream PCM for playback. Header inspection still uses small ranged reads. Desktop waveform measurement reads each stem in Rust and reports progress while it runs. Absolute paths are resolved in the shell and are not written into `project.amix`.

@@ -1,7 +1,7 @@
 import { ANALYSIS_ENGINE_VERSION } from "@audiosous/analysis-contract";
 import { confidenceLabel, formatSignedDb, headroomTrimDb, type SourceFingerprint } from "@audiosous/balance-planner";
 import type { ProjectDocument } from "@audiosous/project-model";
-import { clamp, describeChange, fnv1a, processorKind, round2, round3 } from "./changes";
+import { clamp, describeChange, fnv1a, processorKind, round2, round3, currentSpatialOf } from "./changes";
 import { costLabel } from "./cost";
 import { evaluateCandidate, metricsOf, rebase, type CandidateResult, type EvaluationContext, type StemLevel } from "./evaluate";
 import { CONSTRAINED_NOTE, changeLabel, scopeShare, generateAlternatives, reductionOf, type Alternative, type InterventionContext } from "./interventions";
@@ -421,7 +421,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
             problemIds: [problem.id],
             label: selected.label,
             kind: selected.kind,
-            items: selected.changes.map((change) => ({ trackId: change.trackId, domain: change.domain, description: describeChange(change.processing, names, change.evidence.kind === "space" ? change.evidence.current : undefined) })),
+            items: selected.changes.map((change) => ({ trackId: change.trackId, domain: change.domain, description: describeChange(change.processing, names, currentSpatialOf(change)) })),
             changeIds: decision.changeIds.filter((id) => final.changes.some((change) => change.id === id)),
             cost: selected.cost,
             confidence: selected.confidence,
@@ -437,7 +437,7 @@ export function planFullMix(input: PlanFullMixInput): FullMixPlan {
             problemIds: [problem.id],
             label: alternative.label,
             kind: alternative.kind,
-            items: alternative.changes.map((change) => ({ trackId: change.trackId, domain: change.domain, description: describeChange(change.processing, names, change.evidence.kind === "space" ? change.evidence.current : undefined) })),
+            items: alternative.changes.map((change) => ({ trackId: change.trackId, domain: change.domain, description: describeChange(change.processing, names, currentSpatialOf(change)) })),
             changeIds: [],
             cost: alternative.cost,
             confidence: alternative.confidence,
@@ -705,7 +705,7 @@ export function simplifyFullMix(input: PlanFullMixInput, plan: FullMixPlan, opti
     const track = document.tracks.find((item) => item.id === id);
     return track?.customLabel ?? track?.name ?? id;
   };
-  const label = (change: MixChange) => `${names(change.trackId)} ${describeChange(change.processing, names, change.evidence.kind === "space" ? change.evidence.current : undefined).toLowerCase()}`;
+  const label = (change: MixChange) => `${names(change.trackId)} ${describeChange(change.processing, names, currentSpatialOf(change)).toLowerCase()}`;
   let current = plan.changes.filter((change) => changeIncluded(change, "preview") && change.processing.type !== "trim");
   const cost = (changes: MixChange[]) => round3(changes.reduce((sum, change) => sum + change.cost, 0));
   const start = { changes: current.length, cost: cost(current) };

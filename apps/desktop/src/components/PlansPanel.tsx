@@ -7,6 +7,7 @@ import { DynamicsPanel } from "./DynamicsPanel";
 import { EqPanel } from "./EqPanel";
 import { FullMixPanel } from "./FullMixPanel";
 import { SpacePanel } from "./SpacePanel";
+import { ReferencePanel } from "./ReferencePanel";
 
 type Playback = ReturnType<typeof usePlayback>;
 
@@ -29,7 +30,8 @@ export function PlansPanel({ document, playback }: { document: ProjectDocument; 
   const spaceOpen = useAppStore((state) => state.space.open);
   const dynamicsOpen = useAppStore((state) => state.dynamics.open);
   const fullOpen = useAppStore((state) => state.fullMix.open);
-  const open = tab === "gain" ? balanceOpen : tab === "eq" ? eqOpen : tab === "space" ? spaceOpen : tab === "dynamics" ? dynamicsOpen : fullOpen;
+  const referenceOpen = useAppStore((state) => state.reference.selected !== null);
+  const open = tab === "gain" ? balanceOpen : tab === "eq" ? eqOpen : tab === "space" ? spaceOpen : tab === "dynamics" ? dynamicsOpen : tab === "reference" ? true : fullOpen;
   const rootRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ y: number; height: number } | null>(null);
   const [room, setRoom] = useState(0);
@@ -120,6 +122,7 @@ export function PlansPanel({ document, playback }: { document: ProjectDocument; 
         <Tab id="space" label={`Space${spaceOpen ? " ·" : ""}`} active={tab === "space"} />
         <Tab id="dynamics" label={`Dynamics${dynamicsOpen ? " ·" : ""}`} active={tab === "dynamics"} />
         <Tab id="full" label={`Full Mix${fullOpen ? " ·" : ""}`} active={tab === "full"} />
+        <Tab id="reference" label={`Reference${referenceOpen ? " ·" : ""}`} active={tab === "reference"} />
         {open ? (
           <button
             type="button"
@@ -140,6 +143,8 @@ export function PlansPanel({ document, playback }: { document: ProjectDocument; 
         <SpacePanel document={document} playback={playback} />
       ) : tab === "dynamics" ? (
         <DynamicsPanel document={document} playback={playback} />
+      ) : tab === "reference" ? (
+        <ReferencePanel document={document} playback={playback} />
       ) : (
         <FullMixPanel document={document} playback={playback} />
       )}
@@ -159,7 +164,7 @@ function readSaved(): { height: number | null; collapsed: boolean } {
   }
 }
 
-function Tab({ id, label, active }: { id: "gain" | "eq" | "space" | "dynamics" | "full"; label: string; active: boolean }) {
+function Tab({ id, label, active }: { id: "gain" | "eq" | "space" | "dynamics" | "full" | "reference"; label: string; active: boolean }) {
   return (
     <button
       type="button"

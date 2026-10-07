@@ -18,7 +18,7 @@ export type LoudnessPreset = ExportSession["preset"];
  * Audiosous's export presets: practical starting points with their numbers shown, not platform requirements.
  * Services normalize playback differently and change their policies.
  */
-export const LOUDNESS_PRESETS: Record<Exclude<LoudnessPreset, "custom">, { label: string; target: LoudnessTarget; note: string }> = {
+export const LOUDNESS_PRESETS: Record<Exclude<LoudnessPreset, "custom" | "reference">, { label: string; target: LoudnessTarget; note: string }> = {
   preserve: { label: "Preserve Mix Level", target: { mode: "preserve", ceilingDbtp: -1 }, note: "Keeps the mix's level. The limiter only acts if a true peak would pass −1.0 dBTP." },
   balanced: { label: "Streaming Balanced", target: { mode: "target", integratedLufs: -14, ceilingDbtp: -1 }, note: "−14 LUFS integrated, −1.0 dBTP true-peak ceiling." },
   loud: { label: "Streaming Loud", target: { mode: "target", integratedLufs: -10, ceilingDbtp: -1 }, note: "−10 LUFS integrated, −1.0 dBTP true-peak ceiling. Louder masters need more limiting." },
@@ -47,7 +47,8 @@ function remembered(document: ProjectDocument): { preset: LoudnessPreset; settin
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as { preset?: LoudnessPreset; settings?: Partial<ExportSettings> } | null;
     if (!saved?.settings?.format || !saved.settings.loudness || !saved.preset) return fallback;
-    return { preset: saved.preset, settings: { ...fallback.settings, format: saved.settings.format, sampleRate: saved.settings.sampleRate ?? fallback.settings.sampleRate, loudness: saved.settings.loudness } };
+    // A remembered reference match keeps its number but not the reference, which belongs to another project.
+    return { preset: saved.preset === "reference" ? "custom" : saved.preset, settings: { ...fallback.settings, format: saved.settings.format, sampleRate: saved.settings.sampleRate ?? fallback.settings.sampleRate, loudness: saved.settings.loudness } };
   } catch {
     return fallback;
   }

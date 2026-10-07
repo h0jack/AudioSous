@@ -48,7 +48,7 @@ export {
 } from "./plan";
 export type { ApplyFullMixResult, ChangePatch, FullMixApplyMode, FullMixAudition, FullMixAuditionOptions, RenderedCheck } from "./plan";
 
-export { applyChanges, describeChange, nodeIdFor, panWords, processorKind } from "./changes";
+export { applyChanges, currentSpatialOf, describeChange, nodeIdFor, panWords, processorKind } from "./changes";
 export { changeCost, costLabel, isAnchor } from "./cost";
 export { detectMixProblems } from "./problems";
 export type { DetectedProblem, ProblemMetric } from "./problems";
@@ -106,3 +106,5 @@ export type {
   SectionMarker,
   SpaceDifference,
 } from "./difference";
+export { REFERENCE_REGIONS, compareToReference, levelledShape, planReferenceMatch, songProfileSchema } from "./reference";
+export type { PlanReferenceInput, ReferenceComparison, ReferenceRegion, SongProfile, TonalGap, WidthGap } from "./reference";

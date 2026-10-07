@@ -42,7 +42,14 @@ fn unity_width() -> f32 {
 pub struct AudioLoadRequest {
     pub project_file: String,
     pub tracks: Vec<AudioLoadTrack>,
+    /// A reference song in the project's `references/` folder, played beside the stems on the same clock (muted
+    /// unless it is being compared).
+    #[serde(default)]
+    pub reference: Option<String>,
 }
+
+/// The engine's id for the reference track. Not a project track id (those are UUIDs).
+pub const REFERENCE_TRACK_ID: &str = "__reference";
 
 pub fn engine_kind() -> &'static str {
     match std::env::var("AUDIOSOUS_AUDIO_ENGINE") {
@@ -84,6 +91,24 @@ pub fn load_project(host: &AudioHost, request: AudioLoadRequest) -> Result<(), S
             width: track.width,
             muted: track.muted,
             solo: track.solo,
+        });
+    }
+    if let Some(name) = request.reference.as_deref() {
+        let source = crate::reference_host::reference_file(&request.project_file, name)?;
+        let meta = fs::metadata(&source).map_err(|error| error.to_string())?;
+        let modified_ns = meta.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map(|duration| u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)).unwrap_or(0);
+        tracks.push(LoadedTrack {
+            id: REFERENCE_TRACK_ID.into(),
+            label: format!("Reference: {name}"),
+            source_path: source,
+            proxy_path: cache.join(proxy_file_name(REFERENCE_TRACK_ID)?),
+            source_size: meta.len(),
+            source_modified_ns: modified_ns,
+            gain_db: 0.0,
+            pan: 0.0,
+            width: 1.0,
+            muted: true,
+            solo: false,
         });
     }
     host.engine.load(tracks)

@@ -75,9 +75,13 @@ function Setup({ document, job }: { document: ProjectDocument; job: ExportSessio
   const settings = job.settings;
   const rates = rateOptions(document, settings.format);
   const [custom, setCustom] = useState(() => (settings.loudness.mode === "target" ? { lufs: settings.loudness.integratedLufs, ceiling: settings.loudness.ceilingDbtp } : { lufs: -14, ceiling: -1 }));
+  const referenceInfo = useAppStore((state) => state.reference.references.find((item) => item.name === state.reference.selected) ?? null);
+  const referenceLufs = referenceInfo ? Math.round(Math.max(-30, Math.min(-5, referenceInfo.profile.loudness.integratedLufs)) * 10) / 10 : null;
   const choosePreset = (preset: LoudnessPreset) => {
     if (preset === "custom") setExportSettings({ loudness: { mode: "target", integratedLufs: custom.lufs, ceilingDbtp: custom.ceiling } }, "custom");
-    else setExportSettings({ loudness: LOUDNESS_PRESETS[preset].target }, preset);
+    else if (preset === "reference") {
+      if (referenceLufs !== null) setExportSettings({ loudness: { mode: "target", integratedLufs: referenceLufs, ceilingDbtp: -1 } }, "reference");
+    } else setExportSettings({ loudness: LOUDNESS_PRESETS[preset].target }, preset);
   };
   const updateCustom = (next: { lufs: number; ceiling: number }) => {
     setCustom(next);
@@ -127,12 +131,18 @@ function Setup({ document, job }: { document: ProjectDocument; job: ExportSessio
       <fieldset>
         <legend className="mb-1 text-[11px] tracking-wide text-muted uppercase">Export loudness</legend>
         <div className="space-y-1.5">
-          {(["preserve", "balanced", "loud", "custom"] as const).map((preset) => (
+          {(["preserve", "balanced", "loud", ...(referenceLufs !== null ? (["reference"] as const) : []), "custom"] as const).map((preset) => (
             <label key={preset} className="flex items-start gap-2 text-sm">
               <input type="radio" name="loudness" className="mt-1" checked={job.preset === preset} onChange={() => choosePreset(preset)} />
               <span>
-                <span className="text-ink">{preset === "custom" ? "Custom" : LOUDNESS_PRESETS[preset].label}</span>
-                <span className="block text-xs text-muted">{preset === "custom" ? "Your own integrated loudness and true-peak ceiling." : LOUDNESS_PRESETS[preset].note}</span>
+                <span className="text-ink">{preset === "custom" ? "Custom" : preset === "reference" ? `Match reference loudness (${referenceLufs!.toFixed(1)} LUFS)` : LOUDNESS_PRESETS[preset].label}</span>
+                <span className="block text-xs text-muted">
+                  {preset === "custom"
+                    ? "Your own integrated loudness and true-peak ceiling."
+                    : preset === "reference"
+                      ? `The loudness “${referenceInfo!.name}” measures, −1.0 dBTP ceiling. A dense reference can need heavy limiting on a more open mix; the export shows how much before writing.`
+                      : LOUDNESS_PRESETS[preset].note}
+                </span>
               </span>
             </label>
           ))}
@@ -148,6 +158,7 @@ function Setup({ document, job }: { document: ProjectDocument; job: ExportSessio
           </div>
         ) : null}
         {job.preset !== "preserve" ? <p className="mt-2 text-xs text-faint">{STREAMING_NOTE}</p> : null}
+        {mp3 && settings.loudness.ceilingDbtp > -1.5 ? <p className="mt-1 text-xs text-muted">MP3 encoding raises peaks slightly. For MP3, a −1.5 dBTP ceiling (Custom) keeps the decoded file under −1 dBTP.</p> : null}
         <p className="mt-1 text-xs text-faint">The loudness stage is one gain and, only where a true peak would pass the ceiling, a transparent limiter after the mix. Your saved mix is not changed.</p>
       </fieldset>
       {tags ? (

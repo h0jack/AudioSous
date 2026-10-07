@@ -26,6 +26,8 @@ export const MIX_PROBLEM_TYPES = [
   "excessive-width",
   "section-contrast",
   "intent",
+  "reference-tonal",
+  "reference-width",
 ] as const;
 export type MixProblemType = (typeof MIX_PROBLEM_TYPES)[number];
 
@@ -41,6 +43,8 @@ export const PROBLEM_LABELS: Record<MixProblemType, string> = {
   "excessive-width": "Width / mono safety",
   "section-contrast": "Section contrast",
   intent: "Section intent",
+  "reference-tonal": "Tonal balance vs reference",
+  "reference-width": "Width vs reference",
 };
 
 /**
@@ -59,11 +63,13 @@ export const PROBLEM_GROUP: Record<MixProblemType, number> = {
   "excessive-width": 4,
   "section-contrast": 5,
   intent: 5,
+  "reference-tonal": 2,
+  "reference-width": 4,
 };
 
 export const DOMAINS = ["gain", "eq", "space", "dynamics", "trim"] as const;
 export type MixDomain = (typeof DOMAINS)[number];
-export const SOURCES = ["level", "eq", "space", "dynamics", "full-mix"] as const;
+export const SOURCES = ["level", "eq", "space", "dynamics", "full-mix", "reference"] as const;
 export type MixSource = (typeof SOURCES)[number];
 
 export const problemEvidenceSchema = z.object({
@@ -140,6 +146,17 @@ export const changeEvidenceSchema = z.discriminatedUnion("kind", [
     evidence: dynamicsEvidenceSchema,
   }),
   z.object({ kind: z.literal("level"), currentGainDb: finite }),
+  /** A move toward a reference song: the region it works on, this stem's share of the mix there, and the gap. */
+  z.object({
+    kind: z.literal("reference"),
+    measure: z.enum(["tonal", "width"]),
+    region: z.string().min(1).max(40),
+    share: unit,
+    gapBeforeDb: finite,
+    gapAfterDb: finite,
+    /** Pan and width before a spatial change (for edits and scaling). */
+    current: z.object({ pan: finite, width: finite }).nullable(),
+  }),
 ]);
 export type ChangeEvidence = z.infer<typeof changeEvidenceSchema>;
 
@@ -300,6 +317,16 @@ export const fullMixPlanSchema = z.object({
   projectId: z.string().min(1),
   sourceAnalysisVersion: z.string().min(1),
   settings: z.object({ strength: z.enum(MIX_STRENGTHS), goal: z.enum(MIX_GOALS) }),
+  /** A plan toward a reference song: the measured gaps and what the plan is predicted to leave. */
+  reference: z
+    .object({
+      name: z.string().min(1).max(120),
+      regions: z.array(z.object({ id: z.string(), label: z.string(), lowHz: finite, highHz: finite, gapBeforeDb: finite, gapAfterDb: finite })).max(12),
+      width: z.array(z.object({ id: z.string(), label: z.string(), gapBeforeDb: finite, gapAfterDb: finite })).max(12),
+      loudness: z.object({ mixLufs: finite, referenceLufs: finite, mixPlrDb: finite, referencePlrDb: finite, mixLraLu: finite, referenceLraLu: finite }),
+      notes: z.array(z.string().max(400)).max(8),
+    })
+    .optional(),
   /** What the plan was allowed to touch, when a request narrowed it. Absent: the whole mix. */
   constraints: mixConstraintsSchema.optional(),
   stateIdentity: z.string().min(1),

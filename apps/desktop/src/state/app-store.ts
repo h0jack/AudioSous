@@ -4,7 +4,8 @@ import type { SpatialPlan, SpatialSettings } from "@audiosous/spatial-planner";
 import type { DynamicsPlan, DynamicsSettings } from "@audiosous/dynamics-planner";
 import type { FullMixPlan, FullMixSettings } from "@audiosous/mix-planner";
 import type { AgentSession } from "@audiosous/mix-agent";
-import type { AgentSettingsInfo, ExportReport, ExportSettings, ExportStatus, MasterPlan } from "../platform/types";
+import type { AgentSettingsInfo, ExportReport, ExportSettings, ExportStatus, MasterPlan, ReferenceInfo } from "../platform/types";
+import type { SongProfile } from "@audiosous/mix-planner";
 import type { ImportWarning, ProjectDocument } from "@audiosous/project-model";
 import { create } from "zustand";
 import { applyEdit, emptyHistory, redoEdit, undoEdit, type EditHistory, type HistoryMode } from "./history";
@@ -211,7 +212,7 @@ export function idleFullMix(): FullMixSession {
 export interface ExportSession {
   open: boolean;
   phase: "setup" | "running" | "deciding" | "done" | "failed" | "cancelled";
-  preset: "preserve" | "balanced" | "loud" | "custom";
+  preset: "preserve" | "balanced" | "loud" | "custom" | "reference";
   settings: ExportSettings;
   jobId: number | null;
   status: ExportStatus | null;
@@ -220,6 +221,31 @@ export interface ExportSession {
   error: string | null;
   /** Why MP3 is unavailable, when it is. */
   mp3Unavailable: string | null;
+}
+
+/**
+ * Reference songs for the open project: the list, the one in use, the saved mix measured the same way, and the
+ * candidate planned toward it (a Full Mix plan in the Full Mix session, named by `planCreatedAt`).
+ */
+export interface ReferenceSession {
+  references: ReferenceInfo[];
+  selected: string | null;
+  phase: "idle" | "loading" | "importing" | "measuring" | "planning" | "checking" | "ready" | "failed";
+  progress: string | null;
+  /** The saved mix's profile and the engine settings key it was measured for (a changed mix measures again). */
+  mixProfile: SongProfile | null;
+  mixKey: string | null;
+  /** The candidate planned toward the reference, rendered and measured. */
+  candidateProfile: SongProfile | null;
+  planCreatedAt: string | null;
+  /** Playing the reference instead of the mix, at the mix's loudness. */
+  listening: boolean;
+  generation: number;
+  error: string | null;
+}
+
+export function idleReference(): ReferenceSession {
+  return { references: [], selected: null, phase: "idle", progress: null, mixProfile: null, mixKey: null, candidateProfile: null, planCreatedAt: null, listening: false, generation: 0, error: null };
 }
 
 export type AutoMixStageId = "prepare" | "levels" | "frequency" | "space" | "dynamics" | "plan" | "verify";
@@ -287,7 +313,7 @@ export function idleAssistant(open = false, settings: AgentSettingsInfo | null =
   return { open, session: null, generation: 0, busy: false, pending: null, activity: null, error: null, settings, showSettings: false };
 }
 
-export type PlanTab = "gain" | "eq" | "space" | "dynamics" | "full";
+export type PlanTab = "gain" | "eq" | "space" | "dynamics" | "full" | "reference";
 
 export type Screen = "welcome" | "import" | "project";
 export type Workspace = "mix" | "analysis";
@@ -314,6 +340,8 @@ interface AppState {
   dynamics: DynamicsSession;
   fullMix: FullMixSession;
   autoMix: AutoMixSession;
+  reference: ReferenceSession;
+  setReference: (patch: Partial<ReferenceSession>) => void;
   exportJob: ExportSession | null;
   setExportJob: (patch: Partial<ExportSession> | null) => void;
   assistant: AssistantState;
@@ -364,6 +392,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   dynamics: idleDynamics(),
   fullMix: idleFullMix(),
   autoMix: idleAutoMix(),
+  reference: idleReference(),
+  setReference: (patch) => set({ reference: { ...get().reference, ...patch } }),
   exportJob: null,
   setExportJob: (patch) => set({ exportJob: patch === null ? null : ({ ...(get().exportJob ?? {}), ...patch } as ExportSession) }),
   assistant: idleAssistant(),
@@ -380,7 +410,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = removeTask(get().tasks, id);
     if (next !== get().tasks) set({ tasks: next });
   },
-  goWelcome: () => set({ tasks: cancelActive(get().tasks), changesFocus: null, screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), autoMix: idleAutoMix(), exportJob: null, assistant: idleAssistant(false, get().assistant.settings) }),
+  goWelcome: () => set({ tasks: cancelActive(get().tasks), changesFocus: null, screen: "welcome", notice: null, workspace: "mix", preparing: false, balance: idleBalance(), eq: idleEq(), space: idleSpace(), dynamics: idleDynamics(), fullMix: idleFullMix(), autoMix: idleAutoMix(), reference: idleReference(), exportJob: null, assistant: idleAssistant(false, get().assistant.settings) }),
   setWorkspace: (workspace) => set({ workspace }),
   startImport: () => set({ screen: "import", notice: null, preparing: false }),
   openDocument: (document, projectFilePath, warnings) =>
@@ -403,6 +433,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       dynamics: idleDynamics(),
       fullMix: idleFullMix(),
       autoMix: idleAutoMix(),
+      reference: idleReference(),
       exportJob: null,
       // A new project starts a new conversation; the panel stays where the person left it.
       assistant: idleAssistant(get().assistant.open, get().assistant.settings),

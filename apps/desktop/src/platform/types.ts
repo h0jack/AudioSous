@@ -258,6 +258,15 @@ export interface ExportStatus {
   peakMemoryMb: number | null;
 }
 
+/* ------------------------------------------------------------------ reference songs */
+
+/** A reference song in the project's `references/` folder and how it measures (`SongProfile` in mix-planner). */
+export interface ReferenceInfo {
+  name: string;
+  durationSeconds: number;
+  profile: import("@audiosous/mix-planner").SongProfile;
+}
+
 /** The assistant's provider settings as the shell reports them. Never contains the key. */
 export interface AgentSettingsInfo {
   provider: "none" | "anthropic";
@@ -336,4 +345,12 @@ export interface DesktopPlatform {
   revealExport(path: string): Promise<void>;
   /** The MP3 encoder's version, or an error saying why MP3 is unavailable. */
   mp3Available(): Promise<string>;
+  /** Asks for a reference song (WAV, AIFF, FLAC, MP3). Desktop only. */
+  pickReferenceFile(): Promise<string | null>;
+  /** Copies a reference into the project (decoded to 48 kHz) and measures it. The chosen file is not changed. */
+  importReference(projectFile: string, sourcePath: string): Promise<ReferenceInfo>;
+  listReferences(projectFile: string): Promise<ReferenceInfo[]>;
+  deleteReference(projectFile: string, name: string): Promise<void>;
+  /** Renders the whole song as the engine plays `variant` and measures it like a reference. Desktop only. */
+  mixProfile(projectFile: string, request: { tracks: Array<{ trackId: string; relativePath: string }>; variant: MixCheckVariant; durationSeconds: number }): Promise<import("@audiosous/mix-planner").SongProfile>;
 }
