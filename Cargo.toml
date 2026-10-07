@@ -1,3 +1,43 @@
 [workspace]
 resolver = "2"
 members = ["apps/desktop/src-tauri", "crates/audio-engine"]
+
+# The audio engine and its DSP and codec dependencies are optimized even in dev builds (`npm run dev`, `cargo test`).
+# Unoptimized, an export renders at about 0.25× real time instead of 14×, and the playback DSP has far less headroom.
+# The rest of the shell stays a fast-compiling debug build.
+[profile.dev.package.audiosous-audio]
+opt-level = 3
+debug-assertions = true
+
+[profile.dev.package.rubato]
+opt-level = 3
+
+[profile.dev.package.rustfft]
+opt-level = 3
+
+[profile.dev.package.realfft]
+opt-level = 3
+
+[profile.dev.package.flacenc]
+opt-level = 3
+
+[profile.dev.package.md-5]
+opt-level = 3
+
+[profile.dev.package.symphonia-core]
+opt-level = 3
+
+[profile.dev.package.symphonia-bundle-mp3]
+opt-level = 3
+
+[profile.dev.package.symphonia-bundle-flac]
+opt-level = 3
+
+[profile.dev.package.symphonia-codec-pcm]
+opt-level = 3
+
+[profile.dev.package.cpal]
+opt-level = 3
+
+[profile.dev.package.rtrb]
+opt-level = 3

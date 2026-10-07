@@ -211,7 +211,7 @@ export async function startExport(platform: DesktopPlatform = getPlatform(), pol
   const projectId = document.project.id;
   useAppStore.getState().setExportJob({ phase: "running", jobId, status: null, report: null, error: null, plan: null });
   registerTaskActions("export", { cancel: () => void cancelExport(platform) });
-  await logEvent(platform, "info", "export.start", "Started an export.", { projectId, format: formatLabel(settings.format), sampleRate: settings.sampleRate, loudness: settings.loudness.mode, tracks: document.tracks.length, durationSeconds: document.project.durationSeconds });
+  await logEvent(platform, "info", "export.start", "Started an export.", { projectId, format: formatLabel(settings.format), sampleRate: settings.sampleRate, loudness: settings.loudness.mode, preset: job.preset, targetLufs: settings.loudness.mode === "target" ? settings.loudness.integratedLufs : null, ceilingDbtp: settings.loudness.ceilingDbtp, tracks: document.tracks.length, durationSeconds: document.project.durationSeconds });
   for (;;) {
     let status: ExportStatus;
     try {
@@ -227,7 +227,7 @@ export async function startExport(platform: DesktopPlatform = getPlatform(), pol
     useAppStore.getState().setExportJob({ status, phase, plan: status.plan, report: status.report, error: status.error });
     if (phase === "done" && status.report) {
       const report = status.report;
-      await logEvent(platform, "info", "export.complete", "Finished an export.", { projectId, format: report.format, sampleRate: report.sampleRate, durationSeconds: report.durationSeconds, integratedLufs: report.integratedLufs, truePeakDbtp: report.truePeakDbtp, limiterMaxDb: report.limiter.maxReductionDb, renderSeconds: report.renderSeconds, totalSeconds: report.totalSeconds, renderSpeed: report.renderSpeed, peakMemoryMb: status.peakMemoryMb, warnings: report.warnings.length });
+      await logEvent(platform, "info", "export.complete", "Finished an export.", { projectId, format: report.format, sampleRate: report.sampleRate, durationSeconds: report.durationSeconds, integratedLufs: report.integratedLufs, truePeakDbtp: report.truePeakDbtp, mixLufs: report.mix.integratedLufs, mixTruePeakDbtp: report.mix.truePeakDbtp, gainDb: report.gainDb, targetLufs: report.targetLufs, limiterMaxDb: report.limiter.maxReductionDb, renderSeconds: report.renderSeconds, totalSeconds: report.totalSeconds, renderSpeed: report.renderSpeed, peakMemoryMb: status.peakMemoryMb, warnings: report.warnings.length });
       return;
     }
     if (phase === "failed") {
@@ -254,5 +254,6 @@ export async function decideExport(choice: "safer" | "continue" | null, platform
   const job = useAppStore.getState().exportJob;
   if (job?.jobId === null || job?.jobId === undefined) return;
   useAppStore.getState().setExportJob({ phase: choice ? "running" : "cancelled" });
+  void logEvent(platform, "info", "export.decision", "Answered heavy limiting.", { choice: choice ?? "cancel", estimatedMaxReductionDb: job.plan?.estimatedMaxReductionDb ?? null, targetLufs: job.plan?.targetLufs ?? null, saferTargetLufs: job.plan?.saferTargetLufs ?? null });
   await platform.decideExport(job.jobId, choice);
 }

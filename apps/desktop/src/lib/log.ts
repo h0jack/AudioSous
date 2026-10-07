@@ -68,6 +68,7 @@ export type LogEvent =
   | "export.complete"
   | "export.failed"
   | "export.cancel"
+  | "export.decision"
   | "agent.request"
   | "agent.tool"
   | "agent.plan"
